@@ -3,6 +3,7 @@ import { DEFAULT_GFX, fireStage } from "./types";
 import { artImage, ballImage, cloudImages, graffitiImage } from "./art";
 import type { BallId } from "./balls";
 import { DEFAULT_BALL } from "./balls";
+import type { Chain } from "./chain";
 import { gecko } from "./perf";
 import { getScene, type GrafKey } from "./scenes";
 import {
@@ -46,6 +47,8 @@ export function drawScene(
   backdrop: "void" | "street" = "street",
   ballId: BallId = DEFAULT_BALL,
   glassBase = -1,
+  chain: Chain | null = null,
+  prison: { mode: "shackle" | "free"; def: number; bank: number; bonus: number } | null = null,
 ) {
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
@@ -55,14 +58,17 @@ export function drawScene(
 		drawCourt(ctx, world);
 	}
 	if (gfx.ballShadow) drawGroundShadow(ctx, ball, world);
+	if (chain) drawChain(ctx, chain, true);
 	if (showHud) drawCountdown(ctx, world, timer01, buzzer);
 	const distH = Math.hypot(ball.x - hoop.x, ball.y - hoop.y);
 	const distO = other ? Math.hypot(ball.x - other.x, ball.y - other.y) : Infinity;
 	const ballWithOther = Boolean(other && distO < distH);
 	if (other) drawHoopStack(ctx, other, world, ballWithOther ? ball : null, combo, time, gfx.particles ? trail : [], gfx, ballId);
 	drawHoopStack(ctx, hoop, world, ballWithOther ? null : ball, combo, time, gfx.particles ? trail : [], gfx, ballId);
+	if (chain) drawChain(ctx, chain, false);
 	if (gfx.particles) for (const p of particles) drawParticle(ctx, p);
-	drawScorePops(ctx, callouts, world);
+	const pops = prison?.mode === "shackle" ? callouts.filter((c) => c.kind === "tag") : callouts;
+	drawScorePops(ctx, pops, world);
 	if (buzzer && gfx.buzzerSpot) drawBuzzerSpot(ctx, world, ball);
 	if (whiteFlash > 0 && gfx.flash) {
 		ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.2, whiteFlash * 1.65)})`;
@@ -73,7 +79,124 @@ export function drawScene(
 		ctx.fillRect(0, 0, world.w, world.h);
 	}
 	ctx.restore();
-	if (showHud) drawHud(ctx, world, score, comboHud < 0 ? combo : comboHud, timer01, buzzer, callouts, time, combo, comboBanner, glassBase);
+	if (showHud) {
+		drawHud(
+			ctx,
+			world,
+			score,
+			comboHud < 0 ? combo : comboHud,
+			timer01,
+			buzzer,
+			pops,
+			time,
+			combo,
+			comboBanner,
+			glassBase,
+			prison,
+		);
+	}
+}
+
+function drawChain(ctx: CanvasRenderingContext2D, chain: Chain, backPass: boolean) {
+	const nodes = chain.nodes;
+	if (nodes.length < 2) return;
+	const last = nodes.length - 1;
+	const mid = Math.floor(nodes.length * 0.45);
+	ctx.save();
+	ctx.lineCap = "round";
+	ctx.lineJoin = "round";
+	for (let i = 0; i < nodes.length - 1; i++) {
+		const isBack = i < mid;
+		if (backPass !== isBack) continue;
+		const a = nodes[i]!;
+		const b = nodes[i + 1]!;
+		const dx = b.x - a.x;
+		const dy = b.y - a.y;
+		const len = Math.hypot(dx, dy) || 1;
+		const nx = -dy / len;
+		const ny = dx / len;
+		const thick = Math.max(2.4, chain.nodeR * 1.55);
+		// Stop the last segment at the tip ball surface
+		let x1 = a.x;
+		let y1 = a.y;
+		let x2 = b.x;
+		let y2 = b.y;
+		if (i === last - 1) {
+			const shrink = chain.tipR * 0.92;
+			x2 = b.x - (dx / len) * shrink;
+			y2 = b.y - (dy / len) * shrink;
+		}
+		ctx.strokeStyle = "#1a1c20";
+		ctx.lineWidth = thick + 1.6;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+		ctx.strokeStyle = i % 2 === 0 ? "#6e737a" : "#4d5259";
+		ctx.lineWidth = thick;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+		ctx.strokeStyle = "rgba(220, 225, 232, 0.35)";
+		ctx.lineWidth = Math.max(1, thick * 0.28);
+		ctx.beginPath();
+		ctx.moveTo(x1 + nx * thick * 0.22, y1 + ny * thick * 0.22);
+		ctx.lineTo(x2 + nx * thick * 0.22, y2 + ny * thick * 0.22);
+		ctx.stroke();
+	}
+	if (!backPass) {
+		for (let i = 1; i < last; i++) {
+			const n = nodes[i]!;
+			const rr = chain.nodeR * 0.92;
+			const g = ctx.createRadialGradient(n.x - rr * 0.25, n.y - rr * 0.3, rr * 0.1, n.x, n.y, rr);
+			g.addColorStop(0, "#9aa1aa");
+			g.addColorStop(0.55, "#5c626a");
+			g.addColorStop(1, "#2a2e34");
+			ctx.fillStyle = g;
+			ctx.beginPath();
+			ctx.arc(n.x, n.y, rr, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.strokeStyle = "rgba(0,0,0,0.45)";
+			ctx.lineWidth = 1;
+			ctx.stroke();
+		}
+		const tip = nodes[last]!;
+		const tr = chain.tipR;
+		const iron = ctx.createRadialGradient(tip.x - tr * 0.32, tip.y - tr * 0.38, tr * 0.08, tip.x, tip.y, tr);
+		iron.addColorStop(0, "#3a3a3a");
+		iron.addColorStop(0.35, "#1a1a1a");
+		iron.addColorStop(0.75, "#0a0a0a");
+		iron.addColorStop(1, "#000000");
+		ctx.fillStyle = iron;
+		ctx.beginPath();
+		ctx.arc(tip.x, tip.y, tr, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.strokeStyle = "rgba(80, 80, 80, 0.7)";
+		ctx.lineWidth = Math.max(1.2, tr * 0.06);
+		ctx.stroke();
+		const sheen = ctx.createRadialGradient(tip.x - tr * 0.35, tip.y - tr * 0.4, 0, tip.x - tr * 0.2, tip.y - tr * 0.25, tr * 0.55);
+		sheen.addColorStop(0, "rgba(255,255,255,0.22)");
+		sheen.addColorStop(0.4, "rgba(180,180,180,0.06)");
+		sheen.addColorStop(1, "rgba(0,0,0,0)");
+		ctx.fillStyle = sheen;
+		ctx.beginPath();
+		ctx.arc(tip.x, tip.y, tr, 0, Math.PI * 2);
+		ctx.fill();
+
+		const head = nodes[0]!;
+		ctx.strokeStyle = "#3a3f46";
+		ctx.lineWidth = Math.max(2.2, chain.nodeR * 0.9);
+		ctx.beginPath();
+		ctx.arc(head.x, head.y, chain.nodeR * 1.35, 0, Math.PI * 2);
+		ctx.stroke();
+		ctx.strokeStyle = "#8b929c";
+		ctx.lineWidth = Math.max(1.4, chain.nodeR * 0.55);
+		ctx.beginPath();
+		ctx.arc(head.x, head.y, chain.nodeR * 1.35, 0, Math.PI * 2);
+		ctx.stroke();
+	}
+	ctx.restore();
 }
 
 function drawBuzzerSpot(ctx: CanvasRenderingContext2D, world: World, ball: Ball) {
@@ -847,7 +970,119 @@ function drawGlassBall(ctx: CanvasRenderingContext2D, ball: Ball) {
 	ctx.restore();
 }
 
+function drawPrisonBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
+	const { x, y, r, spin, squash } = ball;
+	ctx.save();
+	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+	ctx.scale(1 / squash, squash);
+	ctx.beginPath();
+	ctx.arc(0, 0, r, 0, Math.PI * 2);
+	ctx.clip();
+
+	ctx.save();
+	ctx.rotate(spin);
+	const stripes = 10;
+	for (let i = 0; i < stripes; i++) {
+		const t0 = (i / stripes) * Math.PI * 2 - Math.PI;
+		const t1 = ((i + 1) / stripes) * Math.PI * 2 - Math.PI;
+		ctx.beginPath();
+		ctx.moveTo(0, 0);
+		ctx.arc(0, 0, r + 1, t0, t1);
+		ctx.closePath();
+		ctx.fillStyle = i % 2 === 0 ? "#f2f2f0" : "#141618";
+		ctx.fill();
+	}
+	ctx.strokeStyle = "rgba(0,0,0,0.35)";
+	ctx.lineWidth = Math.max(1, r * 0.045);
+	ctx.beginPath();
+	ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.moveTo(-r, 0);
+	ctx.lineTo(r, 0);
+	ctx.moveTo(0, -r);
+	ctx.lineTo(0, r);
+	ctx.stroke();
+	ctx.restore();
+
+	// Hannibal-style muzzle stays camera-facing
+	const mw = r * 1.05;
+	const mh = r * 0.78;
+	const my = r * 0.06;
+	ctx.fillStyle = "#5a4030";
+	ctx.beginPath();
+	ctx.moveTo(-mw * 0.48, my - mh * 0.2);
+	ctx.lineTo(mw * 0.48, my - mh * 0.2);
+	ctx.lineTo(mw * 0.42, my + mh * 0.48);
+	ctx.quadraticCurveTo(0, my + mh * 0.62, -mw * 0.42, my + mh * 0.48);
+	ctx.closePath();
+	ctx.fill();
+	ctx.strokeStyle = "#2a1c14";
+	ctx.lineWidth = Math.max(1.2, r * 0.05);
+	ctx.stroke();
+
+	ctx.fillStyle = "#3d2a1e";
+	ctx.fillRect(-mw * 0.34, my - mh * 0.08, mw * 0.68, mh * 0.42);
+	ctx.strokeStyle = "#1c120c";
+	ctx.strokeRect(-mw * 0.34, my - mh * 0.08, mw * 0.68, mh * 0.42);
+
+	const bars = 5;
+	for (let i = 0; i < bars; i++) {
+		const bx = -mw * 0.28 + (i / (bars - 1)) * mw * 0.56;
+		ctx.strokeStyle = "#c5ccd4";
+		ctx.lineWidth = Math.max(1.4, r * 0.055);
+		ctx.beginPath();
+		ctx.moveTo(bx, my - mh * 0.02);
+		ctx.lineTo(bx, my + mh * 0.3);
+		ctx.stroke();
+		ctx.strokeStyle = "rgba(255,255,255,0.35)";
+		ctx.lineWidth = Math.max(0.6, r * 0.02);
+		ctx.beginPath();
+		ctx.moveTo(bx - r * 0.015, my);
+		ctx.lineTo(bx - r * 0.015, my + mh * 0.26);
+		ctx.stroke();
+	}
+
+	ctx.strokeStyle = "#6b4a36";
+	ctx.lineWidth = Math.max(1.5, r * 0.06);
+	ctx.beginPath();
+	ctx.moveTo(-mw * 0.5, my - mh * 0.05);
+	ctx.quadraticCurveTo(-r * 0.95, -r * 0.15, -r * 0.72, -r * 0.55);
+	ctx.moveTo(mw * 0.5, my - mh * 0.05);
+	ctx.quadraticCurveTo(r * 0.95, -r * 0.15, r * 0.72, -r * 0.55);
+	ctx.stroke();
+
+	for (const sx of [-mw * 0.4, mw * 0.4]) {
+		ctx.fillStyle = "#9aa3ad";
+		ctx.beginPath();
+		ctx.arc(sx, my - mh * 0.12, r * 0.07, 0, Math.PI * 2);
+		ctx.fill();
+	}
+
+	if (lit) {
+		const shade = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r);
+		shade.addColorStop(0, "rgba(0,0,0,0)");
+		shade.addColorStop(1, "rgba(0,0,0,0.38)");
+		ctx.fillStyle = shade;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+		const spec = ctx.createRadialGradient(-r * 0.3, -r * 0.4, 0, -r * 0.2, -r * 0.3, r * 0.5);
+		spec.addColorStop(0, "rgba(255,255,255,0.28)");
+		spec.addColorStop(1, "rgba(255,255,255,0)");
+		ctx.fillStyle = spec;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+	}
+	ctx.restore();
+}
+
 function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _world: World, time = 0, lit = true, ballId: BallId = DEFAULT_BALL) {
+	if (ballId === "prison") {
+		drawPrisonBall(ctx, ball, lit);
+		return;
+	}
 	if (ballId === "glass") {
 		const img = ballImage("glass");
 		if (!img) {
@@ -1329,9 +1564,23 @@ function drawCountdown(ctx: CanvasRenderingContext2D, world: World, timer01: num
 		return;
 	}
 }
-function drawHud(ctx: CanvasRenderingContext2D, world: World, score: number, combo: number, timer01: number, buzzer: boolean, callouts: Callout[], time = 0, heat = combo, comboBanner = "", glassBase = -1) {
+function drawHud(
+	ctx: CanvasRenderingContext2D,
+	world: World,
+	score: number,
+	combo: number,
+	timer01: number,
+	buzzer: boolean,
+	callouts: Callout[],
+	time = 0,
+	heat = combo,
+	comboBanner = "",
+	glassBase = -1,
+	prison: { mode: "shackle" | "free"; def: number; bank: number; bonus: number } | null = null,
+) {
 	const { w } = world;
 	const g = hudGeom(world);
+	const shackled = prison?.mode === "shackle";
 	ctx.save();
 	ctx.textAlign = "center";
 	ctx.textBaseline = "top";
@@ -1339,10 +1588,36 @@ function drawHud(ctx: CanvasRenderingContext2D, world: World, score: number, com
 	ctx.lineWidth = Math.max(6, g.scoreSize * .12);
 	ctx.strokeStyle = "rgba(18,22,30,0.55)";
 	ctx.fillStyle = "#f7f4ef";
-	const scoreText = String(score);
-	ctx.strokeText(scoreText, w / 2, g.scoreY);
-	ctx.fillText(scoreText, w / 2, g.scoreY);
-	if (glassBase >= 0) {
+	if (!shackled) {
+		const scoreText = String(score);
+		ctx.strokeText(scoreText, w / 2, g.scoreY);
+		ctx.fillText(scoreText, w / 2, g.scoreY);
+	} else {
+		ctx.font = `800 ${Math.max(18, Math.floor(g.scoreSize * 0.42))}px 'Noto Sans SC', sans-serif`;
+		ctx.strokeText("枷锁", w / 2, g.scoreY + g.scoreSize * 0.18);
+		ctx.fillText("枷锁", w / 2, g.scoreY + g.scoreSize * 0.18);
+	}
+	if (prison) {
+		const label = Math.max(11, Math.floor(w * 0.032));
+		const num = Math.max(22, Math.floor(w * 0.068));
+		const x = Math.max(12, Math.floor(w * 0.035));
+		ctx.save();
+		ctx.textAlign = "left";
+		ctx.textBaseline = "top";
+		ctx.strokeStyle = "rgba(18,22,30,0.55)";
+		ctx.fillStyle = shackled ? "#d8dde6" : "#9aa3ad";
+		ctx.font = `700 ${label}px 'Noto Sans SC', sans-serif`;
+		ctx.lineWidth = Math.max(3, label * 0.18);
+		ctx.strokeText(shackled ? "防御" : "铐奖", x, g.scoreY + 4);
+		ctx.fillText(shackled ? "防御" : "铐奖", x, g.scoreY + 4);
+		ctx.font = `900 ${num}px 'Noto Sans SC', Impact, sans-serif`;
+		ctx.lineWidth = Math.max(4, num * 0.12);
+		ctx.fillStyle = shackled ? "#f7f4ef" : "#ffe082";
+		const val = shackled ? String(prison.def) : String(prison.bonus);
+		ctx.strokeText(val, x, g.scoreY + 4 + label + 1);
+		ctx.fillText(val, x, g.scoreY + 4 + label + 1);
+		ctx.restore();
+	} else if (glassBase >= 0) {
 		const label = Math.max(11, Math.floor(w * 0.032));
 		const num = Math.max(22, Math.floor(w * 0.068));
 		const x = Math.max(12, Math.floor(w * 0.035));
@@ -1363,7 +1638,7 @@ function drawHud(ctx: CanvasRenderingContext2D, world: World, score: number, com
 	}
 	let tag = null;
 	for (const c of callouts) if (c.kind === "tag") tag = c;
-	if (comboBanner) {
+	if (!shackled && comboBanner) {
 		ctx.save();
 		ctx.font = `800 ${g.comboSize}px 'Noto Sans SC', sans-serif`;
 		ctx.textAlign = "center";
@@ -1373,7 +1648,7 @@ function drawHud(ctx: CanvasRenderingContext2D, world: World, score: number, com
 		ctx.strokeText(comboBanner, w / 2, g.comboY);
 		ctx.fillText(comboBanner, w / 2, g.comboY);
 		ctx.restore();
-	} else if (combo >= 2) {
+	} else if (!shackled && combo >= 2) {
 		ctx.save();
 		const stage = fireStage(heat);
 		if (stage >= 3) {

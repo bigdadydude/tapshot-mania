@@ -113,6 +113,13 @@ export const DEFAULT_GFX: Gfx = {
   buzzerSpot: true,
 };
 
+export type PrisonHud = {
+  mode: "shackle" | "free";
+  def: number;
+  bank: number;
+  bonus: number;
+};
+
 export type HudState = {
   phase: Phase;
   score: number;
@@ -129,6 +136,7 @@ export type HudState = {
   gfx: Gfx;
   dev: DevHud;
   ballId: BallId;
+  prison: PrisonHud | null;
 };
 
 export type World = {

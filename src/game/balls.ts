@@ -1,6 +1,6 @@
 import type { DevPhys } from "./dev";
 
-export type BallId = "plain" | "lava" | "glass";
+export type BallId = "plain" | "lava" | "glass" | "prison";
 
 export type BallKit = {
   id: BallId;
@@ -11,6 +11,8 @@ export type BallKit = {
   fallback?: string;
   wrap: "ground" | "height";
   score: "normal" | "glass";
+  /** Drag chain with collision (length = ball diameter). */
+  chain?: boolean;
   phys?: Partial<DevPhys>;
 };
 
@@ -55,12 +57,27 @@ export const BALLS: BallKit[] = [
       ball: 0,
     },
   },
+  {
+    id: "prison",
+    name: "监狱球",
+    skill: "枷锁攒条，解放爆发；断连回铐",
+    heat: false,
+    wrap: "ground",
+    score: "normal",
+    chain: true,
+    phys: {
+      jumpUp: 0.9,
+      jumpFwd: 0.88,
+      roll: 1.15,
+      grav: 1.08,
+    },
+  },
 ];
 
 export const DEFAULT_BALL: BallId = "plain";
 
 export function parseBall(v: unknown): BallId {
-  return v === "lava" || v === "plain" || v === "glass" ? v : DEFAULT_BALL;
+  return v === "lava" || v === "plain" || v === "glass" || v === "prison" ? v : DEFAULT_BALL;
 }
 
 export function getBall(id: BallId): BallKit {

@@ -25,6 +25,7 @@ const idleHud: HudState = {
   gfx: { ...DEFAULT_GFX },
   dev: { ...DEFAULT_DEV },
   ballId: DEFAULT_BALL,
+  prison: null,
 };
 
 type Menu = "none" | "pause" | "settings" | "gfx" | "sound";
@@ -289,7 +290,9 @@ function TitleCard({
                 on ? "border-accent bg-bg-elevated" : "border-border bg-bg-subtle/80",
               )}
             >
-              {kit.src || kit.fallback ? (
+              {kit.id === "prison" ? (
+                <PrisonBallThumb />
+              ) : kit.src || kit.fallback ? (
                 <img
                   src={kit.src ?? kit.fallback}
                   alt=""
@@ -328,6 +331,33 @@ function TitleCard({
         </button>
       ) : null}
     </div>
+  );
+}
+
+function PrisonBallThumb() {
+  return (
+    <svg viewBox="0 0 64 64" className="size-16" aria-hidden>
+      <defs>
+        <clipPath id="prison-ball-clip">
+          <circle cx="32" cy="32" r="30" />
+        </clipPath>
+      </defs>
+      <g clipPath="url(#prison-ball-clip)">
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+          <path
+            key={i}
+            d={`M32 32 L${32 + 34 * Math.cos((i / 8) * Math.PI * 2 - Math.PI)} ${32 + 34 * Math.sin((i / 8) * Math.PI * 2 - Math.PI)} A34 34 0 0 1 ${32 + 34 * Math.cos(((i + 1) / 8) * Math.PI * 2 - Math.PI)} ${32 + 34 * Math.sin(((i + 1) / 8) * Math.PI * 2 - Math.PI)} Z`}
+            fill={i % 2 === 0 ? "#f2f2f0" : "#141618"}
+          />
+        ))}
+      </g>
+      <circle cx="32" cy="32" r="30" fill="none" stroke="#1a1a1a" strokeWidth="2" />
+      <path d="M18 30 L46 30 L44 44 Q32 50 20 44 Z" fill="#5a4030" stroke="#2a1c14" strokeWidth="1.2" />
+      <rect x="22" y="32" width="20" height="10" fill="#3d2a1e" stroke="#1c120c" strokeWidth="1" />
+      {[24, 28, 32, 36, 40].map((x) => (
+        <line key={x} x1={x} y1="33" x2={x} y2="41" stroke="#c5ccd4" strokeWidth="1.6" />
+      ))}
+    </svg>
   );
 }
 
