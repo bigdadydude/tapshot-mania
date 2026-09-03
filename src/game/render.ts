@@ -1,4 +1,4 @@
-import type { Ball, Callout, Gfx, Hoop, Particle, TrailPt, World } from "./types";
+import type { Ball, Callout, Gfx, Hoop, Particle, PrisonHud, TrailPt, World } from "./types";
 import { DEFAULT_GFX, fireStage } from "./types";
 import { artImage, ballImage, cloudImages, graffitiImage } from "./art";
 import type { BallId } from "./balls";
@@ -48,7 +48,7 @@ export function drawScene(
   ballId: BallId = DEFAULT_BALL,
   glassBase = -1,
   chain: Chain | null = null,
-  prison: { mode: "shackle" | "free"; def: number; bank: number; bonus: number } | null = null,
+  prison: PrisonHud | null = null,
 ) {
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
@@ -1576,11 +1576,12 @@ function drawHud(
 	heat = combo,
 	comboBanner = "",
 	glassBase = -1,
-	prison: { mode: "shackle" | "free"; def: number; bank: number; bonus: number } | null = null,
+	prison: PrisonHud | null = null,
 ) {
 	const { w } = world;
 	const g = hudGeom(world);
 	const shackled = prison?.mode === "shackle";
+	const freed = prison?.mode === "free";
 	ctx.save();
 	ctx.textAlign = "center";
 	ctx.textBaseline = "top";
@@ -1592,10 +1593,6 @@ function drawHud(
 		const scoreText = String(score);
 		ctx.strokeText(scoreText, w / 2, g.scoreY);
 		ctx.fillText(scoreText, w / 2, g.scoreY);
-	} else {
-		ctx.font = `800 ${Math.max(18, Math.floor(g.scoreSize * 0.42))}px 'Noto Sans SC', sans-serif`;
-		ctx.strokeText("枷锁", w / 2, g.scoreY + g.scoreSize * 0.18);
-		ctx.fillText("枷锁", w / 2, g.scoreY + g.scoreSize * 0.18);
 	}
 	if (prison) {
 		const label = Math.max(11, Math.floor(w * 0.032));
@@ -1608,14 +1605,29 @@ function drawHud(
 		ctx.fillStyle = shackled ? "#d8dde6" : "#9aa3ad";
 		ctx.font = `700 ${label}px 'Noto Sans SC', sans-serif`;
 		ctx.lineWidth = Math.max(3, label * 0.18);
-		ctx.strokeText(shackled ? "防御" : "铐奖", x, g.scoreY + 4);
-		ctx.fillText(shackled ? "防御" : "铐奖", x, g.scoreY + 4);
+		const leftLabel = shackled ? "目标" : "自由";
+		ctx.strokeText(leftLabel, x, g.scoreY + 4);
+		ctx.fillText(leftLabel, x, g.scoreY + 4);
 		ctx.font = `900 ${num}px 'Noto Sans SC', Impact, sans-serif`;
 		ctx.lineWidth = Math.max(4, num * 0.12);
 		ctx.fillStyle = shackled ? "#f7f4ef" : "#ffe082";
-		const val = shackled ? String(prison.def) : String(prison.bonus);
+		const val = shackled
+			? String(prison.target)
+			: `${Math.max(0, Math.ceil(prison.freeLeft))}s`;
 		ctx.strokeText(val, x, g.scoreY + 4 + label + 1);
 		ctx.fillText(val, x, g.scoreY + 4 + label + 1);
+		if (freed && prison.bonus > 0) {
+			const rx = w - Math.max(12, Math.floor(w * 0.035));
+			ctx.textAlign = "right";
+			ctx.fillStyle = "#9aa3ad";
+			ctx.font = `700 ${label}px 'Noto Sans SC', sans-serif`;
+			ctx.strokeText("铐奖", rx, g.scoreY + 4);
+			ctx.fillText("铐奖", rx, g.scoreY + 4);
+			ctx.fillStyle = "#ffe082";
+			ctx.font = `900 ${num}px 'Noto Sans SC', Impact, sans-serif`;
+			ctx.strokeText(String(prison.bonus), rx, g.scoreY + 4 + label + 1);
+			ctx.fillText(String(prison.bonus), rx, g.scoreY + 4 + label + 1);
+		}
 		ctx.restore();
 	} else if (glassBase >= 0) {
 		const label = Math.max(11, Math.floor(w * 0.032));
@@ -1638,7 +1650,7 @@ function drawHud(
 	}
 	let tag = null;
 	for (const c of callouts) if (c.kind === "tag") tag = c;
-	if (!shackled && comboBanner) {
+	if (comboBanner) {
 		ctx.save();
 		ctx.font = `800 ${g.comboSize}px 'Noto Sans SC', sans-serif`;
 		ctx.textAlign = "center";
@@ -1648,21 +1660,31 @@ function drawHud(
 		ctx.strokeText(comboBanner, w / 2, g.comboY);
 		ctx.fillText(comboBanner, w / 2, g.comboY);
 		ctx.restore();
-	} else if (!shackled && combo >= 2) {
+	} else if (combo >= 1 && (shackled || combo >= 2)) {
 		ctx.save();
 		const stage = fireStage(heat);
-		if (stage >= 3) {
+		if (!shackled && stage >= 3) {
 			const mag = stage >= 4 ? 3.8 : 1.2;
 			const freq = stage >= 4 ? 36 : 14;
 			ctx.translate(Math.sin(time * freq) * mag, Math.cos(time * freq * 1.35) * mag * .72);
 		}
-		ctx.font = `800 ${g.comboSize}px 'Noto Sans SC', sans-serif`;
+		const comboSize = shackled ? g.scoreSize : g.comboSize;
+		const comboY = shackled ? g.scoreY : g.comboY;
+		ctx.font = `800 ${comboSize}px 'Noto Sans SC', ${shackled ? "Impact, " : ""}sans-serif`;
 		ctx.textAlign = "center";
-		ctx.lineWidth = 4;
+		ctx.lineWidth = shackled ? Math.max(6, comboSize * 0.12) : 4;
 		ctx.strokeStyle = "rgba(18,22,30,0.55)";
-		ctx.fillStyle = stage >= 4 ? "#ff3b2e" : stage >= 3 ? "#ffd54a" : stage >= 2 ? "#c8c3bb" : "#f7f4ef";
-		ctx.strokeText(`连击×${combo}`, w / 2, g.comboY);
-		ctx.fillText(`连击×${combo}`, w / 2, g.comboY);
+		ctx.fillStyle = shackled
+			? "#f7f4ef"
+			: stage >= 4
+				? "#ff3b2e"
+				: stage >= 3
+					? "#ffd54a"
+					: stage >= 2
+						? "#c8c3bb"
+						: "#f7f4ef";
+		ctx.strokeText(`连击×${combo}`, w / 2, comboY);
+		ctx.fillText(`连击×${combo}`, w / 2, comboY);
 		ctx.restore();
 	}
 	if (tag) {

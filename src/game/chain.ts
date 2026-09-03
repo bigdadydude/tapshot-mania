@@ -138,7 +138,8 @@ export function stepChain(
     const n = nodes[i]!;
     const ox = n.x;
     const oy = n.y;
-    const gScale = i === last ? 1 : 0.85;
+    // Tip iron ball: 2× basketball gravity; mid-links slightly lighter.
+    const gScale = i === last ? 2 : 0.85;
     n.x += (n.x - n.px) * damp;
     n.y += (n.y - n.py) * damp + gravity * gScale * dt * dt;
     n.px = ox;

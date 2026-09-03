@@ -21,7 +21,7 @@ import type { GrafKey } from "./scenes";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
 
-export const GAME_REV = 207;
+export const GAME_REV = 211;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -34,9 +34,8 @@ const BLAZE_DROP = 2.5;
 const BUZZER_WINDOW = 5;
 const HOOP_HOLD = 0.72;
 const FIRE_HOLD = 1.35;
-const PRISON_DEF_MAX = 50;
-const PRISON_BANK_STEP = 0.05;
-const PRISON_HIT_COST = 2;
+const PRISON_FREE_PER_COMBO = 3;
+const PRISON_FREE_EXTEND = 10;
 const MOVE_SPD0_LO = 0.048;
 const MOVE_SPD0_HI = 0.078;
 const MOVE_SPD_CAP_LO = 0.13;
@@ -127,10 +126,9 @@ export function createGame(
     ? makeChain(ball.x, ball.y, ball.r, hoop.side < 0 ? 1 : -1)
     : null;
   let prisonMode: "shackle" | "free" | null = getBall(ballId).chain ? "shackle" : null;
-  let prisonDef = PRISON_DEF_MAX;
-  let prisonBank = 0;
-  let prisonShackleMakes = 0;
-  let prisonFreeBonus = 0;
+  let prisonTarget = 1;
+  let prisonBonus = 0;
+  let prisonFreeLeft = 0;
 
   function isPrison() {
     return getBall(ballId).chain === true;
@@ -153,97 +151,95 @@ export function createGame(
     else resetChain(chain, ball.x, ball.y, ball.r, chainSide());
   }
 
+  function rollJudgment() {
+    return 1 + Math.floor(Math.random() * 20);
+  }
+
+  function prisonHud() {
+    if (!isPrison()) return null;
+    return {
+      mode: (prisonMode ?? "shackle") as "shackle" | "free",
+      target: prisonTarget,
+      bonus: prisonBonus,
+      freeLeft: prisonFreeLeft,
+    };
+  }
+
   function resetPrisonRun() {
     if (!isPrison()) {
       prisonMode = null;
-      prisonDef = PRISON_DEF_MAX;
-      prisonBank = 0;
-      prisonShackleMakes = 0;
-      prisonFreeBonus = 0;
+      prisonTarget = 1;
+      prisonBonus = 0;
+      prisonFreeLeft = 0;
       chain = null;
       return;
     }
     prisonMode = "shackle";
-    prisonDef = PRISON_DEF_MAX;
-    prisonBank = 0;
-    prisonShackleMakes = 0;
-    prisonFreeBonus = 0;
+    prisonTarget = rollJudgment();
+    prisonBonus = 0;
+    prisonFreeLeft = 0;
     syncChain();
   }
 
-  function enterPrisonShackle() {
-    prisonMode = "shackle";
-    prisonDef = PRISON_DEF_MAX;
-    prisonBank = 0;
-    prisonShackleMakes = 0;
-    prisonFreeBonus = 0;
-    timerArmed = false;
-    timeUp = false;
-    buzzer = false;
-    buzzerTimer = 0;
+  function resetPrisonCombo() {
     streak = 0;
+    combo = 0;
     comboCounting = true;
     comboClock = 0;
-    syncChain();
-    callouts.push({
-      text: "枷锁",
-      x: ball.x,
-      y: ball.y - ball.r * 2.4,
-      life: 0.9,
-      max: 0.9,
-      kind: "tag",
-    });
-    emitHud();
+    recoverTo = 0;
+    recoverMakes = 0;
+    resetTrail();
   }
 
-  function tryPrisonLiberate() {
-    if (!isPrison() || prisonMode !== "shackle") return;
-    if (prisonBank <= 0.0001) {
-      gameOver();
-      return;
-    }
+  function enterPrisonFree(achieved: number) {
     prisonMode = "free";
-    prisonFreeBonus = prisonShackleMakes;
+    prisonBonus = Math.max(1, achieved);
+    prisonFreeLeft = prisonBonus * PRISON_FREE_PER_COMBO;
     chain = null;
-    timer = Math.max(0.05, timerMax * Math.min(1, prisonBank));
-    timerArmed = true;
-    timeUp = false;
-    buzzer = false;
+    resetPrisonCombo();
     callouts.push({
-      text: "解放",
+      text: "释放",
       x: hoop.x,
       y: hoop.y - 70,
       life: 1,
       max: 1,
       kind: "tag",
     });
-    if (prisonFreeBonus > 0) {
-      callouts.push({
-        text: `枷锁×${prisonFreeBonus}`,
-        x: hoop.x,
-        y: hoop.y - 108,
-        life: 1,
-        max: 1,
-        kind: "tag",
-      });
-    }
-    emitHud();
-  }
-
-  function hurtPrison(n: number, x: number, y: number) {
-    if (!isPrison() || prisonMode !== "shackle" || phase !== "playing") return;
-    if (prisonDef <= 0) return;
-    prisonDef = Math.max(0, prisonDef - n);
     callouts.push({
-      text: `铐-${n}`,
-      x,
-      y,
-      life: 0.7,
-      max: 0.7,
+      text: `${prisonFreeLeft.toFixed(0)}秒`,
+      x: hoop.x,
+      y: hoop.y - 108,
+      life: 1,
+      max: 1,
       kind: "tag",
     });
     emitHud();
-    if (prisonDef <= 0) tryPrisonLiberate();
+  }
+
+  function enterPrisonShackle(reason: "combo" | "time" | "start") {
+    prisonMode = "shackle";
+    prisonBonus = 0;
+    prisonFreeLeft = 0;
+    prisonTarget = rollJudgment();
+    resetPrisonCombo();
+    syncChain();
+    callouts.push({
+      text: reason === "start" ? "审判" : "再入狱",
+      x: ball.x,
+      y: ball.y - ball.r * 2.6,
+      life: 0.95,
+      max: 0.95,
+      kind: "tag",
+    });
+    callouts.push({
+      text: `目标×${prisonTarget}`,
+      x: ball.x,
+      y: ball.y - ball.r * 3.6,
+      life: 1.05,
+      max: 1.05,
+      kind: "tag",
+    });
+    emitHud();
   }
 
   function pushChainSolid(nx: number, ny: number, nr: number): { x: number; y: number } | null {
@@ -369,12 +365,7 @@ export function createGame(
   }
 
   function emitHud() {
-    const timer01 =
-      isPrison() && prisonMode === "shackle"
-        ? prisonBank
-        : timerMax > 0
-          ? timer / timerMax
-          : 0;
+    const timer01 = timerMax > 0 ? timer / timerMax : 0;
     onHud({
       phase,
       score,
@@ -404,14 +395,7 @@ export function createGame(
         phys: { ...devPhys },
       },
       ballId,
-      prison: isPrison()
-        ? {
-            mode: prisonMode ?? "shackle",
-            def: prisonDef,
-            bank: prisonBank,
-            bonus: prisonFreeBonus,
-          }
-        : null,
+      prison: prisonHud(),
     });
   }
 
@@ -538,10 +522,30 @@ export function createGame(
       resetTrail();
     }
     syncChain();
-    if (isPrison()) resetPrisonRun();
-    else {
+    if (isPrison()) {
+      resetPrisonRun();
+      if (phase === "playing" || phase === "title") {
+        callouts.push({
+          text: "审判",
+          x: world.w * 0.5,
+          y: world.h * 0.28,
+          life: 1,
+          max: 1,
+          kind: "tag",
+        });
+        callouts.push({
+          text: `目标×${prisonTarget}`,
+          x: world.w * 0.5,
+          y: world.h * 0.34,
+          life: 1.1,
+          max: 1.1,
+          kind: "tag",
+        });
+      }
+    } else {
       prisonMode = null;
-      prisonFreeBonus = 0;
+      prisonBonus = 0;
+      prisonFreeLeft = 0;
     }
     persist();
     emitHud();
@@ -793,6 +797,24 @@ export function createGame(
     glassBase = 20;
     boardHitLock = 0;
     resetPrisonRun();
+    if (isPrison()) {
+      callouts.push({
+        text: "审判",
+        x: world.w * 0.5,
+        y: world.h * 0.28,
+        life: 1.1,
+        max: 1.1,
+        kind: "tag",
+      });
+      callouts.push({
+        text: `目标×${prisonTarget}`,
+        x: world.w * 0.5,
+        y: world.h * 0.34,
+        life: 1.2,
+        max: 1.2,
+        kind: "tag",
+      });
+    }
     emitHud();
   }
 
@@ -1175,7 +1197,7 @@ export function createGame(
     if (boardHitLock > 0) boardHitLock -= dt;
     if (burnFlash > 0) burnFlash = Math.max(0, burnFlash - dt);
 
-    if (phase === "playing" && timerArmed && !buzzer && !timeUp && !devFreeze && !(isPrison() && prisonMode === "shackle")) {
+    if (phase === "playing" && timerArmed && !buzzer && !timeUp && !devFreeze) {
       timer -= dt;
       if (timer <= 0) {
         timer = 0;
@@ -1205,6 +1227,26 @@ export function createGame(
       }
     }
 
+    if (phase === "playing" && isPrison() && prisonMode === "free" && !buzzer && !devFreeze) {
+      prisonFreeLeft -= dt;
+      if (prisonFreeLeft <= 0) {
+        if (comboCounting && streak > 0) {
+          prisonFreeLeft += PRISON_FREE_EXTEND;
+          callouts.push({
+            text: `+${PRISON_FREE_EXTEND}秒`,
+            x: ball.x,
+            y: ball.y - ball.r * 2.5,
+            life: 0.85,
+            max: 0.85,
+            kind: "tag",
+          });
+          emitHud();
+        } else {
+          enterPrisonShackle("time");
+        }
+      }
+    }
+
     if (phase === "playing" && (streak > 0 || combo > 0) && !buzzer && !devHoldHeat) {
       comboClock += dt;
       if (fireStage(heatN()) >= 4 && comboClock >= BLAZE_DROP) {
@@ -1221,7 +1263,7 @@ export function createGame(
           recoverMakes = 0;
           comboClock = 0;
           if (isPrison() && prisonMode === "free" && phase === "playing") {
-            enterPrisonShackle();
+            enterPrisonShackle("combo");
           } else {
             emitHud();
           }
@@ -1455,10 +1497,7 @@ export function createGame(
     if (h.active && rimHitLock <= 0) {
       rimHits += 1;
       rimHitLock = 0.08;
-      if (!ball.scored && !throughHole) {
-        hurtGlass(2, ball.x, ball.y);
-        hurtPrison(PRISON_HIT_COST, ball.x, ball.y);
-      }
+      if (!ball.scored && !throughHole) hurtGlass(2, ball.x, ball.y);
     }
     const impact = -vn;
     if (rimAudioArmed && !ball.scored && !throughHole && impact > 160) {
@@ -1532,7 +1571,6 @@ export function createGame(
     if (h.active && boardHitLock <= 0 && !ball.scored) {
       boardHitLock = 0.08;
       hurtGlass(2, ball.x, ball.y);
-      hurtPrison(PRISON_HIT_COST, ball.x, ball.y - ball.r);
     }
   }
 
@@ -1632,17 +1670,11 @@ export function createGame(
     const shackled = isPrison() && prisonMode === "shackle";
     const freed = isPrison() && prisonMode === "free";
 
-    if (!shackled) {
-      if (comboCounting) streak += 1;
-      else streak = 1;
-      comboCounting = true;
-      comboClock = 0;
-      combo = Math.max(combo, streak);
-    } else {
-      streak = 0;
-      comboCounting = true;
-      comboClock = 0;
-    }
+    if (comboCounting) streak += 1;
+    else streak = 1;
+    comboCounting = true;
+    comboClock = 0;
+    combo = Math.max(combo, streak);
 
     madeCount += 1;
     if (madeCount === 1) {
@@ -1653,15 +1685,16 @@ export function createGame(
     }
 
     if (shackled) {
-      prisonShackleMakes += 1;
-      prisonBank = Math.min(1, prisonBank + PRISON_BANK_STEP);
       noteGraf();
+      if (!timerArmed) timerArmed = true;
       audio.swish();
       audio.score(swish, 0);
       tugNet(hoop);
+      timerMax = Math.max(TIMER_MIN, timerMax * TIMER_DECAY);
+      timer = timerMax;
       nextHoop();
       emitHud();
-      if (prisonBank >= 1 - 1e-6) tryPrisonLiberate();
+      if (streak >= prisonTarget) enterPrisonFree(streak);
       return;
     }
 
@@ -1690,7 +1723,7 @@ export function createGame(
     }
     const extra = prevStage >= 4 ? 3 : prevStage === 3 ? 2 : prevStage >= 2 ? 1 : 0;
     gain += extra * streak;
-    if (freed) gain += prisonFreeBonus;
+    if (freed) gain += prisonBonus;
     const clutch = buzzer || timeUp;
     const tag = clutch
       ? "绝杀"
@@ -1744,9 +1777,9 @@ export function createGame(
       max: 0.9,
       kind: "score",
     });
-    if (freed && prisonFreeBonus > 0) {
+    if (freed && prisonBonus > 0) {
       callouts.push({
-        text: `铐+${prisonFreeBonus}`,
+        text: `铐+${prisonBonus}`,
         x: hoop.x,
         y: hoop.y - hoop.inner * RIM_RY + 18,
         capY: boardTop + 8,
@@ -1779,7 +1812,6 @@ export function createGame(
     }
     timerMax = Math.max(TIMER_MIN, timerMax * TIMER_DECAY);
     timer = timerMax;
-    if (freed) prisonBank = 1;
     const stage = fireStage(heatN());
     nextHoop();
     if (other && stage >= 2) {
@@ -2000,14 +2032,7 @@ export function createGame(
           ctx.beginPath();
           ctx.rect(0, 0, world.w, world.h);
           ctx.clip();
-          const timer01 =
-            isPrison() && prisonMode === "shackle"
-              ? prisonBank
-              : phase === "over"
-                ? 1
-                : timerMax > 0
-                  ? timer / timerMax
-                  : 0;
+          const timer01 = phase === "over" ? 1 : timerMax > 0 ? timer / timerMax : 0;
           const k = Number.isFinite(camShake) ? Math.min(1, Math.max(0, camShake) / 0.16) : 0;
           const amp = k > 0.002 ? 4.6 * k * k : 0;
           drawScene(
@@ -2029,7 +2054,11 @@ export function createGame(
             burnFlash,
             trail,
             whiteFlash,
-            comboCounting && streak >= 2 && !(isPrison() && prisonMode === "shackle") ? streak : 0,
+            comboCounting && streak >= 1 && isPrison() && prisonMode === "shackle"
+              ? streak
+              : comboCounting && streak >= 2
+                ? streak
+                : 0,
             opener > 0 && streak < 2 ? "好戏开始" : "",
             cloudShift,
             cloudSx,
@@ -2045,14 +2074,7 @@ export function createGame(
             ballId,
             isGlass() ? glassBase : -1,
             chain && hasChain() ? chain : null,
-            isPrison()
-              ? {
-                  mode: prisonMode ?? "shackle",
-                  def: prisonDef,
-                  bank: prisonBank,
-                  bonus: prisonFreeBonus,
-                }
-              : null,
+            prisonHud(),
           );
           ctx.restore();
           }

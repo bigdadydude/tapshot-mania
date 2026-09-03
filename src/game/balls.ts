@@ -60,7 +60,7 @@ export const BALLS: BallKit[] = [
   {
     id: "prison",
     name: "监狱球",
-    skill: "枷锁攒条，解放爆发；断连回铐",
+    skill: "d20定目标，连击破铐；自由抢分",
     heat: false,
     wrap: "ground",
     score: "normal",

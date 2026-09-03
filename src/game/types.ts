@@ -115,9 +115,12 @@ export const DEFAULT_GFX: Gfx = {
 
 export type PrisonHud = {
   mode: "shackle" | "free";
-  def: number;
-  bank: number;
+  /** Combo target for current shackle (d20). */
+  target: number;
+  /** Bonus from last cleared shackle combo; used while free. */
   bonus: number;
+  /** Remaining free-state seconds. */
+  freeLeft: number;
 };
 
 export type HudState = {
