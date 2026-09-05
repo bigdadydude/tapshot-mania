@@ -18,6 +18,9 @@ export function fireStage(combo: number): 0 | 1 | 2 | 3 | 4 {
 
 export type TrailPt = { x: number; y: number };
 
+/** Ninja ball afterimage clone drawn along delayed path. */
+export type NinjaCloneDraw = { x: number; y: number; r: number; alpha: number };
+
 export type Particle = {
   x: number;
   y: number;
@@ -117,7 +120,7 @@ export type PrisonHud = {
   mode: "shackle" | "free";
   /** Combo target for current shackle (d20). */
   target: number;
-  /** Bonus from last cleared shackle combo; used while free. */
+  /** Bonus from last cleared shackle peak combo × 3; used while free. */
   bonus: number;
   /** Remaining free-state seconds. */
   freeLeft: number;

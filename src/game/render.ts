@@ -1,4 +1,4 @@
-import type { Ball, Callout, Gfx, Hoop, Particle, PrisonHud, TrailPt, World } from "./types";
+import type { Ball, Callout, Gfx, Hoop, NinjaCloneDraw, Particle, PrisonHud, TrailPt, World } from "./types";
 import { DEFAULT_GFX, fireStage } from "./types";
 import { artImage, ballImage, cloudImages, graffitiImage } from "./art";
 import type { BallId } from "./balls";
@@ -49,6 +49,7 @@ export function drawScene(
   glassBase = -1,
   chain: Chain | null = null,
   prison: PrisonHud | null = null,
+  ninjaClones: NinjaCloneDraw[] = [],
 ) {
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
@@ -65,6 +66,27 @@ export function drawScene(
 	const ballWithOther = Boolean(other && distO < distH);
 	if (other) drawHoopStack(ctx, other, world, ballWithOther ? ball : null, combo, time, gfx.particles ? trail : [], gfx, ballId);
 	drawHoopStack(ctx, hoop, world, ballWithOther ? null : ball, combo, time, gfx.particles ? trail : [], gfx, ballId);
+	for (const c of ninjaClones) {
+		drawNinjaBall(
+			ctx,
+			{
+				x: c.x,
+				y: c.y,
+				r: c.r,
+				vx: 0,
+				vy: 0,
+				spin: ball.spin * 0.85,
+				omega: 0,
+				squash: 1,
+				scored: false,
+				hitRim: false,
+				hitBoard: false,
+			},
+			gfx.ballShade,
+			c.alpha,
+			"gray",
+		);
+	}
 	if (chain) drawChain(ctx, chain, false);
 	if (gfx.particles) for (const p of particles) drawParticle(ctx, p);
 	const pops = prison?.mode === "shackle" ? callouts.filter((c) => c.kind === "tag") : callouts;
@@ -709,6 +731,20 @@ function boardGeom(hoop: Hoop, world: World) {
 }
 export { boardGeom };
 
+/** Support brace + wall bar — matches drawBackboard geometry for collision. */
+export function braceColliders(hoop: Hoop, world: World) {
+  const g = boardGeom(hoop, world);
+  const left = hoop.side < 0;
+  const boardBack = left ? g.visX : g.visX + g.visW;
+  const wallX = left ? -Math.max(90, world.w * 0.42) : world.w + Math.max(90, world.w * 0.42);
+  const halfW = Math.max(3.6, g.visW * 0.42) * 0.5;
+  const braceY = g.visY + g.bh * 0.14;
+  return [
+    { x0: boardBack, y0: braceY, x1: wallX, y1: braceY, halfW },
+    { x0: boardBack, y0: hoop.y + 2, x1: wallX, y1: hoop.y + g.padH * 0.85, halfW },
+  ] as const;
+}
+
 function bracePivot(hoop: Hoop, world: World) {
   const g = boardGeom(hoop, world);
   const left = hoop.side < 0;
@@ -1078,9 +1114,111 @@ function drawPrisonBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean)
 	ctx.restore();
 }
 
+function drawNinjaBall(
+	ctx: CanvasRenderingContext2D,
+	ball: Ball,
+	lit: boolean,
+	alpha = 1,
+	tone: "purple" | "gray" = "purple",
+) {
+	const { x, y, r, spin, squash } = ball;
+	const gray = tone === "gray";
+	ctx.save();
+	ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+	ctx.scale(1 / squash, squash);
+	ctx.beginPath();
+	ctx.arc(0, 0, r, 0, Math.PI * 2);
+	ctx.clip();
+	ctx.save();
+	ctx.rotate(spin);
+	const skin = ctx.createRadialGradient(-r * 0.28, -r * 0.34, r * 0.08, r * 0.12, r * 0.18, r * 1.08);
+	if (gray) {
+		skin.addColorStop(0, "#d4d4d8");
+		skin.addColorStop(0.4, "#9a9aa2");
+		skin.addColorStop(1, "#4a4a52");
+	} else {
+		skin.addColorStop(0, "#c9b6ff");
+		skin.addColorStop(0.4, "#7c4dff");
+		skin.addColorStop(1, "#3b1a9e");
+	}
+	ctx.fillStyle = skin;
+	ctx.fillRect(-r - 1, -r - 1, r * 2 + 2, r * 2 + 2);
+	ctx.strokeStyle = gray ? "rgba(24,24,28,0.55)" : "rgba(20,8,48,0.55)";
+	ctx.lineWidth = Math.max(1.2, r * 0.06);
+	ctx.beginPath();
+	ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.moveTo(-r, 0);
+	ctx.lineTo(r, 0);
+	ctx.moveTo(0, -r);
+	ctx.lineTo(0, r);
+	ctx.stroke();
+	ctx.restore();
+	if (lit) {
+		const shade = ctx.createRadialGradient(0, 0, r * 0.48, 0, 0, r);
+		shade.addColorStop(0, "rgba(0,0,0,0)");
+		shade.addColorStop(1, gray ? "rgba(12,12,16,0.42)" : "rgba(20,8,50,0.4)");
+		ctx.fillStyle = shade;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+		const spec = ctx.createRadialGradient(-r * 0.3, -r * 0.38, 0, -r * 0.2, -r * 0.28, r * 0.48);
+		spec.addColorStop(0, "rgba(255,255,255,0.4)");
+		spec.addColorStop(1, "rgba(255,255,255,0)");
+		ctx.fillStyle = spec;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+	}
+	ctx.restore();
+}
+
+function drawYellowBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
+	const { x, y, r, squash } = ball;
+	ctx.save();
+	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+	ctx.scale(1 / squash, squash);
+	const skin = ctx.createRadialGradient(-r * 0.28, -r * 0.32, r * 0.06, r * 0.1, r * 0.15, r * 1.05);
+	skin.addColorStop(0, "#ffe566");
+	skin.addColorStop(0.45, "#ffd000");
+	skin.addColorStop(1, "#e6a800");
+	ctx.fillStyle = skin;
+	ctx.beginPath();
+	ctx.arc(0, 0, r, 0, Math.PI * 2);
+	ctx.fill();
+	if (lit) {
+		const shade = ctx.createRadialGradient(0, 0, r * 0.45, 0, 0, r);
+		shade.addColorStop(0, "rgba(0,0,0,0)");
+		shade.addColorStop(1, "rgba(120,70,0,0.28)");
+		ctx.fillStyle = shade;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+		const spec = ctx.createRadialGradient(-r * 0.32, -r * 0.38, 0, -r * 0.22, -r * 0.28, r * 0.5);
+		spec.addColorStop(0, "rgba(255,255,255,0.55)");
+		spec.addColorStop(0.35, "rgba(255,255,220,0.12)");
+		spec.addColorStop(1, "rgba(255,255,255,0)");
+		ctx.fillStyle = spec;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+	}
+	ctx.restore();
+}
+
 function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _world: World, time = 0, lit = true, ballId: BallId = DEFAULT_BALL) {
 	if (ballId === "prison") {
 		drawPrisonBall(ctx, ball, lit);
+		return;
+	}
+	if (ballId === "ninja") {
+		drawNinjaBall(ctx, ball, lit, 1);
+		return;
+	}
+	if (ballId === "rubber") {
+		drawYellowBall(ctx, ball, lit);
 		return;
 	}
 	if (ballId === "glass") {

@@ -12,30 +12,30 @@ import {
   tugNet,
   RIM_RY,
 } from "./net";
-import { boardGeom, drawBoot, drawScene } from "./render";
+import { boardGeom, braceColliders, drawBoot, drawScene } from "./render";
 import { loadSave, writeSave } from "./save";
-import { getBall, parseBall, type BallId } from "./balls";
+import { ballRadius, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { DEFAULT_PHYS, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevPhys, type DevSceneId } from "./dev";
 import type { GrafKey } from "./scenes";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
 
-export const GAME_REV = 211;
+export const GAME_REV = 237;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
 const TIMER_MIN = 2.6;
 const TIMER_DECAY = 0.972;
-const COMBO_STOP = 4;
 const GRAF_IN = 1.2;
 const COMBO_DROP = 2;
-const BLAZE_DROP = 2.5;
 const BUZZER_WINDOW = 5;
 const HOOP_HOLD = 0.72;
 const FIRE_HOLD = 1.35;
 const PRISON_FREE_PER_COMBO = 3;
 const PRISON_FREE_EXTEND = 10;
+const NINJA_DELAYS = [0.11, 0.22, 0.33] as const;
+const NINJA_CLONE_AT = [20, 40, 60] as const;
 const MOVE_SPD0_LO = 0.048;
 const MOVE_SPD0_HI = 0.078;
 const MOVE_SPD_CAP_LO = 0.13;
@@ -114,7 +114,7 @@ export function createGame(
   let devPhys: DevPhys = { ...DEFAULT_PHYS };
   audio.setMix(mix);
 
-  let ball = makeBall(world, 1);
+  let ball = makeBall(world, 1, ballRadius(world.ballR, ballId));
   let hoop = makeHoop(world, -1, true);
   let other: Hoop | null = null;
   let particles: Particle[] = [];
@@ -129,9 +129,109 @@ export function createGame(
   let prisonTarget = 1;
   let prisonBonus = 0;
   let prisonFreeLeft = 0;
+  /** Peak combo during current shackle; becomes 铐奖 base. */
+  let prisonShackleBest = 0;
+  /** Free-time +10s may fire once per free period. */
+  let prisonFreeExtendUsed = false;
+  type PathSample = { x: number; y: number; t: number };
+  type NinjaGhost = {
+    delay: number;
+    scoredLock: number;
+    x: number;
+    y: number;
+    prevY: number;
+  };
+  /** Rim snapshots so clones can score after nextHoop moves the live basket. */
+  type NinjaGate = {
+    x: number;
+    y: number;
+    inner: number;
+    life: number;
+    hit: boolean[];
+  };
+  let pathHist: PathSample[] = [];
+  let pathClock = 0;
+  let ninjaGhosts: NinjaGhost[] = [];
+  let ninjaGates: NinjaGate[] = [];
+
+  function activeBallR() {
+    return ballRadius(world.ballR, ballId);
+  }
+
+  function remakeBall(side: -1 | 1) {
+    ball = makeBall(world, side, activeBallR());
+  }
 
   function isPrison() {
     return getBall(ballId).chain === true;
+  }
+
+  function isNinja() {
+    return ballId === "ninja";
+  }
+
+  function ninjaCloneCount() {
+    if (!isNinja() || phase !== "playing") return 0;
+    if (streak >= NINJA_CLONE_AT[2]) return 3;
+    if (streak >= NINJA_CLONE_AT[1]) return 2;
+    if (streak >= NINJA_CLONE_AT[0]) return 1;
+    return 0;
+  }
+
+  function resetNinjaPath() {
+    pathHist = [];
+    pathClock = 0;
+    ninjaGhosts = [];
+    ninjaGates = [];
+  }
+
+  function syncNinjaGhosts() {
+    const n = ninjaCloneCount();
+    while (ninjaGhosts.length < n) {
+      const i = ninjaGhosts.length;
+      ninjaGhosts.push({
+        delay: NINJA_DELAYS[i]!,
+        scoredLock: 0,
+        x: ball.x,
+        y: ball.y,
+        prevY: ball.y,
+      });
+    }
+    if (ninjaGhosts.length > n) ninjaGhosts.length = n;
+  }
+
+  function pushNinjaPath(dt: number) {
+    if (!isNinja()) return;
+    pathClock += dt;
+    pathHist.push({ x: ball.x, y: ball.y, t: pathClock });
+    const keep = pathClock - 1.05;
+    while (pathHist.length > 2 && pathHist[0]!.t < keep) pathHist.shift();
+  }
+
+  function sampleNinjaPath(delay: number): { x: number; y: number } | null {
+    if (pathHist.length < 2) return null;
+    const target = pathClock - delay;
+    const first = pathHist[0]!;
+    if (target <= first.t) return { x: first.x, y: first.y };
+    for (let i = 1; i < pathHist.length; i++) {
+      const a = pathHist[i - 1]!;
+      const b = pathHist[i]!;
+      if (target <= b.t) {
+        const u = (target - a.t) / Math.max(1e-6, b.t - a.t);
+        return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u };
+      }
+    }
+    const last = pathHist[pathHist.length - 1]!;
+    return { x: last.x, y: last.y };
+  }
+
+  function ninjaClonesDraw() {
+    return ninjaGhosts.map((g, i) => ({
+      x: g.x,
+      y: g.y,
+      r: ball.r,
+      alpha: 0.42 - i * 0.08,
+    }));
   }
 
   function hasChain() {
@@ -171,6 +271,8 @@ export function createGame(
       prisonTarget = 1;
       prisonBonus = 0;
       prisonFreeLeft = 0;
+      prisonFreeExtendUsed = false;
+      prisonShackleBest = 0;
       chain = null;
       return;
     }
@@ -178,6 +280,8 @@ export function createGame(
     prisonTarget = rollJudgment();
     prisonBonus = 0;
     prisonFreeLeft = 0;
+    prisonFreeExtendUsed = false;
+    prisonShackleBest = 0;
     syncChain();
   }
 
@@ -188,15 +292,52 @@ export function createGame(
     comboClock = 0;
     recoverTo = 0;
     recoverMakes = 0;
+    shotOpen = false;
+    shotMade = false;
+    shotMissed = false;
+    shotAirborne = false;
     resetTrail();
+  }
+
+  function markShotMissed() {
+    if (shotOpen && !shotMade) shotMissed = true;
+  }
+
+  /** Break streak only when opening a new shot after a finished miss — not mid-air re-taps. */
+  function breakComboOnMissJump() {
+    if (!shotMissed) return;
+    shotMissed = false;
+    if (streak <= 0 && !comboCounting && combo <= 0) return;
+    streak = 0;
+    comboCounting = false;
+    comboClock = 0;
+    recoverMakes = 0;
+    if (isNinja()) resetNinjaPath();
+    if (isPrison() && prisonMode === "free" && phase === "playing") {
+      enterPrisonShackle("combo");
+    } else {
+      emitHud();
+    }
+  }
+
+  function refillPrisonTimer() {
+    timer = timerMax;
+    timeUp = false;
+    buzzer = false;
+    buzzerTimer = 0;
   }
 
   function enterPrisonFree(achieved: number) {
     prisonMode = "free";
-    prisonBonus = Math.max(1, achieved);
-    prisonFreeLeft = prisonBonus * PRISON_FREE_PER_COMBO;
+    const peak = Math.max(1, achieved);
+    // 铐奖 = 上一段枷锁最高连击 × 3；自由时长仍为连击 × 3 秒
+    prisonBonus = peak * 3;
+    prisonFreeLeft = peak * PRISON_FREE_PER_COMBO;
+    prisonFreeExtendUsed = false;
+    prisonShackleBest = 0;
     chain = null;
     resetPrisonCombo();
+    refillPrisonTimer();
     callouts.push({
       text: "释放",
       x: hoop.x,
@@ -220,8 +361,11 @@ export function createGame(
     prisonMode = "shackle";
     prisonBonus = 0;
     prisonFreeLeft = 0;
+    prisonFreeExtendUsed = false;
+    prisonShackleBest = 0;
     prisonTarget = rollJudgment();
     resetPrisonCombo();
+    refillPrisonTimer();
     syncChain();
     callouts.push({
       text: reason === "start" ? "审判" : "再入狱",
@@ -324,6 +468,14 @@ export function createGame(
   let madeCount = 0;
   let comboClock = 0;
   let comboCounting = true;
+  /** True after a jump until the next *new* shot opens. Mid-air re-taps keep this. */
+  let shotOpen = false;
+  /** True if this open shot scored (body). Survives wrap/floor clearing ball.scored. */
+  let shotMade = false;
+  /** Previous attempt finished without a make (wrap / floor settle) — next new jump breaks streak. */
+  let shotMissed = false;
+  /** Left the floor during this attempt — avoids marking miss on takeoff overlap. */
+  let shotAirborne = false;
   let opener = 0;
   let bgmOn = false;
   let cloudT = 0;
@@ -422,7 +574,28 @@ export function createGame(
   }
 
   function pMul(k: keyof DevPhys): number {
-    return clampPhysKey(k, devOn ? devPhys[k] : kitPhys(k));
+    let v = clampPhysKey(k, devOn ? devPhys[k] : kitPhys(k));
+    if (!devOn && isPrison() && prisonMode) {
+      if (prisonMode === "free") {
+        // Free: rim/board grip 120% of classic.
+        if (k === "rimFric" || k === "boardFric") v = clampPhysKey(k, v * 1.2);
+      } else {
+        // Shackle: mild kit nudge; iron tip swing does most of the feel.
+        const m: Partial<Record<keyof DevPhys, number>> = {
+          grav: 1.06,
+          jumpUp: 0.94,
+          jumpFwd: 0.92,
+          ball: 0.92,
+          air: 1.1,
+          roll: 1.12,
+          rimFric: 1.05,
+          boardFric: 1.04,
+        };
+        const f = m[k];
+        if (typeof f === "number") v = clampPhysKey(k, v * f);
+      }
+    }
+    return v;
   }
 
   function isGlass() {
@@ -477,7 +650,9 @@ export function createGame(
           : kind === "rim"
             ? 0.56 * ballK * hoopK
             : 0.76 * ballK * hoopK;
-    return Math.max(0, Math.min(0.98, raw));
+    // Floor must stay < ~0.88 or fallBoost (1.28g down) pumps energy each bounce.
+    const cap = kind === "floorHi" || kind === "floorLo" ? 0.84 : 0.95;
+    return Math.max(0, Math.min(cap, raw));
   }
 
   function jumpVx() {
@@ -500,6 +675,7 @@ export function createGame(
     ballId = parseBall(id);
     glassBase = 20;
     glassLand = false;
+    resetNinjaPath();
     if (!canHeat()) {
       resetTrail();
       hoop.sear = 0;
@@ -515,7 +691,7 @@ export function createGame(
     }
     if (devOn) {
       applyKitPhys();
-      ball = makeBall(world, hoop.side < 0 ? 1 : -1);
+      remakeBall(hoop.side < 0 ? 1 : -1);
       prevBallX = ball.x;
       prevBallY = ball.y;
       resetShotFlags();
@@ -546,6 +722,8 @@ export function createGame(
       prisonMode = null;
       prisonBonus = 0;
       prisonFreeLeft = 0;
+      prisonFreeExtendUsed = false;
+      prisonShackleBest = 0;
     }
     persist();
     emitHud();
@@ -743,7 +921,8 @@ export function createGame(
     const sy = prev.h > 1 ? world.h / prev.h : 1;
     ball.x *= sx;
     ball.y *= sy;
-    ball.r = world.ballR;
+    ball.r = activeBallR();
+    if (ball.y + ball.r > world.floorY) ball.y = world.floorY - ball.r;
     scaleHoop(hoop, sx, sy, world);
     if (other) scaleHoop(other, sx, sy, world);
     syncChain();
@@ -767,6 +946,10 @@ export function createGame(
     tapLock = 0;
     comboClock = 0;
     comboCounting = true;
+    shotOpen = false;
+    shotMade = false;
+    shotMissed = false;
+    shotAirborne = false;
     opener = 0;
     bgmOn = false;
     recoverTo = 0;
@@ -784,7 +967,7 @@ export function createGame(
     fromBelow = false;
     hoop = makeHoop(world, -1, true);
     other = null;
-    ball = makeBall(world, 1);
+    remakeBall(1);
     ball.vx = jumpVx() * 0.18;
     ball.vy = jumpVy() * 0.16;
     prevBallX = ball.x;
@@ -797,6 +980,7 @@ export function createGame(
     glassBase = 20;
     boardHitLock = 0;
     resetPrisonRun();
+    resetNinjaPath();
     if (isPrison()) {
       callouts.push({
         text: "审判",
@@ -827,11 +1011,16 @@ export function createGame(
     combo = 0;
     streak = 0;
     comboCounting = true;
+    shotOpen = false;
+    shotMade = false;
+    shotMissed = false;
+    shotAirborne = false;
     opener = 0;
     bgmOn = false;
     recoverTo = 0;
     recoverMakes = 0;
     resetTrail();
+    resetNinjaPath();
     if (score > best && !devOn) {
       best = score;
       persist();
@@ -869,6 +1058,22 @@ export function createGame(
     if (buzzer || timeUp) return;
     if (tapLock > 0) return;
     if (ballHidden() && !onApproachSide()) return;
+    // Mid-air re-tap on an unfinished attempt: boost only — do not break combo.
+    if (shotOpen && !shotMade && !shotMissed) {
+      hint = false;
+      ball.vy = jumpVy();
+      ball.vx = jumpVx();
+      ball.omega = ball.vx / Math.max(8, ball.r);
+      ball.squash = 1.08;
+      ball.scored = false;
+      resetShotFlags();
+      glassLand = true;
+      tapLock = 0.03;
+      audio.whoosh(0.5);
+      emitHud();
+      return;
+    }
+    breakComboOnMissJump();
     hint = false;
     ball.vy = jumpVy();
     ball.vx = jumpVx();
@@ -876,6 +1081,10 @@ export function createGame(
     ball.squash = 1.08;
     ball.scored = false;
     resetShotFlags();
+    shotOpen = true;
+    shotMade = false;
+    shotMissed = false;
+    shotAirborne = false;
     glassLand = true;
     tapLock = 0.03;
     audio.whoosh(0.5);
@@ -937,9 +1146,13 @@ export function createGame(
     bgmOn = false;
     recoverTo = 0;
     recoverMakes = 0;
+    shotOpen = false;
+    shotMade = false;
+    shotMissed = false;
+    shotAirborne = false;
     other = null;
     hoop = makeHoop(world, -1, true);
-    ball = makeBall(world, 1);
+    remakeBall(1);
     particles = [];
     callouts = [];
     resetTrail();
@@ -948,6 +1161,7 @@ export function createGame(
     resetGraf();
     leaveSandbox();
     resetPrisonRun();
+    resetNinjaPath();
     emitHud();
   }
 
@@ -1118,7 +1332,7 @@ export function createGame(
         emitHud();
         return;
       case "resetBall":
-        ball = makeBall(world, hoop.side < 0 ? 1 : -1);
+        remakeBall(hoop.side < 0 ? 1 : -1);
         prevBallX = ball.x;
         prevBallY = ball.y;
         resetShotFlags();
@@ -1230,7 +1444,8 @@ export function createGame(
     if (phase === "playing" && isPrison() && prisonMode === "free" && !buzzer && !devFreeze) {
       prisonFreeLeft -= dt;
       if (prisonFreeLeft <= 0) {
-        if (comboCounting && streak > 0) {
+        if (!prisonFreeExtendUsed && comboCounting && streak > 0) {
+          prisonFreeExtendUsed = true;
           prisonFreeLeft += PRISON_FREE_EXTEND;
           callouts.push({
             text: `+${PRISON_FREE_EXTEND}秒`,
@@ -1247,28 +1462,10 @@ export function createGame(
       }
     }
 
-    if (phase === "playing" && (streak > 0 || combo > 0) && !buzzer && !devHoldHeat) {
+    // Heat decays only after streak is broken (miss jump). No time-window streak break.
+    if (phase === "playing" && !comboCounting && combo > 0 && !buzzer && !devHoldHeat) {
       comboClock += dt;
-      if (fireStage(heatN()) >= 4 && comboClock >= BLAZE_DROP) {
-        dropFrom(combo);
-        combo = STAGE_IGNITE;
-        resetTrail();
-        noteGraf();
-        emitHud();
-      }
-      if (comboCounting) {
-        if (comboClock >= COMBO_STOP) {
-          comboCounting = false;
-          streak = 0;
-          recoverMakes = 0;
-          comboClock = 0;
-          if (isPrison() && prisonMode === "free" && phase === "playing") {
-            enterPrisonShackle("combo");
-          } else {
-            emitHud();
-          }
-        }
-      } else if (combo > 0 && comboClock >= COMBO_DROP) {
+      if (comboClock >= COMBO_DROP) {
         comboClock = 0;
         dropComboStage();
       }
@@ -1298,12 +1495,14 @@ export function createGame(
     const live = phase === "playing" || phase === "over" || phase === "title";
     if (live) {
       const gScale = buzzer ? 0.42 : 1;
-      const fallBoost = ball.vy > 20 ? 1.28 : 1;
+      // High-bounce kits skip fallBoost — otherwise each landing gains height.
+      const fallBoost = ball.vy > 20 && pMul("ball") <= 1.15 ? 1.28 : 1;
       const buoy = pMul("buoy");
       ball.vy += gravity() * dt * (gScale * fallBoost - buoy);
       const air = pMul("air");
       const roll = pMul("roll");
       const onFloor = ball.y + ball.r >= world.floorY - 0.5 && ball.vy >= 0;
+      if (!onFloor && ball.y + ball.r < world.floorY - 2) shotAirborne = true;
       if (onFloor) {
         ball.vx *= 1 - Math.min(0.85, 0.28 * roll * dt);
         ball.omega = ball.vx / Math.max(8, ball.r);
@@ -1318,6 +1517,8 @@ export function createGame(
       ball.y += ball.vy * dt * move;
       if (ball.y + ball.r < 0) wentOffTop = true;
       wrapX();
+      pushNinjaPath(dt);
+      stepNinjaGhosts(dt);
       pushTrail();
       ball.spin += ball.omega * dt;
       ball.squash += (1 - ball.squash) * (1 - Math.exp(-12 * dt));
@@ -1327,7 +1528,11 @@ export function createGame(
           if (other) collideRim(other);
         }
         collideBoard(hoop);
-        if (other) collideBoard(other);
+        collideBrace(hoop);
+        if (other) {
+          collideBoard(other);
+          collideBrace(other);
+        }
       }
       if (phase === "playing") checkScore();
       collideFloor();
@@ -1340,6 +1545,7 @@ export function createGame(
           gravity(),
           dt,
           phase === "title" ? undefined : pushChainSolid,
+          1.35,
         );
       }
     }
@@ -1574,20 +1780,76 @@ export function createGame(
     }
   }
 
+  /** Collide with hoop support brace (was visual-only — small balls tunneled through). */
+  function collideBrace(h: Hoop) {
+    const segs = braceColliders(h, world);
+    const hitR = ball.r;
+    for (const s of segs) {
+      const dx = s.x1 - s.x0;
+      const dy = s.y1 - s.y0;
+      const len2 = dx * dx + dy * dy || 0.0001;
+      let t = ((ball.x - s.x0) * dx + (ball.y - s.y0) * dy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const px = s.x0 + dx * t;
+      const py = s.y0 + dy * t;
+      let ox = ball.x - px;
+      let oy = ball.y - py;
+      let dist = Math.hypot(ox, oy);
+      const need = hitR + s.halfW;
+      if (dist >= need) continue;
+      if (dist < 0.0001) {
+        const len = Math.hypot(dx, dy) || 1;
+        ox = -dy / len;
+        oy = dx / len;
+        dist = 0.0001;
+      }
+      const nx = ox / dist;
+      const ny = oy / dist;
+      const overlap = need - dist;
+      ball.x += nx * (overlap + 0.35);
+      ball.y += ny * (overlap + 0.35);
+      const vn = ball.vx * nx + ball.vy * ny;
+      if (vn >= 0) continue;
+      const rest = bounceRest("board");
+      ball.vx -= (1 + rest) * vn * nx;
+      ball.vy -= (1 + rest) * vn * ny;
+      const tx = -ny;
+      const ty = nx;
+      const vt = ball.vx * tx + ball.vy * ty;
+      const grip = Math.min(0.92, 0.12 * pMul("boardFric"));
+      ball.vx -= grip * vt * tx;
+      ball.vy -= grip * vt * ty;
+      ball.hitBoard = true;
+      if (-vn > 90) audio.board(Math.min(1, (-vn - 60) / 520));
+    }
+  }
+
   function wrapX() {
     const r = ball.r;
     const pad = wrapPad();
-    const pastPad = ball.x < -r - pad || ball.x > world.w + r + pad;
+    const exitLeft = ball.x < -r - pad;
+    const exitRight = ball.x > world.w + r + pad;
     const stuckOff =
       ballHidden() &&
       ball.y + r >= world.floorY - 1 &&
       Math.abs(ball.vx) < 14 &&
       ball.vy >= 0;
-    if (!pastPad && !stuckOff) return;
+    if (!exitLeft && !exitRight && !stuckOff) return;
     if (getBall(ballId).wrap === "height") {
-      ball.x = ball.x < world.w * 0.5 ? world.w + r + pad : -r - pad;
+      // Spawn on the approach side of the active hoop (same rule as classic wrap).
+      // hoop.side > 0 → basket on right → enter from left; else enter from right.
+      const spd = Math.max(44, Math.abs(ball.vx));
+      if (hoop.side > 0) {
+        ball.x = -r - pad * 0.5;
+        ball.vx = spd;
+      } else {
+        ball.x = world.w + r + pad * 0.5;
+        ball.vx = -spd;
+      }
+      ball.omega = ball.vx / Math.max(8, r);
       ball.scored = false;
       resetShotFlags();
+      markShotMissed();
       resetTrail();
       prevBallX = ball.x;
       prevBallY = ball.y;
@@ -1599,6 +1861,7 @@ export function createGame(
     ball.squash = 1;
     ball.scored = false;
     resetShotFlags();
+    markShotMissed();
     const roll = 44;
     if (hoop.side > 0) {
       ball.x = -r - pad;
@@ -1642,6 +1905,10 @@ export function createGame(
     ball.omega = ball.vx / Math.max(8, ball.r);
     ball.scored = false;
     resetShotFlags();
+    if (incoming <= 40 && shotAirborne) {
+      markShotMissed();
+      shotAirborne = false;
+    }
   }
 
   function checkScore() {
@@ -1656,16 +1923,75 @@ export function createGame(
     if (overRim && goingDown && below && inHole) registerScore();
   }
 
-  function registerScore() {
-    ball.scored = true;
-    scoredLock = 0.22;
-    ball.vy += 70;
-    const swish = !ball.hitRim && !ball.hitBoard;
-    const bank = ball.hitBoard;
-    const toilet = rimHits >= 3;
-    const lucky = hitBoardTop;
-    const depth = wentOffTop && swish;
-    const needle = fromBelow;
+  function checkGhostScore(g: NinjaGhost, gi: number) {
+    if (phase !== "playing" || g.scoredLock > 0) return;
+    // Rim gates left by the real ball (survive nextHoop).
+    for (const gate of ninjaGates) {
+      if (gate.hit[gi]) continue;
+      const inHole = Math.abs(g.x - gate.x) < gate.inner - ball.r * 0.05;
+      if (!inHole) continue;
+      // Crossed the rim plane downward through the hole.
+      if (g.prevY < gate.y && g.y >= gate.y) {
+        gate.hit[gi] = true;
+        g.scoredLock = 0.5;
+        registerScore({
+          ghost: true,
+          at: { x: gate.x, y: gate.y, inner: gate.inner },
+        });
+        return;
+      }
+    }
+  }
+
+  function stepNinjaGhosts(dt: number) {
+    if (!isNinja()) {
+      if (ninjaGhosts.length || ninjaGates.length) resetNinjaPath();
+      return;
+    }
+    for (let i = ninjaGates.length - 1; i >= 0; i--) {
+      const gate = ninjaGates[i]!;
+      gate.life -= dt;
+      if (gate.life <= 0) ninjaGates.splice(i, 1);
+    }
+    syncNinjaGhosts();
+    for (let gi = 0; gi < ninjaGhosts.length; gi++) {
+      const g = ninjaGhosts[gi]!;
+      if (g.scoredLock > 0) g.scoredLock = Math.max(0, g.scoredLock - dt);
+      const p = sampleNinjaPath(g.delay);
+      if (!p) continue;
+      g.prevY = g.y;
+      g.x = p.x;
+      g.y = p.y;
+      if (phase === "playing") checkGhostScore(g, gi);
+    }
+  }
+
+  function registerScore(opts?: {
+    ghost?: boolean;
+    at?: { x: number; y: number; inner: number } | Hoop;
+  }) {
+    const ghost = opts?.ghost === true;
+    const scoredHoop = opts?.at ?? hoop;
+    if (!ghost) {
+      ball.scored = true;
+      scoredLock = 0.22;
+      ball.vy += 70;
+      if (isNinja()) {
+        ninjaGates.push({
+          x: hoop.x,
+          y: hoop.y,
+          inner: hoop.inner,
+          life: 1.6,
+          hit: [false, false, false],
+        });
+      }
+    }
+    const swish = ghost ? true : !ball.hitRim && !ball.hitBoard;
+    const bank = ghost ? false : ball.hitBoard;
+    const toilet = ghost ? false : rimHits >= 3;
+    const lucky = ghost ? false : hitBoardTop;
+    const depth = ghost ? false : wentOffTop && swish;
+    const needle = ghost ? false : fromBelow;
     const prevStage = fireStage(heatN());
     const shackled = isPrison() && prisonMode === "shackle";
     const freed = isPrison() && prisonMode === "free";
@@ -1674,6 +2000,11 @@ export function createGame(
     else streak = 1;
     comboCounting = true;
     comboClock = 0;
+    if (!ghost) {
+      shotMade = true;
+      shotMissed = false;
+      shotAirborne = false;
+    }
     combo = Math.max(combo, streak);
 
     madeCount += 1;
@@ -1692,9 +2023,10 @@ export function createGame(
       tugNet(hoop);
       timerMax = Math.max(TIMER_MIN, timerMax * TIMER_DECAY);
       timer = timerMax;
-      nextHoop();
+      prisonShackleBest = Math.max(prisonShackleBest, streak);
+      if (!ghost) nextHoop();
       emitHud();
-      if (streak >= prisonTarget) enterPrisonFree(streak);
+      if (streak >= prisonTarget) enterPrisonFree(Math.max(prisonShackleBest, streak));
       return;
     }
 
@@ -1724,22 +2056,24 @@ export function createGame(
     const extra = prevStage >= 4 ? 3 : prevStage === 3 ? 2 : prevStage >= 2 ? 1 : 0;
     gain += extra * streak;
     if (freed) gain += prisonBonus;
-    const clutch = buzzer || timeUp;
+    const clutch = !ghost && (buzzer || timeUp);
     const tag = clutch
       ? "绝杀"
-      : depth
-        ? "深水炸弹"
-        : needle
-          ? "穿针引线"
-          : lucky
-            ? "幸运弹球"
-            : toilet
-              ? "刷马桶"
-              : swish
-                ? "空心球"
-                : bank
-                  ? "擦板球"
-                  : "";
+      : ghost
+        ? "分身"
+        : depth
+          ? "深水炸弹"
+          : needle
+            ? "穿针引线"
+            : lucky
+              ? "幸运弹球"
+              : toilet
+                ? "刷马桶"
+                : swish
+                  ? "空心球"
+                  : bank
+                    ? "擦板球"
+                    : "";
     if (clutch) {
       gain += 5;
       buzzer = false;
@@ -1755,7 +2089,7 @@ export function createGame(
     if (!timerArmed) timerArmed = true;
     audio.swish();
     audio.score(swish, heatN());
-    if (!reduced) {
+    if (!reduced && !ghost) {
       const blaze = heatN() >= STAGE_BLAZE;
       const hot = heatN() >= STAGE_IGNITE;
       if (gfx.impact) hitstop = swish ? 0.04 : 0.024;
@@ -1766,12 +2100,24 @@ export function createGame(
         camShake = swish ? 0.16 : 0.12;
       }
     }
-    tugNet(hoop);
-    const boardTop = boardGeom(hoop, world).visY;
+    const popX = scoredHoop.x;
+    const popY = scoredHoop.y;
+    const popInner = scoredHoop.inner;
+    if (!ghost) {
+      tugNet(hoop);
+    } else {
+      const near =
+        (other && Math.hypot(other.x - popX, other.y - popY) < popInner * 2.5 ? other : null) ||
+        (Math.hypot(hoop.x - popX, hoop.y - popY) < popInner * 2.5 ? hoop : null);
+      if (near) tugNet(near);
+    }
+    const boardTop = ghost
+      ? popY - popInner * RIM_RY - 40
+      : boardGeom(hoop, world).visY;
     callouts.push({
       text: `+${gain}`,
-      x: hoop.x,
-      y: hoop.y - hoop.inner * RIM_RY - 14,
+      x: popX,
+      y: popY - popInner * RIM_RY - 14,
       capY: boardTop + 8,
       life: 0.9,
       max: 0.9,
@@ -1780,8 +2126,8 @@ export function createGame(
     if (freed && prisonBonus > 0) {
       callouts.push({
         text: `铐+${prisonBonus}`,
-        x: hoop.x,
-        y: hoop.y - hoop.inner * RIM_RY + 18,
+        x: popX,
+        y: popY - popInner * RIM_RY + 18,
         capY: boardTop + 8,
         life: 0.85,
         max: 0.85,
@@ -1792,8 +2138,8 @@ export function createGame(
       glassBase += 2;
       callouts.push({
         text: "+2",
-        x: hoop.x,
-        y: hoop.y - hoop.inner * RIM_RY + 18,
+        x: popX,
+        y: popY - popInner * RIM_RY + 18,
         capY: boardTop + 8,
         life: 0.85,
         max: 0.85,
@@ -1803,8 +2149,8 @@ export function createGame(
     if (tag) {
       callouts.push({
         text: tag,
-        x: hoop.x,
-        y: hoop.y - 70,
+        x: popX,
+        y: popY - 70,
         life: 0.95,
         max: 0.95,
         kind: "tag",
@@ -1813,20 +2159,23 @@ export function createGame(
     timerMax = Math.max(TIMER_MIN, timerMax * TIMER_DECAY);
     timer = timerMax;
     const stage = fireStage(heatN());
-    nextHoop();
-    if (other && stage >= 2) {
-      const sear = (stage === 2 ? 1 : stage === 3 ? 2 : 3) as 1 | 2 | 3;
-      if (sear > other.sear) other.sear = sear;
-      other.hold = Math.max(
-        other.hold,
-        stage >= 4 ? FIRE_HOLD : stage >= 3 ? 1.05 : 0.88,
-      );
-      if (stage >= 4) {
-        other.burning = true;
-        audio.burn();
-        if (gfx.flash) burnFlash = 0.16;
+    if (!ghost) {
+      nextHoop();
+      if (other && stage >= 2) {
+        const sear = (stage === 2 ? 1 : stage === 3 ? 2 : 3) as 1 | 2 | 3;
+        if (sear > other.sear) other.sear = sear;
+        other.hold = Math.max(
+          other.hold,
+          stage >= 4 ? FIRE_HOLD : stage >= 3 ? 1.05 : 0.88,
+        );
+        if (stage >= 4) {
+          other.burning = true;
+          audio.burn();
+          if (gfx.flash) burnFlash = 0.16;
+        }
       }
     }
+    syncNinjaGhosts();
     emitHud();
   }
 
@@ -2075,6 +2424,7 @@ export function createGame(
             isGlass() ? glassBase : -1,
             chain && hasChain() ? chain : null,
             prisonHud(),
+            ninjaClonesDraw(),
           );
           ctx.restore();
           }
@@ -2288,14 +2638,14 @@ function layout(cssW: number, cssH: number): World {
   };
 }
 
-function makeBall(world: World, side: -1 | 1): Ball {
+function makeBall(world: World, side: -1 | 1, r = world.ballR): Ball {
   const x = side < 0 ? world.w * 0.22 : world.w * 0.78;
   return {
     x,
-    y: world.floorY - world.ballR,
+    y: world.floorY - r,
     vx: 0,
     vy: 0,
-    r: world.ballR,
+    r,
     spin: 0.3,
     omega: 0,
     squash: 1,

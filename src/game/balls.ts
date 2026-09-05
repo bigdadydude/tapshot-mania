@@ -1,6 +1,6 @@
 import type { DevPhys } from "./dev";
 
-export type BallId = "plain" | "lava" | "glass" | "prison";
+export type BallId = "plain" | "lava" | "glass" | "prison" | "rubber" | "ninja";
 
 export type BallKit = {
   id: BallId;
@@ -13,6 +13,8 @@ export type BallKit = {
   score: "normal" | "glass";
   /** Drag chain with collision (length = ball diameter). */
   chain?: boolean;
+  /** Radius vs world.ballR (classic). Diameter of rubber = classic radius → 0.5. */
+  rScale?: number;
   phys?: Partial<DevPhys>;
 };
 
@@ -29,6 +31,36 @@ export const BALLS: BallKit[] = [
     phys: {
       jumpUp: 0.95,
       jumpFwd: 0.95,
+    },
+  },
+  {
+    id: "ninja",
+    name: "忍者球",
+    skill: "连击召唤轨迹分身，分身也计连击",
+    heat: false,
+    wrap: "ground",
+    score: "normal",
+    phys: {
+      jumpUp: 1,
+      jumpFwd: 1.2,
+      grav: 0.9,
+      hoop: 0.8,
+      boardFric: 0.7,
+    },
+  },
+  {
+    id: "rubber",
+    name: "弹力球",
+    skill: "高弹小号球，穿边朝筐出现",
+    heat: false,
+    wrap: "height",
+    score: "normal",
+    rScale: 0.5,
+    phys: {
+      jumpUp: 1,
+      jumpFwd: 0.8,
+      grav: 1,
+      ball: 2,
     },
   },
   {
@@ -60,16 +92,14 @@ export const BALLS: BallKit[] = [
   {
     id: "prison",
     name: "监狱球",
-    skill: "d20定目标，连击破铐；自由抢分",
+    skill: "链拖铁球；释放如经典球",
     heat: false,
     wrap: "ground",
     score: "normal",
     chain: true,
     phys: {
-      jumpUp: 0.9,
-      jumpFwd: 0.88,
-      roll: 1.15,
-      grav: 1.08,
+      jumpUp: 0.95,
+      jumpFwd: 0.95,
     },
   },
 ];
@@ -77,9 +107,22 @@ export const BALLS: BallKit[] = [
 export const DEFAULT_BALL: BallId = "plain";
 
 export function parseBall(v: unknown): BallId {
-  return v === "lava" || v === "plain" || v === "glass" || v === "prison" ? v : DEFAULT_BALL;
+  return v === "lava" ||
+    v === "plain" ||
+    v === "glass" ||
+    v === "prison" ||
+    v === "rubber" ||
+    v === "ninja"
+    ? v
+    : DEFAULT_BALL;
 }
 
 export function getBall(id: BallId): BallKit {
   return BALLS.find((b) => b.id === id) ?? BALLS[0]!;
+}
+
+/** Playable ball radius for a kit (classic world.ballR × rScale). */
+export function ballRadius(worldBallR: number, id: BallId) {
+  const scale = getBall(id).rScale ?? 1;
+  return worldBallR * scale;
 }

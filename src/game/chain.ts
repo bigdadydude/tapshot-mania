@@ -12,17 +12,21 @@ export type Chain = {
   link: number;
   /** Mid-link radius. */
   nodeR: number;
-  /** Tip iron ball radius = basketball radius / 2 (diameter half of the ball). */
+  /** Tip iron ball radius = basketball radius / 2. */
   tipR: number;
 };
 
-const SEGMENTS = 7;
-/** Tip mass matches the basketball; mid links are light. */
-const TIP_MASS = 1;
-const LINK_MASS = 0.08;
+const SEGMENTS = 6;
+/** Tip mass = 2/3 of the basketball. */
+const TIP_MASS = 2 / 3;
+const LINK_MASS = 0.12;
+const BALL_MASS = 1;
+/** Constraint passes — higher = less stretchy rope. */
+const SOLVER_ITERS = 14;
 
 export function chainLength(ballR: number) {
-  return ballR * 2;
+  // 1.5× basketball diameter
+  return ballR * 2 * 1.5;
 }
 
 export function tipRadius(ballR: number) {
@@ -84,10 +88,12 @@ function radiusAt(chain: Chain, i: number) {
   return i === chain.nodes.length - 1 ? chain.tipR : chain.nodeR;
 }
 
-function constrainMass(a: ChainNode, b: ChainNode, rest: number, massA: number, massB: number) {
+/** Inextensible rope: only pull together when longer than rest (no springy compression). */
+function constrainRope(a: ChainNode, b: ChainNode, rest: number, massA: number, massB: number) {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const d = Math.hypot(dx, dy) || 0.0001;
+  if (d <= rest) return;
   const invA = massA <= 0 ? 0 : 1 / massA;
   const invB = massB <= 0 ? 0 : 1 / massB;
   const invSum = invA + invB;
@@ -111,7 +117,7 @@ type BallMotion = {
 
 /**
  * Steps the chain. Tip iron ball uses tipR collision and TIP_MASS (= basketball).
- * Returns nothing; mutates ball.vx/vy when the heavy tip yanks the tether.
+ * `gravity` is the prison basketball gravity; tip falls at 2× that.
  */
 export function stepChain(
   chain: Chain,
@@ -121,10 +127,12 @@ export function stepChain(
   gravity: number,
   dt: number,
   collideSolid?: (nx: number, ny: number, nr: number) => { x: number; y: number } | null,
+  yankScale = 1,
 ) {
   const nodes = chain.nodes;
   if (nodes.length < 2) return;
   const last = nodes.length - 1;
+  const restSpan = chain.link * (nodes.length - 1);
 
   const attach = attachPoint(ball.x, ball.y, ball.r, ball.vx, ball.vy, side);
   const head = nodes[0]!;
@@ -133,26 +141,28 @@ export function stepChain(
   head.px = attach.x;
   head.py = attach.y;
 
-  const damp = Math.exp(-1.6 * dt);
+  // Light damp — heavy damp makes links feel like rubber.
+  const damp = Math.exp(-0.55 * dt);
   for (let i = 1; i < nodes.length; i++) {
     const n = nodes[i]!;
     const ox = n.x;
     const oy = n.y;
-    // Tip iron ball: 2× basketball gravity; mid-links slightly lighter.
-    const gScale = i === last ? 2 : 0.85;
+    const gScale = i === last ? 2 : 0.9;
     n.x += (n.x - n.px) * damp;
     n.y += (n.y - n.py) * damp + gravity * gScale * dt * dt;
     n.px = ox;
     n.py = oy;
   }
 
-  const iters = 5;
-  for (let k = 0; k < iters; k++) {
+  for (let k = 0; k < SOLVER_ITERS; k++) {
     head.x = attach.x;
     head.y = attach.y;
     for (let i = 0; i < nodes.length - 1; i++) {
-      constrainMass(nodes[i]!, nodes[i + 1]!, chain.link, massAt(i, last), massAt(i + 1, last));
+      constrainRope(nodes[i]!, nodes[i + 1]!, chain.link, massAt(i, last), massAt(i + 1, last));
     }
+    // Pin tip-to-attach max length so the whole tether stays inextensible.
+    const tip = nodes[last]!;
+    constrainRope(head, tip, restSpan, 0, TIP_MASS);
     head.x = attach.x;
     head.y = attach.y;
 
@@ -163,9 +173,9 @@ export function stepChain(
       if (n.y + r > floorY) {
         n.y = floorY - r;
         const vyN = n.y - n.py;
-        if (vyN > 0) n.py = n.y + vyN * (heavy ? 0.55 : 0.2);
+        if (vyN > 0) n.py = n.y + vyN * (heavy ? 0.35 : 0.15);
         const vxN = n.x - n.px;
-        n.px = n.x - vxN * (heavy ? 0.7 : 0.82);
+        n.px = n.x - vxN * (heavy ? 0.55 : 0.75);
       }
       if (collideSolid) {
         const push = collideSolid(n.x, n.y, r);
@@ -182,16 +192,48 @@ export function stepChain(
   head.px = attach.x;
   head.py = attach.y;
 
-  // Heavy tip yanks the basketball through the tether (equal mass).
-  const n1 = nodes[1]!;
-  const dx = n1.x - attach.x;
-  const dy = n1.y - attach.y;
-  const d = Math.hypot(dx, dy) || 0.0001;
-  const stretch = d - chain.link;
-  if (stretch > 0.5) {
-    const pull = Math.min(420, stretch * 55);
-    const inv = 1 / d;
-    ball.vx += dx * inv * pull * dt;
-    ball.vy += dy * inv * pull * dt;
+  const tip = nodes[last]!;
+  let ox = tip.x - attach.x;
+  let oy = tip.y - attach.y;
+  let span = Math.hypot(ox, oy) || 0.0001;
+  let nx = ox / span;
+  let ny = oy / span;
+  const invDt = 1 / Math.max(dt, 1 / 240);
+  const tipVx = (tip.x - tip.px) * invDt;
+  const tipVy = (tip.y - tip.py) * invDt;
+  const stiff = Math.max(0.25, yankScale);
+
+  // Hard rope: if still over length, move the basketball (not a soft spring).
+  const stretch = span - restSpan;
+  if (stretch > 0.02) {
+    const wBall = TIP_MASS / (TIP_MASS + BALL_MASS);
+    const corr = stretch * wBall * stiff;
+    ball.x += nx * corr;
+    ball.y += ny * corr;
+    ox = tip.x - (attach.x + nx * corr);
+    oy = tip.y - (attach.y + ny * corr);
+    span = Math.hypot(ox, oy) || 0.0001;
+    nx = ox / span;
+    ny = oy / span;
+  }
+
+  // Kill separating velocity along the tether when taut (inextensible).
+  const taut = span >= restSpan * 0.96;
+  if (taut) {
+    const ballVn = ball.vx * nx + ball.vy * ny;
+    const tipVn = tipVx * nx + tipVy * ny;
+    const sep = tipVn - ballVn;
+    if (sep > 0) {
+      const j = (sep * stiff) / (1 / BALL_MASS + 1 / TIP_MASS);
+      ball.vx += (j / BALL_MASS) * nx;
+      ball.vy += (j / BALL_MASS) * ny;
+    }
+    const vRad = tipVx * nx + tipVy * ny;
+    const vTanSq = Math.max(0, tipVx * tipVx + tipVy * tipVy - vRad * vRad);
+    if (vTanSq > 80) {
+      const centri = Math.min(1100, (TIP_MASS * vTanSq) / span);
+      ball.vx += nx * ((centri * stiff) / BALL_MASS) * dt;
+      ball.vy += ny * ((centri * stiff) / BALL_MASS) * dt;
+    }
   }
 }

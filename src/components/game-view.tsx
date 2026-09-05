@@ -292,14 +292,38 @@ function TitleCard({
             >
               {kit.id === "prison" ? (
                 <PrisonBallThumb />
+              ) : kit.id === "ninja" ? (
+                <span
+                  className="size-16 rounded-full shadow-inner"
+                  style={{
+                    background:
+                      "radial-gradient(circle at 32% 28%, #c4b0ff 0%, #7c4dff 42%, #4a1fb8 100%)",
+                  }}
+                />
+              ) : kit.id === "rubber" ? (
+                <span
+                  className={
+                    kit.rScale && kit.rScale < 1
+                      ? "size-9 rounded-full bg-[#ffd000] shadow-inner"
+                      : "size-16 rounded-full bg-[#ffd000] shadow-inner"
+                  }
+                  style={{
+                    background:
+                      "radial-gradient(circle at 32% 30%, #ffe566 0%, #ffd000 45%, #e6a800 100%)",
+                  }}
+                />
               ) : kit.src || kit.fallback ? (
                 <img
                   src={kit.src ?? kit.fallback}
                   alt=""
-                  width={64}
-                  height={64}
+                  width={kit.rScale && kit.rScale < 1 ? 36 : 64}
+                  height={kit.rScale && kit.rScale < 1 ? 36 : 64}
                   decoding="async"
-                  className="size-16 object-contain"
+                  className={
+                    kit.rScale && kit.rScale < 1
+                      ? "size-9 object-contain"
+                      : "size-16 object-contain"
+                  }
                 />
               ) : (
                 <span className="size-16 rounded-full border border-fg/35 bg-fg/15 shadow-inner" />
