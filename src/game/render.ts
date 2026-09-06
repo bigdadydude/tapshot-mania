@@ -50,6 +50,10 @@ export function drawScene(
   chain: Chain | null = null,
   prison: PrisonHud | null = null,
   ninjaClones: NinjaCloneDraw[] = [],
+  champBank = -1,
+  hole: { x: number; y: number; r: number; left?: number } | null = null,
+  antiCharge = -1,
+  antimatter: { x: number; y: number; r: number; pct: number } | null = null,
 ) {
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
@@ -58,6 +62,8 @@ export function drawScene(
 		drawWall(ctx, world, cloudT, cloudSx, cloudSy, graf, gfx.clouds !== "off");
 		drawCourt(ctx, world);
 	}
+	if (hole) drawBlackHole(ctx, hole, time);
+	if (antimatter) drawAntiMatter(ctx, antimatter, time);
 	if (gfx.ballShadow) drawGroundShadow(ctx, ball, world);
 	if (chain) drawChain(ctx, chain, true);
 	if (showHud) drawCountdown(ctx, world, timer01, buzzer);
@@ -115,6 +121,9 @@ export function drawScene(
 			comboBanner,
 			glassBase,
 			prison,
+			champBank,
+			antiCharge,
+			hole?.left ?? -1,
 		);
 	}
 }
@@ -255,13 +264,14 @@ function drawHoopStack(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
 	drawRim(ctx, hoop, "back", combo);
 	drawNet(ctx, hoop, "back", ball, combo);
 	if (ball && gfx.particles) {
-		drawMotionTrail(ctx, trail, ball, combo, time);
+		drawMotionTrail(ctx, trail, ball, combo, time, ballId === "frost");
 		drawBall(ctx, ball, combo, world, time, gfx.ballShade, ballId);
 	} else if (ball) {
 		drawBall(ctx, ball, combo, world, time, gfx.ballShade, ballId);
 	}
 	drawNet(ctx, hoop, "front", ball, combo);
 	drawRim(ctx, hoop, "front", combo);
+	if (hoop.frostLeft > 0) drawFrostVeil(ctx, hoop, world);
 	ctx.restore();
 }
 
@@ -761,6 +771,7 @@ function bracePivot(hoop: Hoop, world: World) {
 }
 function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, _time: number, _combo: number) {
   const ch = boardHeat(hoop);
+  const fr = hoop.frostLeft > 0 ? Math.min(0.92, 0.4 + hoop.frost * 0.16) : 0;
   const { bh, visW, visX, visY, padH, padY, armH, armTop, boardBotY } = boardGeom(hoop, world);
   const yy = visY + (ch > 0.4 ? (ch - 0.4) * 10 : 0);
   const padDrawY = padY + (ch > 0.4 ? (ch - 0.4) * 10 : 0);
@@ -808,13 +819,17 @@ function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
     hoop.y + padH * 0.85,
   );
 
-  const board = mixHex("#ffffff", "#3a3632", Math.min(1, ch * 1.12));
+  const boardBase = mixHex("#ffffff", "#3a3632", Math.min(1, ch * 1.12));
+  const board = fr > 0 ? mixHex(rgbToHex(boardBase), "#7ec8ff", fr) : boardBase;
   ctx.fillStyle = board;
   ctx.fillRect(visX, yy, visW, Math.max(1, padDrawY - yy));
   const scene = getScene();
-  const green = mixHex(scene.hoop.pad, "#3a3632", Math.min(1, ch * 1.05));
-  const greenHi = mixHex(scene.hoop.padHi, "#4a423c", Math.min(1, ch * 1.05));
-  const greenLo = mixHex(scene.hoop.padLo, "#2a2624", Math.min(1, ch * 1.05));
+  const greenBase = mixHex(scene.hoop.pad, "#3a3632", Math.min(1, ch * 1.05));
+  const greenHiBase = mixHex(scene.hoop.padHi, "#4a423c", Math.min(1, ch * 1.05));
+  const greenLoBase = mixHex(scene.hoop.padLo, "#2a2624", Math.min(1, ch * 1.05));
+  const green = fr > 0 ? mixHex(rgbToHex(greenBase), "#5aa8e8", fr * 0.7) : greenBase;
+  const greenHi = fr > 0 ? mixHex(rgbToHex(greenHiBase), "#9ad4ff", fr * 0.65) : greenHiBase;
+  const greenLo = fr > 0 ? mixHex(rgbToHex(greenLoBase), "#3a7ab0", fr * 0.7) : greenLoBase;
   ctx.fillStyle = green;
   ctx.fillRect(visX - 0.5, padDrawY, visW + 1, padH);
   ctx.fillStyle = greenHi;
@@ -822,9 +837,12 @@ function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
   ctx.fillStyle = greenLo;
   ctx.fillRect(visX - 0.5, padDrawY + padH - 2, visW + 1, 2);
 
-  const orange = mixHex("#e24a28", "#4a4038", ch);
-  const orangeHi = mixHex("#f07a4a", "#6a625c", ch);
-  const orangeLo = mixHex("#b83218", "#3a3632", ch);
+  const orangeBase = mixHex("#e24a28", "#4a4038", ch);
+  const orangeHiBase = mixHex("#f07a4a", "#6a625c", ch);
+  const orangeLoBase = mixHex("#b83218", "#3a3632", ch);
+  const orange = fr > 0 ? mixHex(rgbToHex(orangeBase), "#6eb0e8", fr * 0.85) : orangeBase;
+  const orangeHi = fr > 0 ? mixHex(rgbToHex(orangeHiBase), "#a8d8ff", fr * 0.8) : orangeHiBase;
+  const orangeLo = fr > 0 ? mixHex(rgbToHex(orangeLoBase), "#3a6a98", fr * 0.85) : orangeLoBase;
   const attach = left ? hoop.x - hoop.inner * 1.02 : hoop.x + hoop.inner * 1.02;
   const rimBotY = hoop.y + armH * 0.38;
   const dy = ch > 0.4 ? (ch - 0.4) * 10 : 0;
@@ -871,6 +889,7 @@ function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
 function drawRim(ctx: CanvasRenderingContext2D, hoop: Hoop, part: "back" | "front", combo: number) {
 	const { x, y, inner, tube } = hoop;
 	const ch = hoopHeat(hoop, combo);
+	const fr = hoop.frostLeft > 0 ? Math.min(0.9, 0.45 + hoop.frost * 0.14) : 0;
 	const rx = inner;
 	const ry = inner * RIM_RY;
 	const tw = Math.max(3.2, tube * 1.18);
@@ -879,20 +898,26 @@ function drawRim(ctx: CanvasRenderingContext2D, hoop: Hoop, part: "back" | "fron
 	ctx.lineJoin = "round";
 	if (part === "back") {
 		ctx.lineWidth = tw;
-		ctx.strokeStyle = mixHex("#c43820", "#4a4038", ch);
+		const rimBack = mixHex("#c43820", "#4a4038", ch);
+		ctx.strokeStyle = fr > 0 ? mixHex(rgbToHex(rimBack), "#7ec8ff", fr) : rimBack;
 		ctx.beginPath();
 		ctx.ellipse(x, y, rx, ry, 0, Math.PI, Math.PI * 2);
 		ctx.stroke();
 	} else {
 		ctx.lineWidth = tw;
 		if (gecko) {
-			ctx.strokeStyle = mixHex("#e84828", "#6a625c", ch);
+			const rimG = mixHex("#e84828", "#6a625c", ch);
+			ctx.strokeStyle = fr > 0 ? mixHex(rgbToHex(rimG), "#9ad4ff", fr) : rimG;
 		} else {
 			const metal = ctx.createLinearGradient(x - rx, y, x + rx, y + ry);
-			metal.addColorStop(0, mixHex("#a82818", "#4a4038", ch));
-			metal.addColorStop(.32, mixHex("#f05632", "#8a8078", ch));
-			metal.addColorStop(.62, mixHex("#e84828", "#6a625c", ch));
-			metal.addColorStop(1, mixHex("#9a2416", "#3a3632", ch));
+			const c0 = mixHex("#a82818", "#4a4038", ch);
+			const c1 = mixHex("#f05632", "#8a8078", ch);
+			const c2 = mixHex("#e84828", "#6a625c", ch);
+			const c3 = mixHex("#9a2416", "#3a3632", ch);
+			metal.addColorStop(0, fr > 0 ? mixHex(rgbToHex(c0), "#5a9ad0", fr) : c0);
+			metal.addColorStop(.32, fr > 0 ? mixHex(rgbToHex(c1), "#b8e0ff", fr) : c1);
+			metal.addColorStop(.62, fr > 0 ? mixHex(rgbToHex(c2), "#7ec8ff", fr) : c2);
+			metal.addColorStop(1, fr > 0 ? mixHex(rgbToHex(c3), "#3a6a98", fr) : c3);
 			ctx.strokeStyle = metal;
 		}
 		ctx.beginPath();
@@ -1175,6 +1200,239 @@ function drawNinjaBall(
 	ctx.restore();
 }
 
+function drawFrostVeil(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World) {
+	const g = boardGeom(hoop, world);
+	const a = Math.min(0.42, 0.18 + hoop.frost * 0.07);
+	ctx.save();
+	ctx.fillStyle = `rgba(120, 190, 255, ${a})`;
+	ctx.fillRect(g.visX - 1, g.visY - 2, g.visW + 2, g.padY + g.padH - g.visY + 6);
+	const glow = ctx.createRadialGradient(hoop.x, hoop.y, hoop.inner * 0.2, hoop.x, hoop.y, hoop.inner * 2.2);
+	glow.addColorStop(0, `rgba(180, 220, 255, ${a * 0.55})`);
+	glow.addColorStop(1, "rgba(120, 190, 255, 0)");
+	ctx.fillStyle = glow;
+	ctx.beginPath();
+	ctx.arc(hoop.x, hoop.y, hoop.inner * 2.2, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.restore();
+}
+
+function drawIceBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
+	const { x, y, r, spin, squash } = ball;
+	ctx.save();
+	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+	ctx.scale(1 / squash, squash);
+	ctx.beginPath();
+	ctx.arc(0, 0, r, 0, Math.PI * 2);
+	ctx.clip();
+	ctx.save();
+	ctx.rotate(spin);
+	const skin = ctx.createRadialGradient(-r * 0.28, -r * 0.34, r * 0.08, r * 0.12, r * 0.18, r * 1.08);
+	skin.addColorStop(0, "#e8f6ff");
+	skin.addColorStop(0.4, "#7ec8ff");
+	skin.addColorStop(1, "#2a6a9e");
+	ctx.fillStyle = skin;
+	ctx.fillRect(-r - 1, -r - 1, r * 2 + 2, r * 2 + 2);
+	ctx.strokeStyle = "rgba(20, 50, 80, 0.45)";
+	ctx.lineWidth = Math.max(1.2, r * 0.06);
+	ctx.beginPath();
+	ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.moveTo(-r, 0);
+	ctx.lineTo(r, 0);
+	ctx.moveTo(0, -r);
+	ctx.lineTo(0, r);
+	ctx.stroke();
+	ctx.restore();
+	if (lit) {
+		const shade = ctx.createRadialGradient(0, 0, r * 0.48, 0, 0, r);
+		shade.addColorStop(0, "rgba(0,0,0,0)");
+		shade.addColorStop(1, "rgba(10, 40, 70, 0.38)");
+		ctx.fillStyle = shade;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+		const spec = ctx.createRadialGradient(-r * 0.3, -r * 0.38, 0, -r * 0.2, -r * 0.28, r * 0.48);
+		spec.addColorStop(0, "rgba(255,255,255,0.55)");
+		spec.addColorStop(1, "rgba(255,255,255,0)");
+		ctx.fillStyle = spec;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+	}
+	ctx.restore();
+}
+
+function drawChampBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
+	const { x, y, r, spin, squash } = ball;
+	ctx.save();
+	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+	ctx.scale(1 / squash, squash);
+	ctx.beginPath();
+	ctx.arc(0, 0, r, 0, Math.PI * 2);
+	ctx.clip();
+	ctx.save();
+	ctx.rotate(spin);
+	ctx.fillStyle = "#c62828";
+	ctx.fillRect(-r - 1, -r - 1, r + 1, r * 2 + 2);
+	ctx.fillStyle = "#1565c0";
+	ctx.fillRect(0, -r - 1, r + 1, r * 2 + 2);
+	const seam = ctx.createRadialGradient(-r * 0.2, -r * 0.28, r * 0.1, 0, 0, r * 1.05);
+	seam.addColorStop(0, "rgba(255,255,255,0.22)");
+	seam.addColorStop(0.55, "rgba(0,0,0,0)");
+	seam.addColorStop(1, "rgba(0,0,0,0.28)");
+	ctx.fillStyle = seam;
+	ctx.fillRect(-r - 1, -r - 1, r * 2 + 2, r * 2 + 2);
+	ctx.strokeStyle = "rgba(255, 236, 180, 0.85)";
+	ctx.lineWidth = Math.max(1.4, r * 0.07);
+	ctx.beginPath();
+	ctx.moveTo(0, -r);
+	ctx.lineTo(0, r);
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.arc(0, 0, r * 0.55, -Math.PI * 0.55, Math.PI * 0.55);
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.arc(0, 0, r * 0.55, Math.PI * 0.45, Math.PI * 1.55);
+	ctx.stroke();
+	ctx.restore();
+	if (lit) {
+		const shade = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r);
+		shade.addColorStop(0, "rgba(0,0,0,0)");
+		shade.addColorStop(1, "rgba(8, 12, 28, 0.42)");
+		ctx.fillStyle = shade;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+		const spec = ctx.createRadialGradient(-r * 0.32, -r * 0.4, 0, -r * 0.22, -r * 0.3, r * 0.5);
+		spec.addColorStop(0, "rgba(255,255,255,0.55)");
+		spec.addColorStop(1, "rgba(255,255,255,0)");
+		ctx.fillStyle = spec;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+	}
+	ctx.restore();
+}
+
+function drawAntiBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean, time = 0) {
+	const { x, y, r, spin, squash } = ball;
+	ctx.save();
+	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+	ctx.scale(1 / squash, squash);
+	ctx.beginPath();
+	ctx.arc(0, 0, r, 0, Math.PI * 2);
+	ctx.clip();
+	ctx.save();
+	ctx.rotate(spin);
+	const skin = ctx.createRadialGradient(-r * 0.25, -r * 0.3, r * 0.06, r * 0.1, r * 0.15, r * 1.1);
+	skin.addColorStop(0, "#b8f0ff");
+	skin.addColorStop(0.35, "#5a7dff");
+	skin.addColorStop(0.7, "#2a1a6e");
+	skin.addColorStop(1, "#0a0618");
+	ctx.fillStyle = skin;
+	ctx.fillRect(-r - 1, -r - 1, r * 2 + 2, r * 2 + 2);
+	ctx.strokeStyle = "rgba(180, 255, 255, 0.55)";
+	ctx.lineWidth = Math.max(1.2, r * 0.06);
+	ctx.beginPath();
+	ctx.arc(0, 0, r * 0.45, 0, Math.PI * 2);
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.ellipse(0, 0, r * 0.72, r * 0.28, time * 0.9, 0, Math.PI * 2);
+	ctx.stroke();
+	ctx.restore();
+	if (lit) {
+		const shade = ctx.createRadialGradient(0, 0, r * 0.4, 0, 0, r);
+		shade.addColorStop(0, "rgba(0,0,0,0)");
+		shade.addColorStop(1, "rgba(4, 2, 20, 0.5)");
+		ctx.fillStyle = shade;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+		const spec = ctx.createRadialGradient(-r * 0.3, -r * 0.38, 0, -r * 0.2, -r * 0.28, r * 0.45);
+		spec.addColorStop(0, "rgba(220, 255, 255, 0.55)");
+		spec.addColorStop(1, "rgba(255,255,255,0)");
+		ctx.fillStyle = spec;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+	}
+	ctx.restore();
+}
+
+function drawAntiMatter(
+	ctx: CanvasRenderingContext2D,
+	m: { x: number; y: number; r: number; pct: number },
+	time: number,
+) {
+	const { x, y, r, pct } = m;
+	ctx.save();
+	const pulse = 1 + Math.sin(time * 5.5) * 0.08;
+	const rr = r * pulse;
+	const glow = ctx.createRadialGradient(x, y, rr * 0.15, x, y, rr * 1.8);
+	glow.addColorStop(0, "rgba(200, 120, 255, 0.55)");
+	glow.addColorStop(0.5, "rgba(80, 40, 160, 0.28)");
+	glow.addColorStop(1, "rgba(0,0,0,0)");
+	ctx.fillStyle = glow;
+	ctx.beginPath();
+	ctx.arc(x, y, rr * 1.8, 0, Math.PI * 2);
+	ctx.fill();
+	const core = ctx.createRadialGradient(x - rr * 0.2, y - rr * 0.25, 0, x, y, rr);
+	core.addColorStop(0, "#f0e6ff");
+	core.addColorStop(0.45, "#a56bff");
+	core.addColorStop(1, "#2a1058");
+	ctx.fillStyle = core;
+	ctx.beginPath();
+	ctx.arc(x, y, rr, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.fillStyle = "rgba(255,255,255,0.92)";
+	ctx.font = `800 ${Math.max(11, Math.floor(rr * 0.85))}px 'Noto Sans SC', sans-serif`;
+	ctx.textAlign = "center";
+	ctx.textBaseline = "middle";
+	ctx.fillText(`${pct}%`, x, y + 0.5);
+	ctx.restore();
+}
+
+function drawBlackHole(
+	ctx: CanvasRenderingContext2D,
+	hole: { x: number; y: number; r: number },
+	time: number,
+) {
+	const { x, y, r } = hole;
+	ctx.save();
+	const glow = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 2.4);
+	glow.addColorStop(0, "rgba(40, 20, 80, 0.55)");
+	glow.addColorStop(0.45, "rgba(20, 10, 40, 0.28)");
+	glow.addColorStop(1, "rgba(0,0,0,0)");
+	ctx.fillStyle = glow;
+	ctx.beginPath();
+	ctx.arc(x, y, r * 2.4, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.save();
+	ctx.translate(x, y);
+	ctx.rotate(time * 0.55);
+	ctx.strokeStyle = "rgba(160, 120, 255, 0.55)";
+	ctx.lineWidth = Math.max(2, r * 0.12);
+	ctx.beginPath();
+	ctx.ellipse(0, 0, r * 1.55, r * 0.55, 0, 0, Math.PI * 2);
+	ctx.stroke();
+	ctx.strokeStyle = "rgba(100, 220, 255, 0.35)";
+	ctx.beginPath();
+	ctx.ellipse(0, 0, r * 1.25, r * 0.4, 0.7, 0, Math.PI * 2);
+	ctx.stroke();
+	ctx.restore();
+	const core = ctx.createRadialGradient(x, y, 0, x, y, r);
+	core.addColorStop(0, "#000000");
+	core.addColorStop(0.55, "#0a0614");
+	core.addColorStop(0.85, "#1a1040");
+	core.addColorStop(1, "rgba(10, 6, 20, 0)");
+	ctx.fillStyle = core;
+	ctx.beginPath();
+	ctx.arc(x, y, r, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.restore();
+}
+
 function drawYellowBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
 	const { x, y, r, squash } = ball;
 	ctx.save();
@@ -1219,6 +1477,18 @@ function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _wor
 	}
 	if (ballId === "rubber") {
 		drawYellowBall(ctx, ball, lit);
+		return;
+	}
+	if (ballId === "frost") {
+		drawIceBall(ctx, ball, lit);
+		return;
+	}
+	if (ballId === "champ") {
+		drawChampBall(ctx, ball, lit);
+		return;
+	}
+	if (ballId === "anti") {
+		drawAntiBall(ctx, ball, lit, time);
 		return;
 	}
 	if (ballId === "glass") {
@@ -1491,7 +1761,7 @@ function stampBlob(ctx: CanvasRenderingContext2D, x: number, y: number, rad: num
 function drawWisp(ctx: CanvasRenderingContext2D, x: number, y: number, rad: number, cr: number, cg: number, cb: number, alpha: number, _grain: number) {
 	stampBlob(ctx, x, y, rad, cr, cg, cb, alpha);
 }
-function drawOrbitWisps(ctx: CanvasRenderingContext2D, ball: Ball, stage: number, time: number) {
+function drawOrbitWisps(ctx: CanvasRenderingContext2D, ball: Ball, stage: number, time: number, icy = false) {
 	const n = stage === 1 ? 3 : stage === 2 ? 4 : 5;
 	const { x, y, r } = ball;
 	ctx.save();
@@ -1502,20 +1772,22 @@ function drawOrbitWisps(ctx: CanvasRenderingContext2D, ball: Ball, stage: number
 		const px = x + Math.cos(ang) * d;
 		const py = y + Math.sin(ang) * d * .78;
 		const u = .35 + .5 * (.5 + .5 * Math.sin(time * 2.2 + i));
-		const rgb = wispColor(stage, u);
+		const rgb = icy
+			? ([180 + u * 50, 210 + u * 30, 255] as [number, number, number])
+			: wispColor(stage, u);
 		const rad = r * (stage === 1 ? .2 : .26) * (.75 + .35 * hash01(i, 2));
 		const a = stage === 1 ? .22 : .32;
-		if (!gecko && stage >= 3 && u > .55) ctx.globalCompositeOperation = "lighter";
+		if (!gecko && stage >= 3 && u > .55 && !icy) ctx.globalCompositeOperation = "lighter";
 		else ctx.globalCompositeOperation = "source-over";
 		drawWisp(ctx, px, py, rad, rgb[0], rgb[1], rgb[2], a, i + 11);
 	}
 	ctx.restore();
 }
-function drawMotionTrail(ctx: CanvasRenderingContext2D, trail: TrailPt[], ball: Ball, combo: number, time = 0) {
+function drawMotionTrail(ctx: CanvasRenderingContext2D, trail: TrailPt[], ball: Ball, combo: number, time = 0, icy = false) {
 	const stage = fireStage(combo);
 	if (stage < 1) return;
 	if (Math.hypot(ball.vx, ball.vy) < 108) {
-		drawOrbitWisps(ctx, ball, stage, time);
+		drawOrbitWisps(ctx, ball, stage, time, icy);
 		return;
 	}
 	const r = ball.r;
@@ -1551,7 +1823,25 @@ function drawMotionTrail(ctx: CanvasRenderingContext2D, trail: TrailPt[], ball: 
 		let cr: number;
 		let cg: number;
 		let cb: number;
-		if (stage === 1) {
+		if (icy) {
+			if (stage === 1) {
+				cr = 236;
+				cg = 244;
+				cb = 255;
+			} else if (stage === 2) {
+				cr = 200;
+				cg = 220;
+				cb = 240;
+			} else if (stage === 3) {
+				cr = 170 + u * 40;
+				cg = 210 + u * 20;
+				cb = 255;
+			} else {
+				cr = 140 + u * 50;
+				cg = 190 + u * 30;
+				cb = 255;
+			}
+		} else if (stage === 1) {
 			cr = 236;
 			cg = 232;
 			cb = 224;
@@ -1570,7 +1860,7 @@ function drawMotionTrail(ctx: CanvasRenderingContext2D, trail: TrailPt[], ball: 
 			cg = rgb[1];
 			cb = rgb[2];
 		}
-		if (!gecko && stage >= 3 && u > 0.5) ctx.globalCompositeOperation = "lighter";
+		if (!gecko && stage >= 3 && u > 0.5 && !icy) ctx.globalCompositeOperation = "lighter";
 		else ctx.globalCompositeOperation = "source-over";
 		stampBlob(ctx, p.x, p.y, rad, cr, cg, cb, a0, fuzzy);
 	}
@@ -1601,22 +1891,32 @@ function drawSparks(ctx: CanvasRenderingContext2D, x: number, y: number, r: numb
 }
 function drawParticle(ctx: CanvasRenderingContext2D, p: Particle) {
 	const t = p.life / p.max;
-	ctx.fillStyle = p.hue >= 80 ? `rgba(239,236,230,${t})` : p.hue < 6 ? `rgba(42,38,34,${t})` : p.hue < 14 ? `rgba(138,134,128,${t})` : p.hue < 30 ? `rgba(240,162,74,${t})` : `rgba(232,93,18,${t})`;
+	ctx.fillStyle = p.hue >= 80 ? `rgba(220,235,255,${t * 0.85})` : p.hue < 6 ? `rgba(42,38,34,${t})` : p.hue < 14 ? `rgba(138,134,128,${t})` : p.hue < 30 ? `rgba(240,162,74,${t})` : `rgba(232,93,18,${t})`;
 	ctx.beginPath();
 	ctx.arc(p.x, p.y, p.size / 2, 0, Math.PI * 2);
 	ctx.fill();
 }
 function mixHex(a: string, b: string, t: number) {
 	const tt = Math.max(0, Math.min(1, t));
-	const pa = parseInt(a.slice(1), 16);
-	const pb = parseInt(b.slice(1), 16);
-	const ra = pa >> 16 & 255;
-	const ga = pa >> 8 & 255;
-	const ba = pa & 255;
-	const rb = pb >> 16 & 255;
-	const gb = pb >> 8 & 255;
-	const bb = pb & 255;
-	return `rgb(${Math.round(ra + (rb - ra) * tt)},${Math.round(ga + (gb - ga) * tt)},${Math.round(ba + (bb - ba) * tt)})`;
+	const pa = parseColor(a);
+	const pb = parseColor(b);
+	return `rgb(${Math.round(pa[0] + (pb[0] - pa[0]) * tt)},${Math.round(pa[1] + (pb[1] - pa[1]) * tt)},${Math.round(pa[2] + (pb[2] - pa[2]) * tt)})`;
+}
+
+function parseColor(c: string): [number, number, number] {
+	if (c.startsWith("#")) {
+		const n = parseInt(c.slice(1), 16);
+		if (Number.isFinite(n)) return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+	}
+	const m = c.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i);
+	if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
+	return [0, 0, 0];
+}
+
+function rgbToHex(c: string) {
+	const [r, g, b] = parseColor(c);
+	const h = (n: number) => Math.max(0, Math.min(255, n | 0)).toString(16).padStart(2, "0");
+	return `#${h(r)}${h(g)}${h(b)}`;
 }
 function drawScorePops(ctx: CanvasRenderingContext2D, callouts: Callout[], world: World) {
 	for (const c of callouts) {
@@ -1715,6 +2015,9 @@ function drawHud(
 	comboBanner = "",
 	glassBase = -1,
 	prison: PrisonHud | null = null,
+	champBank = -1,
+	antiCharge = -1,
+	antiHoleLeft = -1,
 ) {
 	const { w } = world;
 	const g = hudGeom(world);
@@ -1784,6 +2087,66 @@ function drawHud(
 		ctx.lineWidth = Math.max(4, num * 0.12);
 		ctx.strokeText(String(glassBase), x, g.scoreY + 4 + label + 1);
 		ctx.fillText(String(glassBase), x, g.scoreY + 4 + label + 1);
+		ctx.restore();
+	} else if (champBank >= 0) {
+		const label = Math.max(11, Math.floor(w * 0.032));
+		const num = Math.max(22, Math.floor(w * 0.068));
+		const x = Math.max(12, Math.floor(w * 0.035));
+		ctx.save();
+		ctx.textAlign = "left";
+		ctx.textBaseline = "top";
+		ctx.strokeStyle = "rgba(18,22,30,0.55)";
+		ctx.fillStyle = "#90caf9";
+		ctx.font = `700 ${label}px 'Noto Sans SC', sans-serif`;
+		ctx.lineWidth = Math.max(3, label * 0.18);
+		ctx.strokeText("存时", x, g.scoreY + 4);
+		ctx.fillText("存时", x, g.scoreY + 4);
+		ctx.font = `900 ${num}px 'Noto Sans SC', Impact, sans-serif`;
+		ctx.lineWidth = Math.max(4, num * 0.12);
+		ctx.fillStyle = "#ff8a80";
+		const bankText = `${champBank.toFixed(1)}s`;
+		ctx.strokeText(bankText, x, g.scoreY + 4 + label + 1);
+		ctx.fillText(bankText, x, g.scoreY + 4 + label + 1);
+		ctx.restore();
+	} else if (antiHoleLeft >= 0) {
+		const label = Math.max(11, Math.floor(w * 0.032));
+		const num = Math.max(22, Math.floor(w * 0.068));
+		const x = Math.max(12, Math.floor(w * 0.035));
+		ctx.save();
+		ctx.textAlign = "left";
+		ctx.textBaseline = "top";
+		ctx.strokeStyle = "rgba(18,22,30,0.55)";
+		ctx.fillStyle = "#ce93ff";
+		ctx.font = `700 ${label}px 'Noto Sans SC', sans-serif`;
+		ctx.lineWidth = Math.max(3, label * 0.18);
+		ctx.strokeText("黑洞", x, g.scoreY + 4);
+		ctx.fillText("黑洞", x, g.scoreY + 4);
+		ctx.font = `900 ${num}px 'Noto Sans SC', Impact, sans-serif`;
+		ctx.lineWidth = Math.max(4, num * 0.12);
+		ctx.fillStyle = "#f3e5f5";
+		const t = `${Math.ceil(antiHoleLeft)}s`;
+		ctx.strokeText(t, x, g.scoreY + 4 + label + 1);
+		ctx.fillText(t, x, g.scoreY + 4 + label + 1);
+		ctx.restore();
+	} else if (antiCharge >= 0) {
+		const label = Math.max(11, Math.floor(w * 0.032));
+		const num = Math.max(22, Math.floor(w * 0.068));
+		const x = Math.max(12, Math.floor(w * 0.035));
+		ctx.save();
+		ctx.textAlign = "left";
+		ctx.textBaseline = "top";
+		ctx.strokeStyle = "rgba(18,22,30,0.55)";
+		ctx.fillStyle = "#b39ddb";
+		ctx.font = `700 ${label}px 'Noto Sans SC', sans-serif`;
+		ctx.lineWidth = Math.max(3, label * 0.18);
+		ctx.strokeText("反能", x, g.scoreY + 4);
+		ctx.fillText("反能", x, g.scoreY + 4);
+		ctx.font = `900 ${num}px 'Noto Sans SC', Impact, sans-serif`;
+		ctx.lineWidth = Math.max(4, num * 0.12);
+		ctx.fillStyle = "#e1bee7";
+		const pct = `${Math.floor(antiCharge)}%`;
+		ctx.strokeText(pct, x, g.scoreY + 4 + label + 1);
+		ctx.fillText(pct, x, g.scoreY + 4 + label + 1);
 		ctx.restore();
 	}
 	let tag = null;

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AudioLines, Music, Pause, Volume2, VolumeX } from "lucide-react";
+import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { AudioLines, ChevronLeft, ChevronRight, Music, Pause, Volume2, VolumeX } from "lucide-react";
 import { createGame, rankFor, GAME_REV, type GameHandle } from "@/game/engine";
 import { primeArt } from "@/game/art";
 import { DEFAULT_DEV, wantDevQuery } from "@/game/dev";
@@ -265,6 +265,46 @@ function TitleCard({
   onTitleTap: () => void;
   onDev: () => void;
 }) {
+  const idx = Math.max(
+    0,
+    BALLS.findIndex((b) => b.id === ballId),
+  );
+  const kit = BALLS[idx] ?? BALLS[0]!;
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const [dragX, setDragX] = useState(0);
+  const [dragging, setDragging] = useState(false);
+
+  function selectAt(i: number) {
+    const next = ((i % BALLS.length) + BALLS.length) % BALLS.length;
+    const b = BALLS[next];
+    if (b) onBall(b.id);
+  }
+
+  function onPointerDown(e: PointerEvent<HTMLDivElement>) {
+    dragRef.current = { x: e.clientX, y: e.clientY };
+    setDragging(true);
+    setDragX(0);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  function onPointerMove(e: PointerEvent<HTMLDivElement>) {
+    const d = dragRef.current;
+    if (!d) return;
+    setDragX(e.clientX - d.x);
+  }
+
+  function endDrag(e: PointerEvent<HTMLDivElement>) {
+    const d = dragRef.current;
+    dragRef.current = null;
+    setDragging(false);
+    const dx = d ? e.clientX - d.x : 0;
+    const dy = d ? e.clientY - d.y : 0;
+    setDragX(0);
+    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.15) return;
+    if (dx < 0) selectAt(idx + 1);
+    else selectAt(idx - 1);
+  }
+
   return (
     <div className="pointer-events-none flex flex-col items-center px-6 pb-[max(1.75rem,env(safe-area-inset-bottom))]">
       <div className="mb-4 text-center">
@@ -277,63 +317,64 @@ function TitleCard({
         <p className="mt-2 text-sm text-muted">点击弹跳，把球投进左右篮筐</p>
         <p className="mt-1 text-xs text-subtle">最高 {best}</p>
       </div>
-      <div className="pointer-events-auto mb-4 grid w-full max-w-xs grid-cols-2 gap-2">
-        {BALLS.map((kit) => {
-          const on = ballId === kit.id;
-          return (
-            <button
-              key={kit.id}
-              type="button"
-              onClick={() => onBall(kit.id)}
-              className={cn(
-                "flex flex-col items-center rounded-xl border px-2 py-3",
-                on ? "border-accent bg-bg-elevated" : "border-border bg-bg-subtle/80",
-              )}
-            >
-              {kit.id === "prison" ? (
-                <PrisonBallThumb />
-              ) : kit.id === "ninja" ? (
+
+      <div className="pointer-events-auto mb-4 flex w-full max-w-xs items-center gap-1">
+        <button
+          type="button"
+          aria-label="上一个球"
+          onClick={() => selectAt(idx - 1)}
+          className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-bg-elevated text-fg"
+        >
+          <ChevronLeft className="size-5" />
+        </button>
+
+        <div
+          className="relative min-w-0 flex-1 touch-none select-none overflow-hidden"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={() => {
+            dragRef.current = null;
+            setDragging(false);
+            setDragX(0);
+          }}
+        >
+          <div
+            className="flex flex-col items-center rounded-xl border border-accent bg-bg-elevated px-4 py-4"
+            style={{
+              transform: `translateX(${dragX * 0.35}px)`,
+              transition: dragging ? "none" : "transform 180ms ease-out",
+            }}
+          >
+            <BallThumb kit={kit} large />
+            <span className="mt-3 text-base font-medium text-fg">{kit.name}</span>
+            <span className="mt-1 min-h-8 text-center text-xs leading-snug text-subtle">
+              {kit.skill}
+            </span>
+            <div className="mt-3 flex items-center justify-center gap-1.5">
+              {BALLS.map((b, i) => (
                 <span
-                  className="size-16 rounded-full shadow-inner"
-                  style={{
-                    background:
-                      "radial-gradient(circle at 32% 28%, #c4b0ff 0%, #7c4dff 42%, #4a1fb8 100%)",
-                  }}
+                  key={b.id}
+                  className={cn(
+                    "size-1.5 rounded-full",
+                    i === idx ? "bg-accent" : "bg-border",
+                  )}
                 />
-              ) : kit.id === "rubber" ? (
-                <span
-                  className={
-                    kit.rScale && kit.rScale < 1
-                      ? "size-9 rounded-full bg-[#ffd000] shadow-inner"
-                      : "size-16 rounded-full bg-[#ffd000] shadow-inner"
-                  }
-                  style={{
-                    background:
-                      "radial-gradient(circle at 32% 30%, #ffe566 0%, #ffd000 45%, #e6a800 100%)",
-                  }}
-                />
-              ) : kit.src || kit.fallback ? (
-                <img
-                  src={kit.src ?? kit.fallback}
-                  alt=""
-                  width={kit.rScale && kit.rScale < 1 ? 36 : 64}
-                  height={kit.rScale && kit.rScale < 1 ? 36 : 64}
-                  decoding="async"
-                  className={
-                    kit.rScale && kit.rScale < 1
-                      ? "size-9 object-contain"
-                      : "size-16 object-contain"
-                  }
-                />
-              ) : (
-                <span className="size-16 rounded-full border border-fg/35 bg-fg/15 shadow-inner" />
-              )}
-              <span className="mt-2 text-sm font-medium text-fg">{kit.name}</span>
-              <span className="mt-0.5 text-center text-xs text-subtle">{kit.skill}</span>
-            </button>
-          );
-        })}
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          aria-label="下一个球"
+          onClick={() => selectAt(idx + 1)}
+          className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-bg-elevated text-fg"
+        >
+          <ChevronRight className="size-5" />
+        </button>
       </div>
+
       <button
         type="button"
         onClick={onStart}
@@ -358,9 +399,85 @@ function TitleCard({
   );
 }
 
-function PrisonBallThumb() {
+function BallThumb({ kit, large = false }: { kit: (typeof BALLS)[number]; large?: boolean }) {
+  const big = large ? "size-20" : "size-16";
+  const small = large ? "size-11" : "size-9";
+  if (kit.id === "prison") return <PrisonBallThumb className={big} />;
+  if (kit.id === "ninja") {
+    return (
+      <span
+        className={`${big} rounded-full shadow-inner`}
+        style={{
+          background:
+            "radial-gradient(circle at 32% 28%, #c4b0ff 0%, #7c4dff 42%, #4a1fb8 100%)",
+        }}
+      />
+    );
+  }
+  if (kit.id === "frost") {
+    return (
+      <span
+        className={`${big} rounded-full shadow-inner`}
+        style={{
+          background:
+            "radial-gradient(circle at 32% 28%, #e8f6ff 0%, #7ec8ff 45%, #2a6a9e 100%)",
+        }}
+      />
+    );
+  }
+  if (kit.id === "champ") {
+    return (
+      <span
+        className={`${big} overflow-hidden rounded-full shadow-inner`}
+        style={{
+          background:
+            "linear-gradient(90deg, #c62828 0%, #c62828 50%, #1565c0 50%, #1565c0 100%)",
+        }}
+      />
+    );
+  }
+  if (kit.id === "anti") {
+    return (
+      <span
+        className={`${big} rounded-full shadow-inner`}
+        style={{
+          background:
+            "radial-gradient(circle at 32% 28%, #b8f0ff 0%, #5a7dff 40%, #2a1a6e 75%, #0a0618 100%)",
+        }}
+      />
+    );
+  }
+  if (kit.id === "rubber") {
+    return (
+      <span
+        className={`${kit.rScale && kit.rScale < 1 ? small : big} rounded-full shadow-inner`}
+        style={{
+          background:
+            "radial-gradient(circle at 32% 30%, #ffe566 0%, #ffd000 45%, #e6a800 100%)",
+        }}
+      />
+    );
+  }
+  if (kit.src || kit.fallback) {
+    const sz = kit.rScale && kit.rScale < 1 ? (large ? 44 : 36) : large ? 80 : 64;
+    return (
+      <img
+        src={kit.src ?? kit.fallback}
+        alt=""
+        width={sz}
+        height={sz}
+        decoding="async"
+        draggable={false}
+        className={`${kit.rScale && kit.rScale < 1 ? small : big} object-contain`}
+      />
+    );
+  }
+  return <span className={`${big} rounded-full border border-fg/35 bg-fg/15 shadow-inner`} />;
+}
+
+function PrisonBallThumb({ className = "size-16" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 64 64" className="size-16" aria-hidden>
+    <svg viewBox="0 0 64 64" className={className} aria-hidden>
       <defs>
         <clipPath id="prison-ball-clip">
           <circle cx="32" cy="32" r="30" />

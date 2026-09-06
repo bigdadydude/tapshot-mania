@@ -21,17 +21,30 @@ import type { GrafKey } from "./scenes";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
 
-export const GAME_REV = 237;
+export const GAME_REV = 273;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
 const TIMER_MIN = 2.6;
 const TIMER_DECAY = 0.972;
 const GRAF_IN = 1.2;
+const COMBO_STOP = 4;
 const COMBO_DROP = 2;
 const BUZZER_WINDOW = 5;
 const HOOP_HOLD = 0.72;
 const FIRE_HOLD = 1.35;
+const FROST_DUR = 3;
+const FROST_CHANCE_BASE = 0.1;
+const FROST_CHANCE_PER_STREAK = 0.01;
+/** Champ: bank this fraction of leftover timer per make. */
+const CHAMP_BANK_RATE = 0.2;
+const CHAMP_SCORE_MULT = 2;
+/** After a make in champion moment, this long without another → clutch then over. */
+const CHAMP_IDLE = 5;
+/** Anti ball: chance to spawn antimatter pickup after a make. */
+const ANTI_SPAWN_CHANCE = 0.55;
+const ANTI_HOLE_DUR = 15;
+const FROST_BONUS_PER_HIT = 2;
 const PRISON_FREE_PER_COMBO = 3;
 const PRISON_FREE_EXTEND = 10;
 const NINJA_DELAYS = [0.11, 0.22, 0.33] as const;
@@ -160,6 +173,10 @@ export function createGame(
 
   function remakeBall(side: -1 | 1) {
     ball = makeBall(world, side, activeBallR());
+  }
+
+  function holeCenter() {
+    return { x: world.w * 0.5, y: world.h * 0.42 };
   }
 
   function isPrison() {
@@ -303,21 +320,27 @@ export function createGame(
     if (shotOpen && !shotMade) shotMissed = true;
   }
 
-  /** Break streak only when opening a new shot after a finished miss — not mid-air re-taps. */
-  function breakComboOnMissJump() {
-    if (!shotMissed) return;
-    shotMissed = false;
+  /** Break active streak (timeout or finished miss jump). Heat may keep decaying. */
+  function breakComboStreak() {
     if (streak <= 0 && !comboCounting && combo <= 0) return;
     streak = 0;
     comboCounting = false;
     comboClock = 0;
     recoverMakes = 0;
     if (isNinja()) resetNinjaPath();
+    if (isAnti() && holeOn && holeLeft <= 0) closeAntiHole();
     if (isPrison() && prisonMode === "free" && phase === "playing") {
       enterPrisonShackle("combo");
     } else {
       emitHud();
     }
+  }
+
+  /** Break streak only when opening a new shot after a settled miss — not mid-air / wrap. */
+  function breakComboOnMissJump() {
+    if (!shotMissed) return;
+    shotMissed = false;
+    breakComboStreak();
   }
 
   function refillPrisonTimer() {
@@ -441,7 +464,7 @@ export function createGame(
   }
 
   function trailCap() {
-    const s = fireStage(heatN());
+    const s = fireStage(fxCombo());
     if (s >= 4) return 16;
     if (s >= 3) return 12;
     if (s >= 2) return 8;
@@ -472,7 +495,7 @@ export function createGame(
   let shotOpen = false;
   /** True if this open shot scored (body). Survives wrap/floor clearing ball.scored. */
   let shotMade = false;
-  /** Previous attempt finished without a make (wrap / floor settle) — next new jump breaks streak. */
+  /** Previous attempt finished without a make (floor settle) — next new jump breaks streak. */
   let shotMissed = false;
   /** Left the floor during this attempt — avoids marking miss on takeoff overlap. */
   let shotAirborne = false;
@@ -504,6 +527,26 @@ export function createGame(
   let rimAudioArmed = true;
   let glassLand = false;
   let glassBase = 20;
+  let frostBonus = 0;
+  let champBank = 0;
+  let champMode = false;
+  /** Seconds left to score again in champ mode; <0 = not armed. */
+  let champIdleLeft = -1;
+  /** Idle timeout opened the final clutch window — make or miss ends the run. */
+  let champFinishing = false;
+  /** Anti ball: antimatter charge 0–100, pickups, timed black hole. */
+  let antiCharge = 0;
+  let antiMatter: { x: number; y: number; r: number; pct: number } | null = null;
+  let holeOn = false;
+  let holeX = 0;
+  let holeY = 0;
+  let holeR = 36;
+  let holeLeft = 0;
+  let holeScoreAcc = 0;
+  /** Seconds the hole has been alive (for per-second scoring). */
+  let holeLived = 0;
+  let holeTick = 0;
+  let otherOverRim = false;
   let boardHitLock = 0;
 
   function resetShotFlags() {
@@ -667,8 +710,238 @@ export function createGame(
     return getBall(ballId).heat;
   }
 
+  function isFrost() {
+    return getBall(ballId).frost === true;
+  }
+
+  function isChamp() {
+    return getBall(ballId).champ === true;
+  }
+
+  function isAnti() {
+    return getBall(ballId).anti === true;
+  }
+
+  function resetAntiRun() {
+    antiCharge = 0;
+    antiMatter = null;
+    holeOn = false;
+    holeLeft = 0;
+    holeScoreAcc = 0;
+    holeLived = 0;
+    holeTick = 0;
+    const c = holeCenter();
+    holeX = c.x;
+    holeY = c.y;
+    holeR = Math.max(28, world.w * 0.09);
+  }
+
+  function closeAntiHole() {
+    holeOn = false;
+    holeLeft = 0;
+    holeScoreAcc = 0;
+    holeLived = 0;
+    holeTick = 0;
+    antiMatter = null;
+    // Refill countdown bar when the hole ends.
+    if (phase === "playing") {
+      timer = timerMax;
+      if (!timerArmed) timerArmed = true;
+    }
+    emitHud();
+  }
+
+  function openAntiHole() {
+    const c = holeCenter();
+    holeX = c.x;
+    holeY = c.y;
+    holeR = Math.max(28, world.w * 0.09);
+    holeOn = true;
+    holeLeft = ANTI_HOLE_DUR;
+    holeScoreAcc = 0;
+    holeLived = 0;
+    holeTick = 0;
+    antiCharge = 0;
+    antiMatter = null;
+    // Refill countdown bar when the hole opens.
+    if (phase === "playing") {
+      timer = timerMax;
+      if (!timerArmed) timerArmed = true;
+    }
+    callouts.push({
+      text: "黑洞",
+      x: holeX,
+      y: holeY - holeR * 1.4,
+      life: 1.35,
+      max: 1.35,
+      kind: "tag",
+    });
+    emitHud();
+  }
+
+  function spawnAntiMatter() {
+    if (!isAnti() || holeOn || antiMatter) return;
+    const padX = world.w * 0.2;
+    const yLo = Math.max(world.h * 0.2, world.ballR * 3);
+    const yHi = world.floorY - world.ballR * 2.5;
+    if (yHi <= yLo + 20) return;
+    let x = 0;
+    let y = 0;
+    let ok = false;
+    for (let i = 0; i < 12; i++) {
+      x = padX + Math.random() * (world.w - padX * 2);
+      y = yLo + Math.random() * (yHi - yLo);
+      const nearHoop = Math.hypot(x - hoop.x, y - hoop.y) < hoop.inner * 2.8;
+      const nearOther =
+        other && Math.hypot(x - other.x, y - other.y) < other.inner * 2.8;
+      // Keep out of the four corner pockets.
+      const corner =
+        (x < world.w * 0.28 && y < world.h * 0.32) ||
+        (x > world.w * 0.72 && y < world.h * 0.32) ||
+        (x < world.w * 0.28 && y > world.floorY - world.h * 0.18) ||
+        (x > world.w * 0.72 && y > world.floorY - world.h * 0.18);
+      if (!nearHoop && !nearOther && !corner) {
+        ok = true;
+        break;
+      }
+    }
+    if (!ok) return;
+    const pct = 1 + Math.floor(Math.random() * 15);
+    antiMatter = {
+      x,
+      y,
+      r: Math.max(14, world.ballR * 0.7),
+      pct,
+    };
+  }
+
+  function tryCollectAntiMatter() {
+    if (!isAnti() || !antiMatter || holeOn || ball.scored) return;
+    const d = Math.hypot(ball.x - antiMatter.x, ball.y - antiMatter.y);
+    if (d > ball.r + antiMatter.r) return;
+    const got = antiMatter.pct;
+    antiMatter = null;
+    antiCharge = Math.min(100, antiCharge + got);
+    callouts.push({
+      text: `+${got}%`,
+      x: ball.x,
+      y: ball.y - ball.r * 2.2,
+      life: 0.75,
+      max: 0.75,
+      kind: "tag",
+    });
+    if (antiCharge >= 100) openAntiHole();
+    else emitHud();
+  }
+
+  function stepAntiHole(dt: number) {
+    if (!isAnti() || !holeOn) return;
+    holeLived += dt;
+    holeScoreAcc += dt;
+    while (holeScoreAcc >= 1) {
+      holeScoreAcc -= 1;
+      holeTick += 1;
+      // 存在秒数 × 3 — tick 1 → +3, tick 15 → +45
+      const gain = holeTick * 3;
+      score += gain;
+      if (score > best && !devOn) {
+        best = score;
+        persist();
+      }
+      callouts.push({
+        text: `+${gain}`,
+        x: holeX + (Math.random() - 0.5) * holeR,
+        y: holeY - holeR * 1.1,
+        life: 0.55,
+        max: 0.55,
+        kind: "tag",
+      });
+      emitHud();
+    }
+    if (holeLeft > 0) {
+      holeLeft = Math.max(0, holeLeft - dt);
+    }
+    if (holeLeft <= 0 && !(comboCounting && streak > 0)) {
+      closeAntiHole();
+    }
+  }
+
+  function enterChampionMoment() {
+    if (!isChamp() || champMode || champBank <= 0.05) return false;
+    const bank = champBank;
+    champBank = 0;
+    champMode = true;
+    champIdleLeft = -1;
+    champFinishing = false;
+    timeUp = false;
+    buzzer = false;
+    buzzerTimer = 0;
+    timerMax = Math.max(bank, 0.5);
+    timer = timerMax;
+    timerArmed = true;
+    emitHud();
+    return true;
+  }
+
+  function enterClutchFromChampIdle() {
+    champIdleLeft = -1;
+    champFinishing = true;
+    timer = 0;
+    timeUp = true;
+    buzzer = true;
+    buzzerTimer = BUZZER_WINDOW;
+    audio.buzzer();
+  }
+
+  function frostChance() {
+    return Math.min(1, FROST_CHANCE_BASE + streak * FROST_CHANCE_PER_STREAK);
+  }
+
+  function sideFrosted(side: -1 | 1) {
+    if (hoop.frostLeft > 0 && hoop.side === side) return true;
+    if (other && other.frostLeft > 0 && other.side === side) return true;
+    return false;
+  }
+
+  function applyFrostToHoop(h: Hoop) {
+    h.frost = 1;
+    h.frostLeft = FROST_DUR; // refresh to full 3s
+    h.hold = Math.max(h.hold, h.frostLeft);
+    h.couple = true;
+    h.moving = false;
+    h.targetX = h.x;
+    h.active = true;
+  }
+
+  function clearFrost(h: Hoop, asOther: boolean) {
+    h.frostLeft = 0;
+    h.frost = 0;
+    if (asOther) {
+      h.hold = 0;
+      h.couple = false;
+      h.active = false;
+      h.targetX = h.side < 0 ? -world.w * 0.42 : world.w * 1.42;
+    }
+  }
+
+  function tickFrost(h: Hoop, dt: number, asOther: boolean) {
+    if (h.frostLeft <= 0 || h.frost <= 0) return;
+    h.frostLeft -= dt;
+    if (h.frostLeft > 0) {
+      if (asOther) h.hold = Math.max(h.hold, 0.05);
+      return;
+    }
+    clearFrost(h, asOther);
+  }
+
   function heatN() {
     return canHeat() ? combo : 0;
+  }
+
+  /** Combo value that drives trail / stage FX (fire or frost). */
+  function fxCombo() {
+    if (canHeat() || isFrost()) return combo;
+    return 0;
   }
 
   function applyBall(id: BallId) {
@@ -688,6 +961,33 @@ export function createGame(
       }
       whiteFlash = 0;
       burnFlash = 0;
+    }
+    if (!isFrost()) {
+      frostBonus = 0;
+      hoop.frost = 0;
+      hoop.frostLeft = 0;
+      if (other) {
+        other.frost = 0;
+        other.frostLeft = 0;
+      }
+      if (!canHeat()) resetTrail();
+    }
+    if (!isChamp()) {
+      champBank = 0;
+      champMode = false;
+      champIdleLeft = -1;
+      champFinishing = false;
+    }
+    if (!isAnti()) {
+      antiCharge = 0;
+      antiMatter = null;
+      holeOn = false;
+      holeLeft = 0;
+      holeScoreAcc = 0;
+      holeLived = 0;
+      holeTick = 0;
+    } else {
+      resetAntiRun();
     }
     if (devOn) {
       applyKitPhys();
@@ -870,8 +1170,8 @@ export function createGame(
   }
 
   function pushTrail() {
-    if (!gfx.particles || heatN() < STAGE_WHITE || ballHidden()) {
-      if (heatN() < STAGE_WHITE) resetTrail();
+    if (!gfx.particles || fxCombo() < STAGE_WHITE || ballHidden()) {
+      if (fxCombo() < STAGE_WHITE) resetTrail();
       else {
         ghostX = ball.x;
         ghostY = ball.y;
@@ -923,6 +1223,12 @@ export function createGame(
     ball.y *= sy;
     ball.r = activeBallR();
     if (ball.y + ball.r > world.floorY) ball.y = world.floorY - ball.r;
+    if (holeOn) {
+      const c = holeCenter();
+      holeX = c.x;
+      holeY = c.y;
+      holeR = Math.max(28, world.w * 0.09);
+    }
     scaleHoop(hoop, sx, sy, world);
     if (other) scaleHoop(other, sx, sy, world);
     syncChain();
@@ -978,6 +1284,13 @@ export function createGame(
     resetGraf();
     glassLand = false;
     glassBase = 20;
+    frostBonus = 0;
+    champBank = 0;
+    champMode = false;
+    champIdleLeft = -1;
+    champFinishing = false;
+    resetAntiRun();
+    otherOverRim = false;
     boardHitLock = 0;
     resetPrisonRun();
     resetNinjaPath();
@@ -1002,12 +1315,22 @@ export function createGame(
     emitHud();
   }
 
-  function gameOver() {
+  function gameOver(opts?: { quiet?: boolean }) {
     if (phase === "over") return;
     phase = "over";
     paused = false;
     buzzer = false;
     buzzerTimer = 0;
+    champIdleLeft = -1;
+    champFinishing = false;
+    if (isAnti()) {
+      holeOn = false;
+      holeLeft = 0;
+      holeScoreAcc = 0;
+      holeLived = 0;
+      holeTick = 0;
+      antiMatter = null;
+    }
     combo = 0;
     streak = 0;
     comboCounting = true;
@@ -1025,7 +1348,7 @@ export function createGame(
       best = score;
       persist();
     }
-    audio.miss();
+    if (!opts?.quiet) audio.miss();
     emitHud();
   }
 
@@ -1061,9 +1384,18 @@ export function createGame(
     // Mid-air re-tap on an unfinished attempt: boost only — do not break combo.
     if (shotOpen && !shotMade && !shotMissed) {
       hint = false;
-      ball.vy = jumpVy();
-      ball.vx = jumpVx();
-      ball.omega = ball.vx / Math.max(8, ball.r);
+      if (isAnti() && holeOn) {
+        const dx = hoop.x - ball.x;
+        const dy = hoop.y - ball.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const speed = Math.hypot(jumpVx(), Math.abs(jumpVy()));
+        ball.vx = (dx / d) * speed;
+        ball.vy = (dy / d) * speed;
+      } else {
+        ball.vy = jumpVy();
+        ball.vx = jumpVx();
+      }
+      ball.omega = (ball.vx / Math.max(8, ball.r)) * 1.35 + (isAnti() && holeOn ? 10 : 0);
       ball.squash = 1.08;
       ball.scored = false;
       resetShotFlags();
@@ -1075,9 +1407,18 @@ export function createGame(
     }
     breakComboOnMissJump();
     hint = false;
-    ball.vy = jumpVy();
-    ball.vx = jumpVx();
-    ball.omega = ball.vx / Math.max(8, ball.r);
+    if (isAnti() && holeOn) {
+      const dx = hoop.x - ball.x;
+      const dy = hoop.y - ball.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const speed = Math.hypot(jumpVx(), Math.abs(jumpVy()));
+      ball.vx = (dx / d) * speed;
+      ball.vy = (dy / d) * speed;
+    } else {
+      ball.vy = jumpVy();
+      ball.vx = jumpVx();
+    }
+    ball.omega = (ball.vx / Math.max(8, ball.r)) * 1.35 + (isAnti() && holeOn ? 10 : 0);
     ball.squash = 1.08;
     ball.scored = false;
     resetShotFlags();
@@ -1152,6 +1493,7 @@ export function createGame(
     shotAirborne = false;
     other = null;
     hoop = makeHoop(world, -1, true);
+    resetAntiRun();
     remakeBall(1);
     particles = [];
     callouts = [];
@@ -1412,14 +1754,27 @@ export function createGame(
     if (burnFlash > 0) burnFlash = Math.max(0, burnFlash - dt);
 
     if (phase === "playing" && timerArmed && !buzzer && !timeUp && !devFreeze) {
-      timer -= dt;
+      let drain = dt;
+      if (isAnti() && holeOn) {
+        // Far from hole → timer drains slower; at center → normal speed.
+        const dist = Math.hypot(ball.x - holeX, ball.y - holeY);
+        const maxD = Math.max(120, world.w * 0.55);
+        const t = Math.max(0, Math.min(1, dist / maxD));
+        drain = dt * (1 - t * 0.78);
+      }
+      timer -= drain;
       if (timer <= 0) {
         timer = 0;
-        timeUp = true;
-        if (predictBuzzerMake()) {
-          buzzer = true;
-          buzzerTimer = BUZZER_WINDOW;
-          audio.buzzer();
+        if (isChamp() && !champMode && enterChampionMoment()) {
+          // Champion bank consumed as a fresh countdown.
+        } else {
+          timeUp = true;
+          champIdleLeft = -1;
+          if (predictBuzzerMake()) {
+            buzzer = true;
+            buzzerTimer = BUZZER_WINDOW;
+            audio.buzzer();
+          }
         }
       }
     } else if (buzzer && phase === "playing") {
@@ -1439,6 +1794,18 @@ export function createGame(
           ball.y + ball.r >= world.floorY - 2 && Math.abs(ball.vy) < 90 && Math.abs(ball.vx) < 70;
         if (settled && !ball.scored) gameOver();
       }
+    }
+
+    if (
+      phase === "playing" &&
+      champMode &&
+      champIdleLeft >= 0 &&
+      !buzzer &&
+      !timeUp &&
+      !devFreeze
+    ) {
+      champIdleLeft -= dt;
+      if (champIdleLeft <= 0) enterClutchFromChampIdle();
     }
 
     if (phase === "playing" && isPrison() && prisonMode === "free" && !buzzer && !devFreeze) {
@@ -1462,8 +1829,12 @@ export function createGame(
       }
     }
 
-    // Heat decays only after streak is broken (miss jump). No time-window streak break.
-    if (phase === "playing" && !comboCounting && combo > 0 && !buzzer && !devHoldHeat) {
+    // Active streak: must score again within COMBO_STOP seconds.
+    if (phase === "playing" && comboCounting && streak > 0 && !buzzer && !devHoldHeat) {
+      comboClock += dt;
+      if (comboClock >= COMBO_STOP) breakComboStreak();
+    } else if (phase === "playing" && !comboCounting && combo > 0 && !buzzer && !devHoldHeat) {
+      // Heat decays only after streak is broken.
       comboClock += dt;
       if (comboClock >= COMBO_DROP) {
         comboClock = 0;
@@ -1472,9 +1843,11 @@ export function createGame(
     }
 
     stepHoop(hoop, dt);
+    tickFrost(hoop, dt, false);
     if (other) {
       if (other.jolt > 0) other.jolt = Math.max(0, other.jolt - dt / 0.28);
-      if (other.hold > 0) {
+      tickFrost(other, dt, true);
+      if (other.hold > 0 && other.frostLeft <= 0) {
         other.hold -= dt;
         if (other.hold <= 0) {
           other.hold = 0;
@@ -1487,7 +1860,10 @@ export function createGame(
       other.x += (other.targetX - other.x) * (1 - Math.exp(-7.5 * dt));
       nudgeNet(other, other.x - ox, 0);
       const gone = other.side < 0 ? other.x < -world.w * 0.28 : other.x > world.w * 1.28;
-      if (gone) other = null;
+      if (gone) {
+        other = null;
+        otherOverRim = false;
+      }
     }
 
     prevBallX = ball.x;
@@ -1496,9 +1872,44 @@ export function createGame(
     if (live) {
       const gScale = buzzer ? 0.42 : 1;
       // High-bounce kits skip fallBoost — otherwise each landing gains height.
-      const fallBoost = ball.vy > 20 && pMul("ball") <= 1.15 ? 1.28 : 1;
+      const fallBoost = (() => {
+        if (pMul("ball") > 1.15) return 1;
+        if (isAnti() && holeOn) return 1;
+        return ball.vy > 20 ? 1.28 : 1;
+      })();
       const buoy = pMul("buoy");
-      ball.vy += gravity() * dt * (gScale * fallBoost - buoy);
+      if (isAnti() && holeOn) {
+        const dx = holeX - ball.x;
+        const dy = holeY - ball.y;
+        const d = Math.max(40, Math.hypot(dx, dy));
+        const g = gravity() * gScale * 0.72;
+        // Pull toward the hole (softened so orbit doesn't slingshot).
+        ball.vx += (dx / d) * g * dt;
+        ball.vy += (dy / d) * g * dt;
+        // Mild clockwise orbit; fades with distance so far-away balls aren't whipped.
+        const rx = ball.x - holeX;
+        const ry = ball.y - holeY;
+        const rd = Math.max(40, Math.hypot(rx, ry));
+        const near = Math.min(1, (world.w * 0.28) / rd);
+        const orbit = g * 0.18 * near;
+        ball.vx += (ry / rd) * orbit * dt;
+        ball.vy += (-rx / rd) * orbit * dt;
+        // Keep a strong clockwise spin so rim hits always get a tangential kick.
+        ball.omega += 22 * dt;
+        if (ball.omega < 8) ball.omega += 18 * dt;
+        // Near the rim plane with almost no vertical speed → nudge down through the hoop.
+        if (
+          phase === "playing" &&
+          !ball.scored &&
+          Math.abs(ball.y - hoop.y) < hoop.inner * 0.45 &&
+          Math.abs(ball.vy) < 70 &&
+          Math.abs(ball.x - hoop.x) < hoop.inner * 2.6
+        ) {
+          ball.vy += 200 * dt;
+        }
+      } else {
+        ball.vy += gravity() * dt * (gScale * fallBoost - buoy);
+      }
       const air = pMul("air");
       const roll = pMul("roll");
       const onFloor = ball.y + ball.r >= world.floorY - 0.5 && ball.vy >= 0;
@@ -1508,10 +1919,12 @@ export function createGame(
         ball.omega = ball.vx / Math.max(8, ball.r);
       } else {
         ball.vx *= 1 - Math.min(0.85, 0.035 * air * dt);
-        ball.omega *= 1 - Math.min(0.85, 0.28 * air * dt);
+        // Preserve spin longer in black-hole mode so rim deflection stays reliable.
+        const spinDrag = isAnti() && holeOn ? 0.06 : 0.28;
+        ball.omega *= 1 - Math.min(0.85, spinDrag * air * dt);
       }
       ball.vy *= 1 - Math.min(0.85, 0.025 * air * dt);
-      ball.omega = clamp(ball.omega, -16, 16);
+      ball.omega = clamp(ball.omega, -22, 22);
       const move = buzzer ? 0.6 : 1;
       ball.x += ball.vx * dt * move;
       ball.y += ball.vy * dt * move;
@@ -1522,6 +1935,8 @@ export function createGame(
       pushTrail();
       ball.spin += ball.omega * dt;
       ball.squash += (1 - ball.squash) * (1 - Math.exp(-12 * dt));
+      // Score before rim/board so a clean thread isn't eaten by rim bounce.
+      if (phase === "playing") checkScore();
       if (phase !== "title" && !ballHidden()) {
         if (scoredLock <= 0) {
           collideRim(hoop);
@@ -1534,7 +1949,10 @@ export function createGame(
           collideBrace(other);
         }
       }
-      if (phase === "playing") checkScore();
+      if (isAnti() && phase === "playing") {
+        tryCollectAntiMatter();
+        stepAntiHole(dt);
+      }
       collideFloor();
       if (chain && hasChain()) {
         stepChain(
@@ -1678,27 +2096,55 @@ export function createGame(
     ball.x += nx * (pen + 0.7);
     ball.y += ny * (pen + 0.7);
     const vn = ball.vx * nx + ball.vy * ny;
+    const tx = -ny;
+    const ty = nx;
+    const r = Math.max(8, ball.r);
+    // Couple spin ↔ tangential velocity (rolling contact). Spinning balls deflect off the rim.
+    const applySpinDeflect = () => {
+      const vt = ball.vx * tx + ball.vy * ty;
+      const slip = vt - ball.omega * r;
+      const baseK = isAnti() && holeOn ? 0.42 : 0.22;
+      const k = Math.min(0.72, baseK * pMul("rimFric"));
+      ball.vx -= k * slip * tx;
+      ball.vy -= k * slip * ty;
+      ball.omega += (k * slip) / r;
+      // Extra kick from residual spin so flat pinball contacts still glance away.
+      const spinKick = clamp(ball.omega * r * (isAnti() && holeOn ? 0.28 : 0.12), -160, 160);
+      ball.vx += spinKick * tx;
+      ball.vy += spinKick * ty;
+      ball.omega = clamp(ball.omega, -22, 22);
+    };
     if (vn >= 0) {
       if (Math.hypot(ball.vx, ball.vy) < 55) {
         ball.vx += nx * 70;
         ball.vy += ny * 40;
+      }
+      applySpinDeflect();
+      if (isAnti() && holeOn && !ball.scored && Math.abs(ball.y - h.y) < ball.r * 1.35 && Math.abs(ball.vy) < 100) {
+        ball.vy += 150;
+        ball.vx *= 0.7;
       }
       return;
     }
     const rest = bounceRest("rim");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
-    const tx = -ny;
-    const ty = nx;
-    const vt = ball.vx * tx + ball.vy * ty;
-    const grip = Math.min(0.92, 0.08 * pMul("rimFric"));
-    ball.vx -= grip * vt * tx;
-    ball.vy -= grip * vt * ty;
-    ball.omega += (-vt / Math.max(8, ball.r)) * 0.14 * pMul("rimFric");
-    ball.omega = clamp(ball.omega, -9, 9);
+    applySpinDeflect();
     ball.hitRim = true;
     h.jolt = 1;
     h.joltDir = ball.vy < 0 ? -1 : 1;
+    // Black-hole mode: break horizontal rim pinball by kicking off the rim plane.
+    if (isAnti() && holeOn && !ball.scored) {
+      const level = Math.abs(ball.y - h.y) < ball.r * 1.35;
+      const flat = Math.abs(ball.vy) < 100;
+      if (level && flat) {
+        ball.vy += 175;
+        ball.vx *= 0.65;
+      } else {
+        const toward = Math.sign(h.y - ball.y) || 1;
+        ball.vy += toward * 95;
+      }
+    }
     const throughHole = Math.abs(ball.x - h.x) < h.inner * 0.55 && ball.vy > 28;
     if (h.active && rimHitLock <= 0) {
       rimHits += 1;
@@ -1835,6 +2281,8 @@ export function createGame(
       Math.abs(ball.vx) < 14 &&
       ball.vy >= 0;
     if (!exitLeft && !exitRight && !stuckOff) return;
+    // Wrap is not a miss: clear airborne so the post-wrap floor contact does not markShotMissed.
+    shotAirborne = false;
     if (getBall(ballId).wrap === "height") {
       // Spawn on the approach side of the active hoop (same rule as classic wrap).
       // hoop.side > 0 → basket on right → enter from left; else enter from right.
@@ -1849,7 +2297,6 @@ export function createGame(
       ball.omega = ball.vx / Math.max(8, r);
       ball.scored = false;
       resetShotFlags();
-      markShotMissed();
       resetTrail();
       prevBallX = ball.x;
       prevBallY = ball.y;
@@ -1861,7 +2308,6 @@ export function createGame(
     ball.squash = 1;
     ball.scored = false;
     resetShotFlags();
-    markShotMissed();
     const roll = 44;
     if (hoop.side > 0) {
       ball.x = -r - pad;
@@ -1903,8 +2349,10 @@ export function createGame(
     }
     if (Math.abs(ball.vx) < 2.2) ball.vx = 0;
     ball.omega = ball.vx / Math.max(8, ball.r);
-    ball.scored = false;
-    resetShotFlags();
+    if (scoredLock <= 0) {
+      ball.scored = false;
+      resetShotFlags();
+    }
     if (incoming <= 40 && shotAirborne) {
       markShotMissed();
       shotAirborne = false;
@@ -1913,14 +2361,58 @@ export function createGame(
 
   function checkScore() {
     if (phase !== "playing") return;
-    const inHole = Math.abs(ball.x - hoop.x) < hoop.inner - ball.r * 0.1;
-    if (inHole && prevBallY > hoop.y && ball.y <= hoop.y && ball.vy < 0) fromBelow = true;
-    if (inHole && ball.y + ball.r * 0.18 < hoop.y) overRim = true;
-    if (!inHole && Math.abs(ball.x - hoop.x) > hoop.inner + ball.r * 0.35) overRim = false;
     if (ball.scored) return;
     const goingDown = ball.vy > 8;
+    const goingUp = ball.vy < -8;
+    const bothWays = isAnti() && holeOn;
+
+    const holePad = -ball.r * 0.1;
+    const inHole = Math.abs(ball.x - hoop.x) < hoop.inner + holePad;
+    if (inHole && prevBallY > hoop.y && ball.y <= hoop.y && ball.vy < 0) fromBelow = true;
+    // Sticky overRim: currently above, or tunneled from above this frame.
+    if (inHole && (ball.y + ball.r * 0.18 < hoop.y || prevBallY + ball.r * 0.18 < hoop.y)) {
+      overRim = true;
+    }
+    if (!inHole && Math.abs(ball.x - hoop.x) > hoop.inner + ball.r * 0.35) overRim = false;
     const below = ball.y >= hoop.y;
-    if (overRim && goingDown && below && inHole) registerScore();
+    if (overRim && goingDown && below && inHole) {
+      registerScore({ at: hoop });
+      return;
+    }
+    // Black hole: upward through the rim also counts (穿针引线).
+    if (
+      bothWays &&
+      inHole &&
+      goingUp &&
+      ball.y <= hoop.y &&
+      (fromBelow || (prevBallY > hoop.y && ball.y <= hoop.y))
+    ) {
+      fromBelow = true;
+      registerScore({ at: hoop });
+      return;
+    }
+
+    if (other && (other.frostLeft > 0 || other.active)) {
+      const oIn = Math.abs(ball.x - other.x) < other.inner + holePad;
+      if (oIn && (ball.y + ball.r * 0.18 < other.y || prevBallY + ball.r * 0.18 < other.y)) {
+        otherOverRim = true;
+      }
+      if (!oIn && Math.abs(ball.x - other.x) > other.inner + ball.r * 0.35) otherOverRim = false;
+      if (otherOverRim && goingDown && ball.y >= other.y && oIn) {
+        registerScore({ at: other });
+        return;
+      }
+      if (
+        bothWays &&
+        oIn &&
+        goingUp &&
+        ball.y <= other.y &&
+        (prevBallY > other.y || ball.y - ball.r * 0.18 > other.y)
+      ) {
+        fromBelow = true;
+        registerScore({ at: other });
+      }
+    }
   }
 
   function checkGhostScore(g: NinjaGhost, gi: number) {
@@ -1975,15 +2467,25 @@ export function createGame(
     if (!ghost) {
       ball.scored = true;
       scoredLock = 0.22;
-      ball.vy += 70;
+      // Keep threading in the direction of the make (upward anti makes were getting yanked back).
+      ball.vy += (ball.vy < 0 ? -1 : 1) * 70;
       if (isNinja()) {
+        const gateAt = "inner" in scoredHoop ? scoredHoop : hoop;
         ninjaGates.push({
-          x: hoop.x,
-          y: hoop.y,
-          inner: hoop.inner,
+          x: gateAt.x,
+          y: gateAt.y,
+          inner: gateAt.inner,
           life: 1.6,
           hit: [false, false, false],
         });
+      }
+      // Score on secondary hoop → promote it so nextHoop freezes the right stand.
+      if (other && scoredHoop === other) {
+        const swap = hoop;
+        hoop = other;
+        other = swap;
+        overRim = otherOverRim;
+        otherOverRim = false;
       }
     }
     const swish = ghost ? true : !ball.hitRim && !ball.hitBoard;
@@ -2015,6 +2517,10 @@ export function createGame(
       pushGraf("start");
     }
 
+    if (!ghost && isAnti() && !holeOn) {
+      if (!antiMatter && Math.random() < ANTI_SPAWN_CHANCE) spawnAntiMatter();
+    }
+
     if (shackled) {
       noteGraf();
       if (!timerArmed) timerArmed = true;
@@ -2030,7 +2536,19 @@ export function createGame(
       return;
     }
 
+    let frostGain = 0;
+    const scoredFrost =
+      !ghost && isFrost() && "frost" in scoredHoop ? (scoredHoop as Hoop) : null;
+    const wasFrozen = Boolean(
+      scoredFrost && scoredFrost.frostLeft > 0 && scoredFrost.frost > 0,
+    );
+    if (wasFrozen) {
+      frostGain = FROST_BONUS_PER_HIT;
+      frostBonus += frostGain;
+    }
+
     let gain = isGlass() ? glassBase + streak : streak;
+    if (isFrost()) gain += frostBonus;
     if (depth) gain += 30;
     else if (needle) gain += 20;
     else if (lucky) gain += 10;
@@ -2076,10 +2594,14 @@ export function createGame(
                     : "";
     if (clutch) {
       gain += 5;
-      buzzer = false;
-      buzzerTimer = 0;
-      timeUp = false;
+      if (!champFinishing) {
+        buzzer = false;
+        buzzerTimer = 0;
+        timeUp = false;
+      }
     }
+    if (champMode) gain *= CHAMP_SCORE_MULT;
+    if (isAnti() && holeOn) gain = 0;
     score += gain;
     noteGraf();
     if (score > best && !devOn) {
@@ -2114,15 +2636,18 @@ export function createGame(
     const boardTop = ghost
       ? popY - popInner * RIM_RY - 40
       : boardGeom(hoop, world).visY;
-    callouts.push({
-      text: `+${gain}`,
-      x: popX,
-      y: popY - popInner * RIM_RY - 14,
-      capY: boardTop + 8,
-      life: 0.9,
-      max: 0.9,
-      kind: "score",
-    });
+    const hideMakeScore = isAnti() && holeOn;
+    if (!hideMakeScore) {
+      callouts.push({
+        text: `+${gain}`,
+        x: popX,
+        y: popY - popInner * RIM_RY - 14,
+        capY: boardTop + 8,
+        life: 0.9,
+        max: 0.9,
+        kind: "score",
+      });
+    }
     if (freed && prisonBonus > 0) {
       callouts.push({
         text: `铐+${prisonBonus}`,
@@ -2146,7 +2671,18 @@ export function createGame(
         kind: "base",
       });
     }
-    if (tag) {
+    if (frostGain > 0) {
+      callouts.push({
+        text: `冻+${frostGain}`,
+        x: popX,
+        y: popY - popInner * RIM_RY + 18,
+        capY: boardTop + 8,
+        life: 0.85,
+        max: 0.85,
+        kind: "base",
+      });
+    }
+    if (tag && !hideMakeScore) {
       callouts.push({
         text: tag,
         x: popX,
@@ -2156,12 +2692,43 @@ export function createGame(
         kind: "tag",
       });
     }
-    timerMax = Math.max(TIMER_MIN, timerMax * TIMER_DECAY);
-    timer = timerMax;
+    if (!ghost && isChamp() && !champMode && timerArmed) {
+      const left = Math.max(0, timer);
+      if (left > 0.05) {
+        const add = left * CHAMP_BANK_RATE;
+        if (add > 0.05) champBank += add;
+      }
+    }
+    if (!champMode) {
+      timerMax = Math.max(TIMER_MIN, timerMax * TIMER_DECAY);
+      timer = timerMax;
+    } else if (!ghost && !champFinishing) {
+      champIdleLeft = CHAMP_IDLE;
+    }
+    if (champFinishing && clutch && !ghost) {
+      syncNinjaGhosts();
+      emitHud();
+      champFinishing = false;
+      gameOver({ quiet: true });
+      return;
+    }
     const stage = fireStage(heatN());
     if (!ghost) {
+      if (isFrost() && Math.random() < frostChance()) {
+        const refreshing = hoop.frostLeft > 0;
+        applyFrostToHoop(hoop);
+        callouts.push({
+          text: refreshing ? "续冻" : "冻结",
+          x: hoop.x,
+          y: hoop.y - 78,
+          life: 0.95,
+          max: 0.95,
+          kind: "tag",
+        });
+        frostSmoke(hoop);
+      }
       nextHoop();
-      if (other && stage >= 2) {
+      if (!isFrost() && other && stage >= 2) {
         const sear = (stage === 2 ? 1 : stage === 3 ? 2 : 3) as 1 | 2 | 3;
         if (sear > other.sear) other.sear = sear;
         other.hold = Math.max(
@@ -2180,17 +2747,55 @@ export function createGame(
   }
 
   function nextHoop() {
-    const prev = hoop;
-    prev.active = false;
-    prev.moving = false;
-    prev.jolt = 0;
-    prev.hold = HOOP_HOLD;
-    prev.couple = true;
-    prev.targetX = prev.x;
-    other = prev;
-    const side: -1 | 1 = prev.side < 0 ? 1 : -1;
-    hoop = makeHoop(world, side, false, madeCount);
-    hoop.x = side < 0 ? -90 : world.w + 90;
+    const scored = hoop;
+    scored.moving = false;
+    scored.jolt = 0;
+    scored.couple = true;
+    scored.targetX = scored.x;
+
+    const nextSide: -1 | 1 = scored.side < 0 ? 1 : -1;
+    const frozenOther = other && other.frostLeft > 0 ? other : null;
+
+    if (scored.frostLeft > 0) {
+      scored.active = true;
+    } else {
+      scored.active = false;
+      // Shattered stands are already dismissed (couple false).
+      if (scored.couple) scored.hold = HOOP_HOLD;
+    }
+
+    if (frozenOther) {
+      // Already two stands — never spawn a third. Same-side spawn blocked by frozenOther.
+      if (frozenOther.side === nextSide) {
+        hoop = frozenOther;
+        other = scored;
+      } else {
+        hoop = scored;
+        other = frozenOther;
+      }
+      hoop.active = true;
+      other.active = other.frostLeft > 0 || other.hold > 0;
+      ball.hitRim = false;
+      ball.hitBoard = false;
+      overRim = false;
+      otherOverRim = false;
+      return;
+    }
+
+    other = scored;
+    otherOverRim = false;
+
+    if (isFrost() && sideFrosted(nextSide)) {
+      hoop = scored;
+      hoop.active = true;
+      ball.hitRim = false;
+      ball.hitBoard = false;
+      overRim = false;
+      return;
+    }
+
+    hoop = makeHoop(world, nextSide, false, madeCount);
+    hoop.x = nextSide < 0 ? -90 : world.w + 90;
     hoop.net = buildNet(hoop);
     if (madeCount >= 50 && Math.random() < moveChance) {
       hoop.moving = true;
@@ -2296,6 +2901,42 @@ export function createGame(
     });
   }
 
+  function frostSmoke(h: Hoop) {
+    if (!gfx.particles) return;
+    for (let i = 0; i < 12; i++) {
+      particles.push({
+        x: h.x + (Math.random() - 0.5) * h.inner * 2.2,
+        y: h.y - 10 + Math.random() * 36,
+        vx: (Math.random() - 0.5) * 22,
+        vy: -18 - Math.random() * 46,
+        life: 0.45 + Math.random() * 0.45,
+        max: 0.9,
+        size: 2.2 + Math.random() * 4,
+        hue: 82 + Math.random() * 14,
+        spin: Math.random() * Math.PI,
+        vr: (Math.random() - 0.5) * 5,
+      });
+    }
+  }
+
+  function spawnFrostBits(dt: number) {
+    if (!gfx.particles) return;
+    if (Math.random() > 0.4 + dt) return;
+    if (particles.length > 90) return;
+    particles.push({
+      x: ball.x + (Math.random() - 0.5) * ball.r * 1.4,
+      y: ball.y + (Math.random() - 0.5) * ball.r * 1.4,
+      vx: (Math.random() - 0.5) * 40 + ball.vx * 0.12,
+      vy: -24 - Math.random() * 55 + ball.vy * 0.08,
+      life: 0.16 + Math.random() * 0.22,
+      max: 0.4,
+      size: 1.8 + Math.random() * 2.6,
+      hue: 84 + Math.random() * 12,
+      spin: Math.random() * Math.PI,
+      vr: (Math.random() - 0.5) * 8,
+    });
+  }
+
   function smokePuff(h: Hoop) {
     if (!gfx.particles) return;
     for (let i = 0; i < 10; i++) {
@@ -2353,6 +2994,7 @@ export function createGame(
         }
         if (acc > STEP * MAX_STEPS) acc = 0;
         if (heatN() >= STAGE_IGNITE && phase === "playing") spawnFireBits(tick);
+        if (isFrost() && phase === "playing" && streak > 0) spawnFrostBits(tick);
       }
 
       if (world.cssW >= 8 && world.cssH >= 8 && canvas.width > 0 && canvas.height > 0) {
@@ -2392,7 +3034,7 @@ export function createGame(
             ball,
             particles,
             callouts,
-            heatN(),
+            fxCombo(),
             score,
             timer01,
             buzzer,
@@ -2408,7 +3050,7 @@ export function createGame(
               : comboCounting && streak >= 2
                 ? streak
                 : 0,
-            opener > 0 && streak < 2 ? "好戏开始" : "",
+            opener > 0 && streak < 2 ? "好戏开始" : champMode ? "冠军时刻" : holeOn ? "黑洞时刻" : "",
             cloudShift,
             cloudSx,
             cloudSy,
@@ -2425,6 +3067,10 @@ export function createGame(
             chain && hasChain() ? chain : null,
             prisonHud(),
             ninjaClonesDraw(),
+            isChamp() && !champMode ? champBank : -1,
+            isAnti() && holeOn ? { x: holeX, y: holeY, r: holeR, left: holeLeft } : null,
+            isAnti() ? antiCharge : -1,
+            isAnti() ? antiMatter : null,
           );
           ctx.restore();
           }
@@ -2445,6 +3091,9 @@ export function createGame(
   }
 
   resize();
+  if (isAnti()) {
+    resetAntiRun();
+  }
   emitHud();
   raf = requestAnimationFrame(frame);
   requestAnimationFrame(() => {
@@ -2691,6 +3340,8 @@ function makeHoop(world: World, side: -1 | 1, first: boolean, made = 0): Hoop {
     sear: 0,
     char: 0,
     burning: false,
+    frost: 0,
+    frostLeft: 0,
     netPulse: 0,
     jolt: 0,
     joltDir: 1,

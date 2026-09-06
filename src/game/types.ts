@@ -76,6 +76,10 @@ export type Hoop = {
   sear: 0 | 1 | 2 | 3;
   char: number;
   burning: boolean;
+  /** Ice freeze active (1) or not (0). */
+  frost: 0 | 1;
+  /** Seconds left frozen. */
+  frostLeft: number;
   netPulse: number;
   jolt: number;
   joltDir: number;
