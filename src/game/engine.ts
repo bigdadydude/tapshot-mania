@@ -21,7 +21,7 @@ import type { GrafKey } from "./scenes";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
 
-export const GAME_REV = 273;
+export const GAME_REV = 274;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -33,7 +33,8 @@ const COMBO_DROP = 2;
 const BUZZER_WINDOW = 5;
 const HOOP_HOLD = 0.72;
 const FIRE_HOLD = 1.35;
-const FROST_DUR = 3;
+const FROST_DUR_FIRST = 4;
+const FROST_DUR_REFRESH = 3;
 const FROST_CHANCE_BASE = 0.1;
 const FROST_CHANCE_PER_STREAK = 0.01;
 /** Champ: bank this fraction of leftover timer per make. */
@@ -903,9 +904,10 @@ export function createGame(
     return false;
   }
 
-  function applyFrostToHoop(h: Hoop) {
+  function applyFrostToHoop(h: Hoop, refreshing = false) {
     h.frost = 1;
-    h.frostLeft = FROST_DUR; // refresh to full 3s
+    // First freeze: 4s; any re-freeze refreshes to 3s.
+    h.frostLeft = refreshing ? FROST_DUR_REFRESH : FROST_DUR_FIRST;
     h.hold = Math.max(h.hold, h.frostLeft);
     h.couple = true;
     h.moving = false;
@@ -2673,7 +2675,7 @@ export function createGame(
     }
     if (frostGain > 0) {
       callouts.push({
-        text: `冻+${frostGain}`,
+        text: `冻+${frostBonus}`,
         x: popX,
         y: popY - popInner * RIM_RY + 18,
         capY: boardTop + 8,
@@ -2715,8 +2717,9 @@ export function createGame(
     const stage = fireStage(heatN());
     if (!ghost) {
       if (isFrost() && Math.random() < frostChance()) {
+        // hoop is the stand just scored into (swapped earlier if needed).
         const refreshing = hoop.frostLeft > 0;
-        applyFrostToHoop(hoop);
+        applyFrostToHoop(hoop, refreshing);
         callouts.push({
           text: refreshing ? "续冻" : "冻结",
           x: hoop.x,

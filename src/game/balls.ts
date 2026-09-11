@@ -91,7 +91,7 @@ export const BALLS: BallKit[] = [
   {
     id: "frost",
     name: "冰冻球",
-    skill: "连击提高冻筐概率，灌冻筐叠基础分",
+    skill: "连击提高冻筐概率；首次冻4秒，续冻3秒，灌冻筐叠基础分",
     heat: false,
     frost: true,
     wrap: "ground",
