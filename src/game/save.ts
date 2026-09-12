@@ -1,12 +1,16 @@
-import { DEFAULT_GFX, type CloudMode, type Gfx } from "./types";
+import { DEFAULT_GFX, type CloudMode, type Gfx, type PlayMode } from "./types";
 import { DEFAULT_BALL, parseBall, type BallId } from "./balls";
 
 const KEY = "tq-bounce-v1";
-const VERSION = 8;
+const VERSION = 10;
 
 export type SaveData = {
   version: number;
   best: number;
+  bestMinute: number;
+  /** Deepest stage reached in a rogue run. */
+  bestRogue: number;
+  playMode: PlayMode;
   master: number;
   music: number;
   sfx: number;
@@ -21,6 +25,9 @@ export type SaveData = {
 const defaults: SaveData = {
   version: VERSION,
   best: 0,
+  bestMinute: 0,
+  bestRogue: 0,
+  playMode: "classic",
   master: 0.5,
   music: 0.5,
   sfx: 0.5,
@@ -38,6 +45,11 @@ function clamp01(n: number, fallback: number) {
 
 function parseClouds(v: unknown): CloudMode {
   return v === "off" || v === "drift" || v === "dance" ? v : DEFAULT_GFX.clouds;
+}
+
+function parsePlayMode(v: unknown): PlayMode {
+  if (v === "minute" || v === "rogue") return v;
+  return "classic";
 }
 
 function parseGfx(raw: Partial<Gfx> | undefined): Gfx {
@@ -70,6 +82,9 @@ function migrate(raw: SaveData & { muted?: boolean; gfx?: Partial<Gfx> }): SaveD
   return {
     version: VERSION,
     best: Number.isFinite(raw.best) ? Math.max(0, Math.floor(raw.best)) : 0,
+    bestMinute: Number.isFinite(raw.bestMinute) ? Math.max(0, Math.floor(raw.bestMinute)) : 0,
+    bestRogue: Number.isFinite(raw.bestRogue) ? Math.max(0, Math.floor(raw.bestRogue)) : 0,
+    playMode: parsePlayMode(raw.playMode),
     master,
     music,
     sfx,

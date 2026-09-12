@@ -1,7 +1,11 @@
 import type { DevHud } from "./dev";
 import type { BallId } from "./balls";
+import type { RogueHud } from "./rogue";
 
-export type Phase = "title" | "playing" | "over";
+export type Phase = "title" | "playing" | "settle" | "hub" | "over";
+
+/** Classic = decaying shot clock; minute = fixed 60s; rogue = staged run. */
+export type PlayMode = "classic" | "minute" | "rogue";
 
 export const FIRE_WHITE = 5;
 export const FIRE_SMOKE = 10;
@@ -146,7 +150,9 @@ export type HudState = {
   gfx: Gfx;
   dev: DevHud;
   ballId: BallId;
+  playMode: PlayMode;
   prison: PrisonHud | null;
+  rogue: RogueHud | null;
 };
 
 export type World = {

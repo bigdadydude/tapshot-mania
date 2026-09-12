@@ -54,6 +54,7 @@ export function drawScene(
   hole: { x: number; y: number; r: number; left?: number } | null = null,
   antiCharge = -1,
   antimatter: { x: number; y: number; r: number; pct: number } | null = null,
+  scoreOverride: string | null = null,
 ) {
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
@@ -124,6 +125,7 @@ export function drawScene(
 			champBank,
 			antiCharge,
 			hole?.left ?? -1,
+			scoreOverride,
 		);
 	}
 }
@@ -2018,6 +2020,7 @@ function drawHud(
 	champBank = -1,
 	antiCharge = -1,
 	antiHoleLeft = -1,
+	scoreOverride: string | null = null,
 ) {
 	const { w } = world;
 	const g = hudGeom(world);
@@ -2026,12 +2029,15 @@ function drawHud(
 	ctx.save();
 	ctx.textAlign = "center";
 	ctx.textBaseline = "top";
-	ctx.font = `900 ${g.scoreSize}px 'Noto Sans SC', Impact, sans-serif`;
-	ctx.lineWidth = Math.max(6, g.scoreSize * .12);
+	const scoreFont = scoreOverride
+		? Math.max(28, Math.floor(g.scoreSize * 0.62))
+		: g.scoreSize;
+	ctx.font = `900 ${scoreFont}px 'Noto Sans SC', Impact, sans-serif`;
+	ctx.lineWidth = Math.max(6, scoreFont * 0.12);
 	ctx.strokeStyle = "rgba(18,22,30,0.55)";
 	ctx.fillStyle = "#f7f4ef";
 	if (!shackled) {
-		const scoreText = String(score);
+		const scoreText = scoreOverride ?? String(score);
 		ctx.strokeText(scoreText, w / 2, g.scoreY);
 		ctx.fillText(scoreText, w / 2, g.scoreY);
 	}

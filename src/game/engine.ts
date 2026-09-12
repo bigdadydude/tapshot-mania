@@ -18,13 +18,32 @@ import { ballRadius, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { DEFAULT_PHYS, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevPhys, type DevSceneId } from "./dev";
 import type { GrafKey } from "./scenes";
-import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, TrailPt, World } from "./types";
+import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
+import {
+  advanceRogueStage,
+  applyRogueMakeMods,
+  createRogueRun,
+  hasHeroMoment,
+  openRogueShop,
+  ROGUE_CAMPAIGN_STAGES,
+  rogueComboWindowBonus,
+  rogueDecayBase,
+  roguePhysMul,
+  rogueStartStreak,
+  rogueBlackholeSec,
+  ornamentStacks,
+  settleStagePayout,
+  toRogueHud,
+  tryBuyOffer,
+  type RogueRun,
+} from "./rogue";
 
-export const GAME_REV = 274;
+export const GAME_REV = 284;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
+const TIMER_MINUTE = 60;
 const TIMER_MIN = 2.6;
 const TIMER_DECAY = 0.972;
 const GRAF_IN = 1.2;
@@ -71,6 +90,16 @@ export type GameHandle = {
   toggleBus: (bus: "master" | "music" | "sfx") => void;
   setGfx: (next: Partial<Gfx>) => void;
   setBall: (id: BallId) => void;
+  setPlayMode: (mode: PlayMode) => void;
+  buyRogue: (uid: string) => void;
+  rogueContinue: () => void;
+  rogueConfirmSettle: () => void;
+  rogueEndless: () => void;
+  rogueEndRun: () => void;
+  /** Activate inventory item / usable ornament from pause. */
+  useRogue: (id: string) => void;
+  /** Answer连击保护 prompt. */
+  answerStreakSave: (use: boolean) => void;
   dev: (cmd: DevCmd) => void;
   resize: () => void;
 };
@@ -104,6 +133,13 @@ export function createGame(
   let lastLoadN = booted ? 100 : -1;
   let score = 0;
   let best = save.best;
+  let bestMinute = save.bestMinute ?? 0;
+  let bestRogue = save.bestRogue ?? 0;
+  let playMode: PlayMode =
+    save.playMode === "minute" || save.playMode === "rogue" ? save.playMode : "classic";
+  let rogueRun: RogueRun | null = null;
+  /** Active for current rogue stage only (from rest "缓时"). */
+  let rogueStageDecay: number | null = null;
   let combo = 0;
   let streak = 0;
   let mix = {
@@ -324,17 +360,79 @@ export function createGame(
   /** Break active streak (timeout or finished miss jump). Heat may keep decaying. */
   function breakComboStreak() {
     if (streak <= 0 && !comboCounting && combo <= 0) return;
+    if (
+      isRogueMode() &&
+      rogueRun &&
+      !rogueRun.pendingStreakSave &&
+      streak >= 3 &&
+      rogueRun.streakSaveCharges > 0
+    ) {
+      rogueRun.pendingStreakSave = true;
+      paused = true;
+      emitHud();
+      return;
+    }
+    if (isRogueMode() && rogueRun?.streakSave) {
+      rogueRun.streakSave = false;
+      comboClock = 0;
+      callouts.push({
+        text: "连击保住",
+        x: ball.x,
+        y: ball.y - ball.r * 2.4,
+        life: 0.9,
+        max: 0.9,
+        kind: "tag",
+      });
+      emitHud();
+      return;
+    }
     streak = 0;
     comboCounting = false;
     comboClock = 0;
     recoverMakes = 0;
     if (isNinja()) resetNinjaPath();
-    if (isAnti() && holeOn && holeLeft <= 0) closeAntiHole();
+    if (holeOn && holeLeft <= 0) closeAntiHole();
     if (isPrison() && prisonMode === "free" && phase === "playing") {
       enterPrisonShackle("combo");
     } else {
       emitHud();
     }
+  }
+
+  function resolveStreakSavePrompt(use: boolean) {
+    if (!isRogueMode() || !rogueRun || !rogueRun.pendingStreakSave) return;
+    rogueRun.pendingStreakSave = false;
+    if (use && rogueRun.streakSaveCharges > 0) {
+      rogueRun.streakSaveCharges -= 1;
+      rogueRun.items.streakSave = rogueRun.streakSaveCharges;
+      comboClock = 0;
+      callouts.push({
+        text: "连击保住",
+        x: ball.x,
+        y: ball.y - ball.r * 2.4,
+        life: 0.9,
+        max: 0.9,
+        kind: "tag",
+      });
+      paused = false;
+      last = performance.now();
+      acc = 0;
+      emitHud();
+      return;
+    }
+    streak = 0;
+    comboCounting = false;
+    comboClock = 0;
+    recoverMakes = 0;
+    if (isNinja()) resetNinjaPath();
+    if (holeOn && holeLeft <= 0) closeAntiHole();
+    if (isPrison() && prisonMode === "free" && phase === "playing") {
+      enterPrisonShackle("combo");
+    }
+    paused = false;
+    last = performance.now();
+    acc = 0;
+    emitHud();
   }
 
   /** Break streak only when opening a new shot after a settled miss — not mid-air / wrap. */
@@ -560,14 +658,90 @@ export function createGame(
     fromBelow = false;
   }
 
+  function isMinuteMode() {
+    return playMode === "minute";
+  }
+
+  function isRogueMode() {
+    return playMode === "rogue";
+  }
+
+  function timerBudget() {
+    if (isMinuteMode()) return TIMER_MINUTE;
+    let base = TIMER_START;
+    if (isRogueMode() && rogueRun && rogueRun.nextBonusClock > 0) {
+      base += rogueRun.nextBonusClock;
+    }
+    return base;
+  }
+
+  function modeBest() {
+    if (isRogueMode()) return bestRogue;
+    if (isMinuteMode()) return bestMinute;
+    return best;
+  }
+
+  function noteBest() {
+    if (devOn) return;
+    if (isRogueMode() && rogueRun) {
+      const depth = rogueRun.stage;
+      if (depth > bestRogue) {
+        bestRogue = depth;
+        persist();
+      }
+      return;
+    }
+    if (isMinuteMode()) {
+      if (score > bestMinute) {
+        bestMinute = score;
+        persist();
+      }
+      return;
+    }
+    if (score > best) {
+      best = score;
+      persist();
+    }
+  }
+
+  function activeDecay() {
+    if (isRogueMode() && rogueRun) {
+      return rogueDecayBase(rogueRun, rogueStageDecay);
+    }
+    return TIMER_DECAY;
+  }
+
+  function refillShotClock() {
+    // Minute mode keeps a fixed 60s clock — no per-make shrink/refill.
+    if (isMinuteMode() || champMode) return;
+    const decay = activeDecay();
+    timerMax = Math.max(TIMER_MIN, timerMax * decay);
+    timer = timerMax;
+  }
+
+  function rogueTotalScore() {
+    if (!rogueRun) return score;
+    // Settle/hub already folded stageScore into runScore.
+    if (phase === "settle" || phase === "hub" || phase === "over") {
+      if (rogueRun.endless) return rogueRun.runScore + rogueRun.stageScore;
+      // After a stage payout, runScore holds the banked total; avoid double-count
+      // while settle UI still shows stageScore.
+      if (rogueRun.lastBreakdown) return rogueRun.runScore;
+      return rogueRun.runScore + rogueRun.stageScore;
+    }
+    return rogueRun.runScore + rogueRun.stageScore;
+  }
+
   function emitHud() {
     const timer01 = timerMax > 0 ? timer / timerMax : 0;
+    const displayScore =
+      isRogueMode() && rogueRun && phase === "over" ? rogueTotalScore() : score;
     onHud({
       phase,
-      score,
-      best,
+      score: displayScore,
+      best: modeBest(),
       combo: comboCounting ? streak : 0,
-      rank: rankFor(score),
+      rank: rankFor(displayScore),
       muted: mix.master <= 0.001,
       hint: hint && phase === "playing",
       paused,
@@ -591,14 +765,19 @@ export function createGame(
         phys: { ...devPhys },
       },
       ballId,
+      playMode,
       prison: prisonHud(),
+      rogue: toRogueHud(isRogueMode() ? rogueRun : null),
     });
   }
 
   function persist() {
     writeSave({
-      version: 8,
+      version: 10,
       best,
+      bestMinute,
+      bestRogue,
+      playMode,
       master: mix.master,
       music: mix.music,
       sfx: mix.sfx,
@@ -619,6 +798,12 @@ export function createGame(
 
   function pMul(k: keyof DevPhys): number {
     let v = clampPhysKey(k, devOn ? devPhys[k] : kitPhys(k));
+    if (!devOn && isRogueMode() && rogueRun) {
+      if (k === "rimFric") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "rimFric"));
+      if (k === "ball") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "ball"));
+      if (k === "jumpFwd") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "jumpFwd"));
+      if (k === "jumpUp") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "jumpUp"));
+    }
     if (!devOn && isPrison() && prisonMode) {
       if (prisonMode === "free") {
         // Free: rim/board grip 120% of classic.
@@ -649,6 +834,19 @@ export function createGame(
   function hurtGlass(n: number, x: number, y: number) {
     if (!isGlass() || phase !== "playing") return;
     if (glassBase <= 0) return;
+    if (isRogueMode() && rogueRun && rogueRun.glassSafe > 0) {
+      rogueRun.glassSafe -= 1;
+      callouts.push({
+        text: "安全包装",
+        x,
+        y: y - 40,
+        life: 0.9,
+        max: 0.9,
+        kind: "tag",
+      });
+      emitHud();
+      return;
+    }
     glassBase = Math.max(0, glassBase - n);
     callouts.push({
       text: `-${n}`,
@@ -659,7 +857,7 @@ export function createGame(
       kind: "base",
     });
     emitHud();
-    if (glassBase <= 0) gameOver();
+    if (glassBase <= 0) failRogueOrOver();
   }
 
   function applyKitPhys() {
@@ -744,40 +942,106 @@ export function createGame(
     holeLived = 0;
     holeTick = 0;
     antiMatter = null;
-    // Refill countdown bar when the hole ends.
-    if (phase === "playing") {
+    // Refill countdown bar when the hole ends (classic shot clock only).
+    if (phase === "playing" && !isMinuteMode()) {
       timer = timerMax;
       if (!timerArmed) timerArmed = true;
     }
     emitHud();
   }
 
-  function openAntiHole() {
+  function openAntiHole(dur = ANTI_HOLE_DUR) {
     const c = holeCenter();
     holeX = c.x;
     holeY = c.y;
     holeR = Math.max(28, world.w * 0.09);
     holeOn = true;
-    holeLeft = ANTI_HOLE_DUR;
+    holeLeft = dur;
     holeScoreAcc = 0;
     holeLived = 0;
     holeTick = 0;
     antiCharge = 0;
     antiMatter = null;
-    // Refill countdown bar when the hole opens.
-    if (phase === "playing") {
+    // Refill countdown bar when the hole opens (classic shot clock only).
+    if (phase === "playing" && !isMinuteMode() && !isRogueMode()) {
       timer = timerMax;
       if (!timerArmed) timerArmed = true;
     }
     callouts.push({
       text: "黑洞",
       x: holeX,
-      y: holeY - holeR * 1.4,
-      life: 1.35,
-      max: 1.35,
+      y: holeY - holeR * 1.6,
+      life: 1,
+      max: 1,
       kind: "tag",
     });
     emitHud();
+  }
+
+  function stepAntiHole(dt: number) {
+    if (!holeOn) return;
+    if (isAnti()) {
+      holeLived += dt;
+      holeScoreAcc += dt;
+      while (holeScoreAcc >= 1) {
+        holeScoreAcc -= 1;
+        holeTick += 1;
+        const gain = holeTick * 3;
+        score += gain;
+        noteBest();
+        callouts.push({
+          text: `+${gain}`,
+          x: holeX + (Math.random() - 0.5) * holeR,
+          y: holeY - holeR * 1.1,
+          life: 0.55,
+          max: 0.55,
+          kind: "tag",
+        });
+        emitHud();
+      }
+    }
+    if (holeLeft > 0) {
+      holeLeft = Math.max(0, holeLeft - dt);
+    }
+    if (holeLeft <= 0) {
+      // Anti ball: linger until streak breaks; rogue ornament hole ends on timer.
+      if (isAnti() && comboCounting && streak > 0) return;
+      closeAntiHole();
+    }
+  }
+
+  function useRogueGear(id: string) {
+    if (!isRogueMode() || !rogueRun || phase !== "playing") return;
+    if (id === "pointexchanger") {
+      if (rogueRun.pointExchangeCharges <= 0 || rogueRun.pointExchangeLeft > 0) return;
+      rogueRun.pointExchangeCharges -= 1;
+      rogueRun.items.pointexchanger = rogueRun.pointExchangeCharges;
+      rogueRun.pointExchangeLeft = 5;
+      callouts.push({
+        text: "汇率转换",
+        x: world.w * 0.5,
+        y: world.h * 0.28,
+        life: 1,
+        max: 1,
+        kind: "tag",
+      });
+      paused = false;
+      last = performance.now();
+      acc = 0;
+      emitHud();
+      return;
+    }
+    if (id === "streakSave") {
+      callouts.push({
+        text: "断连且连击≥3时询问",
+        x: world.w * 0.5,
+        y: world.h * 0.28,
+        life: 1.1,
+        max: 1.1,
+        kind: "tag",
+      });
+      emitHud();
+    }
   }
 
   function spawnAntiMatter() {
@@ -833,38 +1097,6 @@ export function createGame(
     });
     if (antiCharge >= 100) openAntiHole();
     else emitHud();
-  }
-
-  function stepAntiHole(dt: number) {
-    if (!isAnti() || !holeOn) return;
-    holeLived += dt;
-    holeScoreAcc += dt;
-    while (holeScoreAcc >= 1) {
-      holeScoreAcc -= 1;
-      holeTick += 1;
-      // 存在秒数 × 3 — tick 1 → +3, tick 15 → +45
-      const gain = holeTick * 3;
-      score += gain;
-      if (score > best && !devOn) {
-        best = score;
-        persist();
-      }
-      callouts.push({
-        text: `+${gain}`,
-        x: holeX + (Math.random() - 0.5) * holeR,
-        y: holeY - holeR * 1.1,
-        life: 0.55,
-        max: 0.55,
-        kind: "tag",
-      });
-      emitHud();
-    }
-    if (holeLeft > 0) {
-      holeLeft = Math.max(0, holeLeft - dt);
-    }
-    if (holeLeft <= 0 && !(comboCounting && streak > 0)) {
-      closeAntiHole();
-    }
   }
 
   function enterChampionMoment() {
@@ -1244,8 +1476,19 @@ export function createGame(
     streak = 0;
     hint = true;
     madeCount = 0;
-    timerMax = TIMER_START;
+    if (isRogueMode()) {
+      rogueRun = createRogueRun();
+      rogueStageDecay = null;
+    } else {
+      rogueRun = null;
+      rogueStageDecay = null;
+    }
+    timerMax = timerBudget();
     timer = timerMax;
+    if (isRogueMode() && rogueRun) {
+      // Consume stage-start bonuses after budgeting.
+      rogueRun.nextBonusClock = 0;
+    }
     timerArmed = false;
     buzzer = false;
     buzzerTimer = 0;
@@ -1346,11 +1589,211 @@ export function createGame(
     recoverMakes = 0;
     resetTrail();
     resetNinjaPath();
-    if (score > best && !devOn) {
-      best = score;
-      persist();
+    if (isRogueMode() && rogueRun) {
+      noteBest();
+    } else if (score > 0) {
+      noteBest();
     }
     if (!opts?.quiet) audio.miss();
+    emitHud();
+  }
+
+  function tryRogueMoneyProtect(): boolean {
+    if (!isRogueMode() || !rogueRun || !rogueRun.moneyProtect) return false;
+    if (rogueRun.endless) return false;
+    if (rogueRun.stageScore >= rogueRun.target) return false;
+    const need = rogueRun.target - rogueRun.stageScore;
+    const convert = Math.min(need, rogueRun.gold);
+    if (convert <= 0) return false;
+    rogueRun.gold -= convert;
+    rogueRun.stageScore += convert;
+    score = rogueRun.stageScore;
+    rogueRun.moneyProtect = false;
+    rogueRun.items.moneyprotecter = 0;
+    callouts.push({
+      text: `护身 +${convert}`,
+      x: world.w * 0.5,
+      y: world.h * 0.28,
+      life: 1.2,
+      max: 1.2,
+      kind: "tag",
+    });
+    if (rogueRun.stageScore >= rogueRun.target) {
+      enterRogueSettle();
+      return true;
+    }
+    emitHud();
+    return false;
+  }
+
+  function tryRogueRevive(): boolean {
+    if (!isRogueMode() || !rogueRun || rogueRun.revives <= 0) return false;
+    rogueRun.revives -= 1;
+    timer = timerMax;
+    timeUp = false;
+    buzzer = false;
+    buzzerTimer = 0;
+    callouts.push({
+      text: "重生",
+      x: world.w * 0.5,
+      y: world.h * 0.3,
+      life: 1.1,
+      max: 1.1,
+      kind: "tag",
+    });
+    emitHud();
+    return true;
+  }
+
+  function failRogueOrOver() {
+    if (isRogueMode()) {
+      if (tryRogueRevive()) return;
+      if (tryRogueMoneyProtect()) return;
+    }
+    gameOver();
+  }
+
+  function enterRogueSettle() {
+    if (!rogueRun) return;
+    settleStagePayout(rogueRun);
+    phase = "settle";
+    paused = false;
+    timerArmed = false;
+    buzzer = false;
+    buzzerTimer = 0;
+    timeUp = false;
+    noteBest();
+    emitHud();
+  }
+
+  function confirmRogueSettle() {
+    if (!isRogueMode() || !rogueRun || phase !== "settle") return;
+    // Campaign clear (stage 5): stay on settle for End / Endless UI.
+    if (rogueRun.stage >= ROGUE_CAMPAIGN_STAGES) return;
+    openRogueShop(rogueRun, ballId);
+    phase = "hub";
+    emitHud();
+  }
+
+  function startRogueEndless() {
+    if (!isRogueMode() || !rogueRun) return;
+    if (phase !== "settle") return;
+    if (rogueRun.stage < ROGUE_CAMPAIGN_STAGES) return;
+    // settleStagePayout already folded last stage into runScore — carry that total.
+    const carried = rogueRun.runScore;
+    rogueRun.endless = true;
+    rogueRun.runScore = 0;
+    rogueRun.stageScore = carried;
+    rogueRun.specialMakes = 0;
+    rogueRun.lastGoldGain = 0;
+    rogueRun.lastBreakdown = null;
+    rogueRun.shop = [];
+    // Keep peakStreak / peakStreakAll for run summary; stage peak resets with court.
+    rogueRun.peakStreak = 0;
+    phase = "playing";
+    paused = false;
+    last = performance.now();
+    acc = 0;
+    startRogueStageCourt();
+    score = carried;
+    rogueRun.stageScore = carried;
+    emitHud();
+  }
+
+  function endRogueFromSettle() {
+    if (!isRogueMode() || !rogueRun) return;
+    if (phase !== "settle" && phase !== "hub" && phase !== "playing") return;
+    gameOver({ quiet: true });
+  }
+
+  function startRogueStageCourt() {
+    madeCount = 0;
+    score = 0;
+    combo = 0;
+    streak = 0;
+    hint = true;
+    rogueStageDecay = rogueRun?.nextDecay ?? null;
+    if (rogueRun) rogueRun.nextDecay = null;
+    const bonus = rogueRun?.nextBonusClock ?? 0;
+    if (rogueRun) {
+      rogueRun.nextBonusClock = 0;
+      if (rogueRun.items.warmup) rogueRun.items.warmup = 0;
+      rogueRun.rollGoldAcc = 0;
+    }
+    timerMax = TIMER_START + bonus;
+    timer = timerMax;
+    timerArmed = false;
+    buzzer = false;
+    buzzerTimer = 0;
+    timeUp = false;
+    scoredLock = 0;
+    tapLock = 0;
+    comboClock = 0;
+    comboCounting = true;
+    shotOpen = false;
+    shotMade = false;
+    shotMissed = false;
+    shotAirborne = false;
+    opener = 0;
+    overRim = false;
+    rimHits = 0;
+    rimHitLock = 0;
+    hitBoardTop = false;
+    wentOffTop = false;
+    fromBelow = false;
+    hoop = makeHoop(world, -1, true);
+    other = null;
+    remakeBall(1);
+    ball.vx = jumpVx() * 0.18;
+    ball.vy = jumpVy() * 0.16;
+    prevBallX = ball.x;
+    prevBallY = ball.y;
+    particles = [];
+    callouts = [];
+    resetTrail();
+    resetAntiRun();
+    otherOverRim = false;
+    boardHitLock = 0;
+    frostBonus = 0;
+    champBank = 0;
+    champMode = false;
+    champIdleLeft = -1;
+    champFinishing = false;
+    glassBase = 20;
+    resetPrisonRun();
+    resetNinjaPath();
+
+    if (rogueRun) {
+      const startS = ballId === "plain" ? rogueStartStreak(rogueRun) : 0;
+      if (startS > 0) {
+        streak = startS;
+        combo = startS;
+        comboCounting = true;
+      }
+      rogueRun.pendingStreakSave = false;
+      // 黑洞饰品：每关开局自动开启（时长 = 4s × 层数）
+      const holeSec = rogueBlackholeSec(rogueRun);
+      if (holeSec > 0) openAntiHole(holeSec);
+    }
+  }
+
+  function continueRogueFromHub() {
+    if (!isRogueMode() || !rogueRun || phase !== "hub") return;
+    advanceRogueStage(rogueRun);
+    phase = "playing";
+    paused = false;
+    startRogueStageCourt();
+    if (rogueRun) {
+      rogueRun.stageScore = 0;
+      score = 0;
+    }
+    emitHud();
+  }
+
+  function buyRogueOffer(uid: string) {
+    if (!isRogueMode() || !rogueRun || phase !== "hub") return;
+    const res = tryBuyOffer(rogueRun, uid);
+    if (!res.ok) return;
     emitHud();
   }
 
@@ -1380,13 +1823,15 @@ export function createGame(
     }
     if (phase !== "playing") return;
     if (paused) return;
-    if (buzzer || timeUp) return;
+    const heroClutch =
+      isRogueMode() && rogueRun && hasHeroMoment(rogueRun) && (buzzer || timeUp);
+    if ((buzzer || timeUp) && !heroClutch) return;
     if (tapLock > 0) return;
     if (ballHidden() && !onApproachSide()) return;
     // Mid-air re-tap on an unfinished attempt: boost only — do not break combo.
     if (shotOpen && !shotMade && !shotMissed) {
       hint = false;
-      if (isAnti() && holeOn) {
+      if (holeOn) {
         const dx = hoop.x - ball.x;
         const dy = hoop.y - ball.y;
         const d = Math.hypot(dx, dy) || 1;
@@ -1397,7 +1842,7 @@ export function createGame(
         ball.vy = jumpVy();
         ball.vx = jumpVx();
       }
-      ball.omega = (ball.vx / Math.max(8, ball.r)) * 1.35 + (isAnti() && holeOn ? 10 : 0);
+      ball.omega = (ball.vx / Math.max(8, ball.r)) * 1.35 + (holeOn ? 10 : 0);
       ball.squash = 1.08;
       ball.scored = false;
       resetShotFlags();
@@ -1409,7 +1854,7 @@ export function createGame(
     }
     breakComboOnMissJump();
     hint = false;
-    if (isAnti() && holeOn) {
+    if (holeOn) {
       const dx = hoop.x - ball.x;
       const dy = hoop.y - ball.y;
       const d = Math.hypot(dx, dy) || 1;
@@ -1420,7 +1865,7 @@ export function createGame(
       ball.vy = jumpVy();
       ball.vx = jumpVx();
     }
-    ball.omega = (ball.vx / Math.max(8, ball.r)) * 1.35 + (isAnti() && holeOn ? 10 : 0);
+    ball.omega = (ball.vx / Math.max(8, ball.r)) * 1.35 + (holeOn ? 10 : 0);
     ball.squash = 1.08;
     ball.scored = false;
     resetShotFlags();
@@ -1479,7 +1924,9 @@ export function createGame(
     streak = 0;
     hint = true;
     madeCount = 0;
-    timerMax = TIMER_START;
+    rogueRun = null;
+    rogueStageDecay = null;
+    timerMax = timerBudget();
     timer = timerMax;
     timerArmed = false;
     buzzer = false;
@@ -1757,7 +2204,7 @@ export function createGame(
 
     if (phase === "playing" && timerArmed && !buzzer && !timeUp && !devFreeze) {
       let drain = dt;
-      if (isAnti() && holeOn) {
+      if (holeOn) {
         // Far from hole → timer drains slower; at center → normal speed.
         const dist = Math.hypot(ball.x - holeX, ball.y - holeY);
         const maxD = Math.max(120, world.w * 0.55);
@@ -1769,12 +2216,19 @@ export function createGame(
         timer = 0;
         if (isChamp() && !champMode && enterChampionMoment()) {
           // Champion bank consumed as a fresh countdown.
+        } else if (isRogueMode() && tryRogueRevive()) {
+          // Revived — keep playing this stage.
+        } else if (isRogueMode() && tryRogueMoneyProtect()) {
+          // Converted gold → score / settle.
         } else {
           timeUp = true;
           champIdleLeft = -1;
           if (predictBuzzerMake()) {
             buzzer = true;
-            buzzerTimer = BUZZER_WINDOW;
+            buzzerTimer =
+              isRogueMode() && rogueRun && hasHeroMoment(rogueRun)
+                ? BUZZER_WINDOW * 2
+                : BUZZER_WINDOW;
             audio.buzzer();
           }
         }
@@ -1784,17 +2238,24 @@ export function createGame(
       const settled =
         ball.y + ball.r >= world.floorY - 2 && Math.abs(ball.vy) < 90 && Math.abs(ball.vx) < 70;
       if (buzzerTimer <= 0 || settled) {
-        if (!ball.scored) gameOver();
+        if (!ball.scored) {
+          failRogueOrOver();
+        }
       }
     } else if (timeUp && !buzzer && phase === "playing") {
       if (predictBuzzerMake()) {
         buzzer = true;
-        buzzerTimer = BUZZER_WINDOW;
+        buzzerTimer =
+          isRogueMode() && rogueRun && hasHeroMoment(rogueRun)
+            ? BUZZER_WINDOW * 2
+            : BUZZER_WINDOW;
         audio.buzzer();
       } else {
         const settled =
           ball.y + ball.r >= world.floorY - 2 && Math.abs(ball.vy) < 90 && Math.abs(ball.vx) < 70;
-        if (settled && !ball.scored) gameOver();
+        if (settled && !ball.scored) {
+          failRogueOrOver();
+        }
       }
     }
 
@@ -1834,7 +2295,9 @@ export function createGame(
     // Active streak: must score again within COMBO_STOP seconds.
     if (phase === "playing" && comboCounting && streak > 0 && !buzzer && !devHoldHeat) {
       comboClock += dt;
-      if (comboClock >= COMBO_STOP) breakComboStreak();
+      const window =
+        COMBO_STOP + (isRogueMode() && rogueRun ? rogueComboWindowBonus(rogueRun) : 0);
+      if (comboClock >= window) breakComboStreak();
     } else if (phase === "playing" && !comboCounting && combo > 0 && !buzzer && !devHoldHeat) {
       // Heat decays only after streak is broken.
       comboClock += dt;
@@ -1870,17 +2333,18 @@ export function createGame(
 
     prevBallX = ball.x;
     prevBallY = ball.y;
-    const live = phase === "playing" || phase === "over" || phase === "title";
+    const live =
+      phase === "playing" || phase === "over" || phase === "title" || phase === "hub" || phase === "settle";
     if (live) {
       const gScale = buzzer ? 0.42 : 1;
       // High-bounce kits skip fallBoost — otherwise each landing gains height.
       const fallBoost = (() => {
         if (pMul("ball") > 1.15) return 1;
-        if (isAnti() && holeOn) return 1;
+        if (holeOn) return 1;
         return ball.vy > 20 ? 1.28 : 1;
       })();
       const buoy = pMul("buoy");
-      if (isAnti() && holeOn) {
+      if (holeOn) {
         const dx = holeX - ball.x;
         const dy = holeY - ball.y;
         const d = Math.max(40, Math.hypot(dx, dy));
@@ -1919,10 +2383,21 @@ export function createGame(
       if (onFloor) {
         ball.vx *= 1 - Math.min(0.85, 0.28 * roll * dt);
         ball.omega = ball.vx / Math.max(8, ball.r);
+        if (isRogueMode() && rogueRun && phase === "playing") {
+          const jn = ornamentStacks(rogueRun, "jiahao");
+          if (jn > 0 && Math.abs(ball.vx) > 8 && Math.abs(ball.vx) < 140) {
+            rogueRun.rollGoldAcc += dt;
+            while (rogueRun.rollGoldAcc >= 0.5) {
+              rogueRun.rollGoldAcc -= 0.5;
+              rogueRun.gold += jn;
+              rogueRun.peakGold = Math.max(rogueRun.peakGold, rogueRun.gold);
+            }
+          }
+        }
       } else {
         ball.vx *= 1 - Math.min(0.85, 0.035 * air * dt);
         // Preserve spin longer in black-hole mode so rim deflection stays reliable.
-        const spinDrag = isAnti() && holeOn ? 0.06 : 0.28;
+        const spinDrag = holeOn ? 0.06 : 0.28;
         ball.omega *= 1 - Math.min(0.85, spinDrag * air * dt);
       }
       ball.vy *= 1 - Math.min(0.85, 0.025 * air * dt);
@@ -1951,9 +2426,9 @@ export function createGame(
           collideBrace(other);
         }
       }
-      if (isAnti() && phase === "playing") {
-        tryCollectAntiMatter();
-        stepAntiHole(dt);
+      if (phase === "playing") {
+        if (isAnti()) tryCollectAntiMatter();
+        if (holeOn) stepAntiHole(dt);
       }
       collideFloor();
       if (chain && hasChain()) {
@@ -2105,13 +2580,13 @@ export function createGame(
     const applySpinDeflect = () => {
       const vt = ball.vx * tx + ball.vy * ty;
       const slip = vt - ball.omega * r;
-      const baseK = isAnti() && holeOn ? 0.42 : 0.22;
+      const baseK = holeOn ? 0.42 : 0.22;
       const k = Math.min(0.72, baseK * pMul("rimFric"));
       ball.vx -= k * slip * tx;
       ball.vy -= k * slip * ty;
       ball.omega += (k * slip) / r;
       // Extra kick from residual spin so flat pinball contacts still glance away.
-      const spinKick = clamp(ball.omega * r * (isAnti() && holeOn ? 0.28 : 0.12), -160, 160);
+      const spinKick = clamp(ball.omega * r * (holeOn ? 0.28 : 0.12), -160, 160);
       ball.vx += spinKick * tx;
       ball.vy += spinKick * ty;
       ball.omega = clamp(ball.omega, -22, 22);
@@ -2122,7 +2597,7 @@ export function createGame(
         ball.vy += ny * 40;
       }
       applySpinDeflect();
-      if (isAnti() && holeOn && !ball.scored && Math.abs(ball.y - h.y) < ball.r * 1.35 && Math.abs(ball.vy) < 100) {
+      if (holeOn && !ball.scored && Math.abs(ball.y - h.y) < ball.r * 1.35 && Math.abs(ball.vy) < 100) {
         ball.vy += 150;
         ball.vx *= 0.7;
       }
@@ -2136,7 +2611,7 @@ export function createGame(
     h.jolt = 1;
     h.joltDir = ball.vy < 0 ? -1 : 1;
     // Black-hole mode: break horizontal rim pinball by kicking off the rim plane.
-    if (isAnti() && holeOn && !ball.scored) {
+    if (holeOn && !ball.scored) {
       const level = Math.abs(ball.y - h.y) < ball.r * 1.35;
       const flat = Math.abs(ball.vy) < 100;
       if (level && flat) {
@@ -2366,7 +2841,7 @@ export function createGame(
     if (ball.scored) return;
     const goingDown = ball.vy > 8;
     const goingUp = ball.vy < -8;
-    const bothWays = isAnti() && holeOn;
+    const bothWays = holeOn;
 
     const holePad = -ball.r * 0.1;
     const inHole = Math.abs(ball.x - hoop.x) < hoop.inner + holePad;
@@ -2490,7 +2965,7 @@ export function createGame(
         otherOverRim = false;
       }
     }
-    const swish = ghost ? true : !ball.hitRim && !ball.hitBoard;
+    let swish = ghost ? true : !ball.hitRim && !ball.hitBoard;
     const bank = ghost ? false : ball.hitBoard;
     const toilet = ghost ? false : rimHits >= 3;
     const lucky = ghost ? false : hitBoardTop;
@@ -2529,8 +3004,7 @@ export function createGame(
       audio.swish();
       audio.score(swish, 0);
       tugNet(hoop);
-      timerMax = Math.max(TIMER_MIN, timerMax * TIMER_DECAY);
-      timer = timerMax;
+      refillShotClock();
       prisonShackleBest = Math.max(prisonShackleBest, streak);
       if (!ghost) nextHoop();
       emitHud();
@@ -2604,12 +3078,45 @@ export function createGame(
     }
     if (champMode) gain *= CHAMP_SCORE_MULT;
     if (isAnti() && holeOn) gain = 0;
+    if (isRogueMode() && rogueRun) {
+      const mod = applyRogueMakeMods(gain, rogueRun, {
+        swish,
+        bank,
+        toilet,
+        lucky,
+        depth,
+        needle,
+        clutch,
+        streak,
+        holeOn,
+      });
+      gain = mod.gain;
+      if (mod.gold > 0) {
+        rogueRun.gold += mod.gold;
+        rogueRun.peakGold = Math.max(rogueRun.peakGold, rogueRun.gold);
+        callouts.push({
+          text: `+${mod.gold}金`,
+          x: scoredHoop.x,
+          y: scoredHoop.y - 88,
+          life: 0.85,
+          max: 0.85,
+          kind: "tag",
+        });
+      }
+    }
     score += gain;
     noteGraf();
-    if (score > best && !devOn) {
-      best = score;
-      persist();
+    if (isRogueMode() && rogueRun && !ghost) {
+      rogueRun.stageScore = score;
+      rogueRun.peakStreak = Math.max(rogueRun.peakStreak, streak);
+      rogueRun.peakStreakAll = Math.max(rogueRun.peakStreakAll, streak);
+      rogueRun.peakMake = Math.max(rogueRun.peakMake, gain);
+      rogueRun.peakGold = Math.max(rogueRun.peakGold, rogueRun.gold);
+      if (swish || bank || toilet || lucky || depth || needle || clutch) {
+        rogueRun.specialMakes += 1;
+      }
     }
+    noteBest();
     if (!timerArmed) timerArmed = true;
     audio.swish();
     audio.score(swish, heatN());
@@ -2702,8 +3209,7 @@ export function createGame(
       }
     }
     if (!champMode) {
-      timerMax = Math.max(TIMER_MIN, timerMax * TIMER_DECAY);
-      timer = timerMax;
+      refillShotClock();
     } else if (!ghost && !champFinishing) {
       champIdleLeft = CHAMP_IDLE;
     }
@@ -2747,6 +3253,15 @@ export function createGame(
     }
     syncNinjaGhosts();
     emitHud();
+    if (
+      !ghost &&
+      isRogueMode() &&
+      rogueRun &&
+      !rogueRun.endless &&
+      rogueRun.stageScore >= rogueRun.target
+    ) {
+      enterRogueSettle();
+    }
   }
 
   function nextHoop() {
@@ -3071,9 +3586,14 @@ export function createGame(
             prisonHud(),
             ninjaClonesDraw(),
             isChamp() && !champMode ? champBank : -1,
-            isAnti() && holeOn ? { x: holeX, y: holeY, r: holeR, left: holeLeft } : null,
+            holeOn ? { x: holeX, y: holeY, r: holeR, left: holeLeft } : null,
             isAnti() ? antiCharge : -1,
             isAnti() ? antiMatter : null,
+            isRogueMode() && rogueRun
+              ? rogueRun.endless
+                ? `∞:${rogueRun.runScore + rogueRun.stageScore}`
+                : `${rogueRun.target}:${rogueRun.stageScore}`
+              : null,
           );
           ctx.restore();
           }
@@ -3193,6 +3713,39 @@ export function createGame(
     setBall(id) {
       applyBall(id);
     },
+    setPlayMode(mode) {
+      if (mode !== "classic" && mode !== "minute" && mode !== "rogue") return;
+      if (playMode === mode) return;
+      playMode = mode;
+      if (phase === "title" || phase === "over") {
+        timerMax = timerBudget();
+        timer = timerMax;
+        timerArmed = false;
+      }
+      persist();
+      emitHud();
+    },
+    buyRogue(uid) {
+      buyRogueOffer(uid);
+    },
+    rogueContinue() {
+      continueRogueFromHub();
+    },
+    rogueConfirmSettle() {
+      confirmRogueSettle();
+    },
+    rogueEndless() {
+      startRogueEndless();
+    },
+    rogueEndRun() {
+      endRogueFromSettle();
+    },
+    useRogue(id) {
+      useRogueGear(id);
+    },
+    answerStreakSave(use) {
+      resolveStreakSavePrompt(use);
+    },
     dev(cmd) {
       applyDev(cmd);
     },
@@ -3241,6 +3794,9 @@ export function createGame(
         otherNetBottom: other ? other.net.reduce((m, n) => Math.max(m, n.y), other.y) : null,
         otherNetMin: other ? other.net.reduce((m, n) => Math.min(m, n.y), other.y) : null,
         world: { w: world.w, h: world.h, floorY: world.floorY },
+        playMode,
+        rogueStage: rogueRun?.stage ?? null,
+        rogueEndless: rogueRun?.endless ?? null,
       };
     },
     tap: () => tapJump(),
@@ -3261,6 +3817,24 @@ export function createGame(
       ball.scored = false;
       resetShotFlags();
       resetTrail();
+    },
+    rogueEndless: () => startRogueEndless(),
+    rogueEndRun: () => endRogueFromSettle(),
+    /** Dev: jump to stage-5 clear settle for UI QA. */
+    forceRogueClearSettle() {
+      playMode = "rogue";
+      rogueRun = createRogueRun();
+      rogueRun.stage = ROGUE_CAMPAIGN_STAGES;
+      rogueRun.target = 200;
+      rogueRun.stageScore = 200;
+      rogueRun.peakStreak = 5;
+      rogueRun.peakStreakAll = 5;
+      rogueRun.peakMake = 12;
+      rogueRun.runScore = 800;
+      rogueRun.gold = 40;
+      rogueRun.peakGold = 40;
+      rogueRun.stagesCleared = 4;
+      enterRogueSettle();
     },
   };
 

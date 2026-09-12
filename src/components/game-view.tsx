@@ -4,8 +4,16 @@ import { createGame, rankFor, GAME_REV, type GameHandle } from "@/game/engine";
 import { primeArt } from "@/game/art";
 import { DEFAULT_DEV, wantDevQuery } from "@/game/dev";
 import { BALLS, DEFAULT_BALL, type BallId } from "@/game/balls";
-import { DEFAULT_GFX, type CloudMode, type Gfx, type HudState } from "@/game/types";
+import { DEFAULT_GFX, type CloudMode, type Gfx, type HudState, type PlayMode } from "@/game/types";
 import { DevConsole } from "@/components/dev-console";
+import {
+  itemLabel,
+  ornamentLabel,
+  ROGUE_CAMPAIGN_STAGES,
+  ROGUE_ITEMS,
+  type RogueItemId,
+  type RogueOrnamentId,
+} from "@/game/rogue";
 import { cn } from "@/lib/utils";
 
 primeArt();
@@ -25,7 +33,9 @@ const idleHud: HudState = {
   gfx: { ...DEFAULT_GFX },
   dev: { ...DEFAULT_DEV },
   ballId: DEFAULT_BALL,
+  playMode: "classic",
   prison: null,
+  rogue: null,
 };
 
 type Menu = "none" | "pause" | "settings" | "gfx" | "sound";
@@ -78,13 +88,17 @@ export function GameView() {
   }, [hud.loadPct]);
 
   useEffect(() => {
-    if (hud.phase === "playing" && hud.paused && menu === "none") setMenu("pause");
+    if (hud.phase === "playing" && hud.paused && menu === "none") {
+      if (hud.rogue?.pendingStreakSave) return;
+      setMenu("pause");
+    }
     if (hud.phase === "playing" && !hud.paused && menu === "pause") setMenu("none");
-  }, [hud.paused, hud.phase, menu]);
+  }, [hud.paused, hud.phase, menu, hud.rogue?.pendingStreakSave]);
 
   function openPause() {
     const g = gameRef.current;
     if (!g) return;
+    if (hud.rogue?.pendingStreakSave) return;
     if (hud.phase === "playing") {
       if (hud.paused) {
         g.resume();
@@ -95,7 +109,7 @@ export function GameView() {
       }
       return;
     }
-    if (hud.phase === "over") {
+    if (hud.phase === "hub" || hud.phase === "settle" || hud.phase === "over") {
       setMenu((m) => (m === "none" ? "pause" : "none"));
       return;
     }
@@ -140,7 +154,7 @@ export function GameView() {
         </div>
       ) : null}
 
-      <div className="pointer-events-none absolute inset-0 flex justify-center">
+      <div className="pointer-events-none absolute inset-0 z-10 flex justify-center">
         <div className="flex h-full w-full max-w-[min(100%,calc(100dvh*9/16))] flex-col">
           <div className="flex-1" />
 
@@ -155,8 +169,10 @@ export function GameView() {
               best={hud.best}
               unlocked={hud.dev.unlocked}
               ballId={hud.ballId}
+              playMode={hud.playMode}
               onStart={() => gameRef.current?.start()}
               onBall={(id) => gameRef.current?.setBall(id)}
+              onMode={(mode) => gameRef.current?.setPlayMode(mode)}
               onTitleTap={() => {
                 const n = titleTaps + 1;
                 setTitleTaps(n);
@@ -169,17 +185,37 @@ export function GameView() {
               onDev={() => gameRef.current?.dev({ t: "enter" })}
             />
           ) : null}
+          {hud.phase === "settle" && menu === "none" && hud.rogue ? (
+            <SettleCard
+              rogue={hud.rogue}
+              onConfirm={() => gameRef.current?.rogueConfirmSettle()}
+              onEndless={() => gameRef.current?.rogueEndless()}
+              onEnd={() => gameRef.current?.rogueEndRun()}
+            />
+          ) : null}
+          {hud.phase === "hub" && menu === "none" && hud.rogue ? (
+            <HubCard
+              rogue={hud.rogue}
+              onBuy={(uid) => gameRef.current?.buyRogue(uid)}
+              onContinue={() => gameRef.current?.rogueContinue()}
+              onTitle={toTitle}
+            />
+          ) : null}
           {hud.phase === "over" && menu === "none" ? (
             <OverCard
               score={hud.score}
               best={hud.best}
               rank={hud.rank}
+              rogue={hud.rogue}
+              ballId={hud.ballId}
+              playMode={hud.playMode}
               onRetry={() => gameRef.current?.retry()}
+              onTitle={toTitle}
             />
           ) : null}
 
           <footer className="flex items-end justify-end px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-            {hud.loadPct >= 1 && !hud.dev.on ? (
+            {hud.loadPct >= 1 && !hud.dev.on && hud.phase !== "over" ? (
             <button
               type="button"
               className="pointer-events-auto flex size-11 items-center justify-center rounded-md border border-border bg-bg-elevated text-fg"
@@ -193,13 +229,35 @@ export function GameView() {
         </div>
       </div>
 
-      {showPause ? (
+      {hud.rogue?.pendingStreakSave ? (
+        <StreakSavePrompt
+          streak={hud.combo}
+          charges={hud.rogue.streakSaveCharges}
+          onYes={() => gameRef.current?.answerStreakSave(true)}
+          onNo={() => gameRef.current?.answerStreakSave(false)}
+        />
+      ) : null}
+
+      {showPause && !hud.rogue?.pendingStreakSave ? (
         <PauseMenu
           canResume={hud.phase === "playing"}
+          rogue={hud.playMode === "rogue" ? hud.rogue : null}
           onDismiss={hud.phase === "playing" ? resume : () => setMenu("none")}
           onRestart={restart}
           onSettings={() => setMenu("settings")}
           onTitle={toTitle}
+          onUse={(id) => {
+            gameRef.current?.useRogue(id);
+            if (id === "pointexchanger") setMenu("none");
+          }}
+          onEndRun={
+            hud.playMode === "rogue"
+              ? () => {
+                  setMenu("none");
+                  gameRef.current?.rogueEndRun();
+                }
+              : undefined
+          }
         />
       ) : null}
       {showSettings ? (
@@ -252,16 +310,20 @@ function TitleCard({
   best,
   unlocked,
   ballId,
+  playMode,
   onStart,
   onBall,
+  onMode,
   onTitleTap,
   onDev,
 }: {
   best: number;
   unlocked: boolean;
   ballId: BallId;
+  playMode: PlayMode;
   onStart: () => void;
   onBall: (id: BallId) => void;
+  onMode: (mode: PlayMode) => void;
   onTitleTap: () => void;
   onDev: () => void;
 }) {
@@ -314,8 +376,44 @@ function TitleCard({
         >
           投球
         </h1>
-        <p className="mt-2 text-sm text-muted">点击弹跳，把球投进左右篮筐</p>
-        <p className="mt-1 text-xs text-subtle">最高 {best}</p>
+        <p className="mt-2 text-sm text-muted">
+          {playMode === "minute"
+            ? "首球后倒计时 60 秒，拼高分"
+            : playMode === "rogue"
+              ? "闯关攒金，商店强化，通关后无限"
+              : "点击弹跳，把球投进左右篮筐"}
+        </p>
+        <p className="mt-1 text-xs text-subtle">
+          {playMode === "rogue" ? `最远第 ${best} 关` : `最高 ${best}`}
+        </p>
+      </div>
+
+      <div className="pointer-events-auto mb-3 grid w-full max-w-xs grid-cols-3 gap-1.5">
+        {(
+          [
+            { id: "classic" as const, label: "经典", tip: "衰减时钟" },
+            { id: "minute" as const, label: "1分钟", tip: "固定时长" },
+            { id: "rogue" as const, label: "肉鸽", tip: "闯关商店" },
+          ] as const
+        ).map((m) => {
+          const on = playMode === m.id;
+          return (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => onMode(m.id)}
+              className={cn(
+                "rounded-xl border px-2 py-2.5 text-left",
+                on ? "border-accent bg-bg-elevated" : "border-border bg-bg-subtle/80",
+              )}
+            >
+              <span className={cn("block text-sm font-medium", on ? "text-fg" : "text-muted")}>
+                {m.label}
+              </span>
+              <span className="mt-0.5 block text-[10px] leading-tight text-subtle">{m.tip}</span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="pointer-events-auto mb-4 flex w-full max-w-xs items-center gap-1">
@@ -502,23 +600,368 @@ function PrisonBallThumb({ className = "size-16" }: { className?: string }) {
   );
 }
 
+function SettleCard({
+  rogue,
+  onConfirm,
+  onEndless,
+  onEnd,
+}: {
+  rogue: NonNullable<HudState["rogue"]>;
+  onConfirm: () => void;
+  onEndless: () => void;
+  onEnd: () => void;
+}) {
+  const bd = rogue.lastBreakdown;
+  const cleared = rogue.stage >= ROGUE_CAMPAIGN_STAGES && !rogue.endless;
+  const [shownGold, setShownGold] = useState(rogue.goldBefore);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setShownGold(rogue.goldBefore);
+    setReady(false);
+    const from = rogue.goldBefore;
+    const to = rogue.gold;
+    const start = performance.now();
+    const dur = 900;
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / dur);
+      const eased = 1 - (1 - t) * (1 - t);
+      setShownGold(Math.round(from + (to - from) * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else setReady(true);
+    };
+    raf = requestAnimationFrame(tick);
+    const unlock = window.setTimeout(() => setReady(true), 1100);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(unlock);
+    };
+  }, [rogue.gold, rogue.goldBefore, rogue.stage]);
+
+  return (
+    <div className="pointer-events-none flex w-full flex-col items-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div className="pointer-events-auto w-full max-w-xs rounded-xl border border-border bg-bg-elevated px-5 py-5 shadow-lg">
+        <p className="text-center text-xs font-medium tracking-widest text-muted">
+          {cleared ? "通关结算" : `第 ${rogue.stage} 关结算`}
+        </p>
+        <p className="mt-3 text-center font-sans text-4xl font-black tabular-nums text-fg">
+          {rogue.stageScore}
+          <span className="ml-1 text-sm font-medium text-subtle">分</span>
+        </p>
+        <div className="mt-4 space-y-1.5 text-sm text-muted">
+          <div className="flex justify-between">
+            <span>最高连击</span>
+            <span className="tabular-nums text-fg">×{rogue.peakStreak}</span>
+          </div>
+          {bd ? (
+            <>
+              <div className="my-2 border-t border-border" />
+              <div className="flex justify-between text-xs">
+                <span>基础得分</span>
+                <span className="tabular-nums">+{bd.base}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span>最高连击</span>
+                <span className="tabular-nums">+{bd.streak}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span>超额分数</span>
+                <span className="tabular-nums">+{bd.over}</span>
+              </div>
+            </>
+          ) : null}
+        </div>
+        <p className="mt-5 text-center text-xs tracking-widest text-subtle">金币</p>
+        <p className="mt-1 text-center font-sans text-3xl font-black tabular-nums text-accent">
+          {shownGold}
+          <span className="ml-1 text-sm font-medium text-muted">(+{rogue.lastGoldGain})</span>
+        </p>
+        {cleared ? (
+          <div className="mt-5 flex gap-2">
+            <button
+              type="button"
+              disabled={!ready}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                if (!ready) return;
+                onEnd();
+              }}
+              className={cn(
+                "h-12 flex-1 rounded-lg text-sm font-medium",
+                ready ? "border border-border text-muted" : "bg-border text-subtle",
+              )}
+            >
+              结束游戏
+            </button>
+            <button
+              type="button"
+              disabled={!ready}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                if (!ready) return;
+                onEndless();
+              }}
+              className={cn(
+                "h-12 flex-[1.3] rounded-lg text-sm font-medium",
+                ready
+                  ? "bg-accent text-accent-fg active:scale-[0.98]"
+                  : "bg-border text-subtle",
+              )}
+            >
+              继续得分
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            disabled={!ready}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              if (!ready) return;
+              onConfirm();
+            }}
+            className={cn(
+              "mt-5 h-12 w-full rounded-lg text-base font-medium",
+              ready
+                ? "bg-accent text-accent-fg active:scale-[0.98]"
+                : "bg-border text-subtle",
+            )}
+          >
+            {ready ? "进入商店" : "结算中…"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HubCard({
+  rogue,
+  onBuy,
+  onContinue,
+  onTitle,
+}: {
+  rogue: NonNullable<HudState["rogue"]>;
+  onBuy: (uid: string) => void;
+  onContinue: () => void;
+  onTitle: () => void;
+}) {
+  const items = rogue.shop.filter((o) => o.kind === "item");
+  const orns = rogue.shop.filter((o) => o.kind === "ornament");
+  return (
+    <div className="pointer-events-none flex max-h-[70dvh] w-full flex-col items-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div className="pointer-events-auto flex w-full max-w-xs flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-lg">
+        <div className="border-b border-border px-4 py-3 text-center">
+          <p className="text-xs font-medium tracking-widest text-muted">商店</p>
+          <p className="mt-1 text-sm text-fg">
+            金币 <span className="font-semibold tabular-nums">{rogue.gold}</span>
+            {rogue.revives > 0 ? ` · 重生 ×${rogue.revives}` : ""}
+          </p>
+        </div>
+        <div className="max-h-[42dvh] space-y-3 overflow-y-auto px-3 py-3">
+          <div>
+            <p className="mb-1.5 text-[10px] font-medium tracking-widest text-subtle">道具</p>
+            <div className="space-y-1.5">
+              {items.length === 0 ? (
+                <p className="px-1 text-xs text-subtle">本关无道具上架</p>
+              ) : (
+                items.map((o) => (
+                  <ShopRow key={o.uid} offer={o} gold={rogue.gold} onBuy={onBuy} />
+                ))
+              )}
+            </div>
+          </div>
+          <div>
+            <p className="mb-1.5 text-[10px] font-medium tracking-widest text-subtle">饰品</p>
+            <div className="space-y-1.5">
+              {orns.length === 0 ? (
+                <p className="px-1 text-xs text-subtle">本关无饰品上架</p>
+              ) : (
+                orns.map((o) => (
+                  <ShopRow key={o.uid} offer={o} gold={rogue.gold} onBuy={onBuy} />
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-2 border-t border-border p-3">
+          <button
+            type="button"
+            onClick={onTitle}
+            className="h-11 flex-1 rounded-lg border border-border text-sm text-muted"
+          >
+            放弃
+          </button>
+          <button
+            type="button"
+            onClick={onContinue}
+            className="h-11 flex-[1.4] rounded-lg bg-accent text-sm font-medium text-accent-fg"
+          >
+            下一关
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ShopRow({
+  offer,
+  gold,
+  onBuy,
+}: {
+  offer: NonNullable<HudState["rogue"]>["shop"][number];
+  gold: number;
+  onBuy: (uid: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={offer.sold || gold < offer.cost}
+      onClick={() => onBuy(offer.uid)}
+      className={cn(
+        "flex w-full items-start justify-between gap-2 rounded-lg border px-3 py-2 text-left",
+        offer.sold ? "border-border/50 bg-bg-subtle/40 opacity-50" : "border-border bg-bg-subtle/80",
+      )}
+    >
+      <span>
+        <span className="block text-sm font-medium text-fg">{offer.name}</span>
+        <span className="mt-0.5 block text-xs text-subtle">{offer.desc}</span>
+      </span>
+      <span className="shrink-0 text-xs tabular-nums text-muted">
+        {offer.sold ? "已购" : `${offer.cost}金`}
+      </span>
+    </button>
+  );
+}
+
 function OverCard({
   score,
   best,
   rank,
+  rogue,
+  ballId,
+  playMode,
   onRetry,
+  onTitle,
 }: {
   score: number;
   best: number;
   rank: string;
+  rogue: HudState["rogue"];
+  ballId: BallId;
+  playMode: PlayMode;
   onRetry: () => void;
+  onTitle: () => void;
 }) {
-  const isBest = score > 0 && score === best;
+  const isRogue = playMode === "rogue" && rogue;
+  const isBest = isRogue
+    ? rogue.stage >= best && best > 0
+    : score > 0 && score === best;
+  const ballName = BALLS.find((b) => b.id === ballId)?.name ?? "篮球";
+
+  if (isRogue) {
+    const ornLines = rogue.ornaments.map((o) =>
+      ornamentLabel(o.id as RogueOrnamentId, o.stacks),
+    );
+    const itemLines: string[] = [];
+    if (rogue.revives > 0) itemLines.push(`重生 ×${rogue.revives}`);
+    if (rogue.streakSaveCharges > 0) {
+      itemLines.push(`${itemLabel("streakSave")} ×${rogue.streakSaveCharges}`);
+    }
+    if (rogue.pointExchangeCharges > 0) {
+      itemLines.push(`${itemLabel("pointexchanger")} ×${rogue.pointExchangeCharges}`);
+    }
+    if (rogue.pointExchangeLeft > 0) {
+      itemLines.push(`${itemLabel("pointexchanger")}进行中（剩${rogue.pointExchangeLeft}）`);
+    }
+    if (rogue.moneyProtect) itemLines.push(itemLabel("moneyprotecter"));
+    (Object.keys(ROGUE_ITEMS) as RogueItemId[]).forEach((id) => {
+      const n = rogue.items[id] ?? 0;
+      if (
+        n > 0 &&
+        id !== "rematch" &&
+        id !== "pointexchanger" &&
+        id !== "moneyprotecter" &&
+        id !== "streakSave"
+      ) {
+        itemLines.push(`${itemLabel(id)} ×${n}`);
+      }
+    });
+    const loadout = [
+      `球种 · ${ballName}`,
+      ...itemLines.map((t) => `道具 · ${t}`),
+      ...ornLines.map((t) => `饰品 · ${t}`),
+    ];
+    const stats: { label: string; value: string }[] = [
+      { label: "最高通关", value: `第 ${rogue.stage} 关` },
+      { label: "最高金币", value: `${rogue.peakGold}` },
+      { label: "最高连击", value: `×${rogue.peakStreakAll}` },
+      { label: "最高单次得分", value: `${rogue.peakMake}` },
+    ];
+    return (
+      <div
+        className="pointer-events-auto absolute inset-0 z-20 flex flex-col items-center justify-end bg-bg/50 px-4 pb-[max(1.75rem,env(safe-area-inset-bottom))] pt-16"
+        onClick={onTitle}
+      >
+        <div
+          className="mb-4 w-full max-w-xs overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-lg"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="border-b border-border px-5 py-4 text-center">
+            <p className="text-xs font-medium tracking-widest text-muted">本局结算</p>
+            <p className="mt-2 font-sans text-4xl font-black tabular-nums text-fg">
+              {score}
+            </p>
+            <p className="mt-1 text-xs text-subtle">
+              {rogue.endless ? "无限模式" : `第 ${rogue.stage} 关`}
+              {isBest ? " · 新纪录深度" : best > 0 ? ` · 最远第 ${best} 关` : ""}
+            </p>
+          </div>
+          <div className="border-b border-border px-4 py-3">
+            <p className="mb-2 text-[10px] font-medium tracking-widest text-subtle">
+              装备一览
+            </p>
+            <ul className="flex flex-wrap gap-1.5">
+              {loadout.map((line) => (
+                <li
+                  key={line}
+                  className="rounded-md border border-border bg-bg-subtle/80 px-2 py-1 text-[11px] text-fg"
+                >
+                  {line}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="space-y-0 px-4 py-2">
+            {stats.map((row) => (
+              <div
+                key={row.label}
+                className="flex items-center justify-between border-b border-border/60 py-2.5 last:border-b-0"
+              >
+                <span className="text-sm text-muted">{row.label}</span>
+                <span className="font-sans text-base font-semibold tabular-nums text-fg">
+                  {row.value}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <p className="pointer-events-none mb-2 text-center text-sm text-fg">
+          点击空白处返回主界面
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="pointer-events-none flex flex-col items-center px-6 pb-[max(1.75rem,env(safe-area-inset-bottom))]">
       <div className="mb-5 w-full max-w-xs rounded-xl border border-border bg-bg-elevated px-6 py-6 text-center shadow-lg">
         <p className="text-xs font-medium tracking-widest text-muted">时间到</p>
-        <p className="mt-3 font-sans text-6xl font-black leading-none tabular-nums text-fg">{score}</p>
+        <p className="mt-3 font-sans text-6xl font-black leading-none tabular-nums text-fg">
+          {score}
+        </p>
         <p className="mt-2 text-sm text-muted">{rank}</p>
         <p className="mt-3 text-xs text-subtle">{isBest ? "新纪录" : `最高 ${best}`}</p>
       </div>
@@ -537,19 +980,98 @@ function OverCard({
   );
 }
 
+function StreakSavePrompt({
+  streak,
+  charges,
+  onYes,
+  onNo,
+}: {
+  streak: number;
+  charges: number;
+  onYes: () => void;
+  onNo: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-bg/75 px-6">
+      <div className="w-full max-w-xs rounded-xl border border-border bg-bg-elevated p-5 shadow-lg">
+        <p className="text-center text-xs font-medium tracking-widest text-muted">连击保护</p>
+        <p className="mt-3 text-center text-sm text-fg">
+          当前连击 ×{streak}，是否使用连击保护？
+        </p>
+        <p className="mt-1 text-center text-xs text-subtle">剩余 {charges} 次</p>
+        <div className="mt-5 flex gap-2">
+          <button
+            type="button"
+            onClick={onNo}
+            className="h-12 flex-1 rounded-lg border border-border text-sm text-muted"
+          >
+            不使用
+          </button>
+          <button
+            type="button"
+            onClick={onYes}
+            className="h-12 flex-[1.2] rounded-lg bg-accent text-sm font-medium text-accent-fg"
+          >
+            使用
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PauseMenu({
   canResume,
+  rogue,
   onDismiss,
   onRestart,
   onSettings,
   onTitle,
+  onEndRun,
+  onUse,
 }: {
   canResume: boolean;
+  rogue: HudState["rogue"];
   onDismiss: () => void;
   onRestart: () => void;
   onSettings: () => void;
   onTitle: () => void;
+  onEndRun?: () => void;
+  onUse?: (id: string) => void;
 }) {
+  type UseRow = { id: string; label: string; hint: string; kind: "item" | "ornament" };
+  const usable: UseRow[] = [];
+  if (rogue && onUse) {
+    if (rogue.streakSaveCharges > 0) {
+      usable.push({
+        id: "streakSave",
+        label: `${itemLabel("streakSave")} ×${rogue.streakSaveCharges}`,
+        hint: "断连且连击≥3时询问",
+        kind: "item",
+      });
+    }
+    if (rogue.pointExchangeCharges > 0) {
+      usable.push({
+        id: "pointexchanger",
+        label: `${itemLabel("pointexchanger")} ×${rogue.pointExchangeCharges}`,
+        hint: "点击启用：其后 5 次进球转金币",
+        kind: "item",
+      });
+    }
+  }
+
+  const passiveOrns =
+    rogue?.ornaments.map((o) => ornamentLabel(o.id as RogueOrnamentId, o.stacks)) ?? [];
+  const passiveItems: string[] = [];
+  if (rogue) {
+    if (rogue.revives > 0) passiveItems.push(`重生 ×${rogue.revives}`);
+    if (rogue.moneyProtect) passiveItems.push(itemLabel("moneyprotecter"));
+    if (rogue.pointExchangeLeft > 0) {
+      passiveItems.push(`${itemLabel("pointexchanger")}进行中（剩${rogue.pointExchangeLeft}）`);
+    }
+    if ((rogue.items.warmup ?? 0) > 0) passiveItems.push(`${itemLabel("warmup")}（下关）`);
+  }
+
   return (
     <div
       className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-bg/70 px-6"
@@ -562,8 +1084,40 @@ function PauseMenu({
         <p className="mb-4 text-center text-xs font-medium tracking-widest text-muted">
           {canResume ? "暂停" : "菜单"}
         </p>
+        {rogue ? (
+          <div className="mb-4 space-y-2 rounded-lg border border-border bg-bg-subtle/60 px-3 py-3 text-xs text-muted">
+            <p className="text-fg">
+              第 {rogue.stage} 关 · 目标 {rogue.target} · 金{" "}
+              <span className="font-semibold tabular-nums">{rogue.gold}</span>
+            </p>
+            <p>
+              总分 {rogue.runScore + rogue.stageScore} · 本关 {rogue.stageScore}
+            </p>
+            {usable.length > 0 ? (
+              <div className="space-y-1.5 pt-1">
+                <p className="text-[10px] tracking-widest text-subtle">点按使用</p>
+                {usable.map((u) => (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() => onUse?.(u.id)}
+                    className="flex w-full flex-col rounded-lg border border-border bg-bg-elevated px-3 py-2 text-left active:scale-[0.99]"
+                  >
+                    <span className="text-sm text-fg">{u.label}</span>
+                    <span className="text-[11px] text-subtle">{u.hint}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <p>被动道具：{passiveItems.length ? passiveItems.join("、") : "无"}</p>
+            <p>被动饰品：{passiveOrns.length ? passiveOrns.join("、") : "无"}</p>
+          </div>
+        ) : null}
         <div className="flex flex-col gap-2">
           <MenuBtn label="重新开始" onClick={onRestart} />
+          {rogue && onEndRun ? (
+            <MenuBtn label="结束游戏" onClick={onEndRun} />
+          ) : null}
           <MenuBtn label="设置" onClick={onSettings} />
           <MenuBtn label="返回主界面" onClick={onTitle} />
         </div>
