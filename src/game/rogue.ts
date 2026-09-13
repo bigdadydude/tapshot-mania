@@ -78,6 +78,17 @@ export type RogueRun = {
   glassSafe: number;
   /** Blackhole uses remaining this stage (from stacks). */
   blackholeCharges: number;
+  /** Timed buffs (seconds left). */
+  buffComboLeft: number;
+  buffPowerLeft: number;
+  buffBunshinLeft: number;
+  /** Concurrent 分身术 uses → clone count while buff is active. */
+  buffBunshinClones: number;
+  buffFlameLeft: number;
+  /** Ask to drink next 热火饮料 after current expires. */
+  pendingFlameReuse: boolean;
+  /** Acc for 迪克云 score events. */
+  whatsThatAcc: number;
   endless: boolean;
   stagesCleared: number;
   peakGold: number;
@@ -116,6 +127,12 @@ export type RogueHud = {
   pointExchangeCharges: number;
   moneyProtect: boolean;
   blackholeCharges: number;
+  buffComboLeft: number;
+  buffPowerLeft: number;
+  buffBunshinLeft: number;
+  buffBunshinClones: number;
+  buffFlameLeft: number;
+  pendingFlameReuse: boolean;
 };
 
 const STAGE_SCORE = 200;
@@ -169,6 +186,13 @@ export function createRogueRun(): RogueRun {
     moneyProtect: false,
     glassSafe: 0,
     blackholeCharges: 0,
+    buffComboLeft: 0,
+    buffPowerLeft: 0,
+    buffBunshinLeft: 0,
+    buffBunshinClones: 0,
+    buffFlameLeft: 0,
+    pendingFlameReuse: false,
+    whatsThatAcc: 0,
     endless: false,
     stagesCleared: 0,
     peakGold: 0,
@@ -271,7 +295,10 @@ export function applyRogueMakeMods(
   return { gain: g, gold };
 }
 
-export function roguePhysMul(run: RogueRun, key: "rimFric" | "ball" | "jumpFwd" | "jumpUp"): number {
+export function roguePhysMul(
+  run: RogueRun,
+  key: "rimFric" | "ball" | "jumpFwd" | "jumpUp" | "grav",
+): number {
   let v = 1;
   for (const owned of run.ornaments) {
     const meta = catalogOf(owned.id);
@@ -281,8 +308,34 @@ export function roguePhysMul(run: RogueRun, key: "rimFric" | "ball" | "jumpFwd" 
     if (key === "ball" && meta.ballBouncePer) v += meta.ballBouncePer * n;
     if (key === "jumpFwd" && meta.jumpFwdPer) v += meta.jumpFwdPer * n;
     if (key === "jumpUp" && meta.jumpUpPer) v += meta.jumpUpPer * n;
+    if (key === "grav" && meta.gravPer) v += meta.gravPer * n;
   }
   return Math.max(0.35, v);
+}
+
+export function rogueMoveChanceDelta(run: RogueRun): number {
+  const n = run.items.tranquilizer ?? 0;
+  if (n <= 0) return 0;
+  return (catalogOf("tranquilizer")?.moveChancePer ?? -0.05) * n;
+}
+
+export function rogueBallRMul(run: RogueRun): number {
+  if (ornamentStacks(run, "funsize") <= 0) return 1;
+  return catalogOf("funsize")?.ballRScale ?? 0.5;
+}
+
+export function rogueHoopInnerMul(run: RogueRun): number {
+  const n = ornamentStacks(run, "alice");
+  if (n <= 0) return 1;
+  return 1 + (catalogOf("alice")?.hoopInnerPer ?? 0.18) * n;
+}
+
+export function hasChaosBase(run: RogueRun): boolean {
+  return ornamentStacks(run, "chaosdrug") > 0;
+}
+
+export function miniMeStacks(run: RogueRun): number {
+  return ornamentStacks(run, "miniMe");
 }
 
 export function rogueComboWindowBonus(run: RogueRun): number {
@@ -354,11 +407,15 @@ function offerFrom(entry: RogueCatalogEntry, run: RogueRun): RogueShopOffer {
 }
 
 function itemSoldOut(run: RogueRun, id: RogueItemId): boolean {
+  const meta = catalogOf(id);
   if (id === "rematch") return run.revives >= REVIVE_CAP;
   if (id === "warmup") return run.nextBonusClock > 0 || (run.items.warmup ?? 0) > 0;
   if (id === "streakSave") return run.streakSaveCharges >= 3;
   if (id === "pointexchanger") return run.pointExchangeCharges > 0 || run.pointExchangeLeft > 0;
   if (id === "moneyprotecter") return run.moneyProtect;
+  if (meta?.manualUse || meta?.moveChancePer != null) {
+    return (run.items[id] ?? 0) >= meta.stackCap;
+  }
   return false;
 }
 
@@ -430,6 +487,10 @@ export function tryBuyOffer(run: RogueRun, uid: string): { ok: boolean; reason?:
     } else if (meta.moneyProtect) {
       run.moneyProtect = true;
       run.items.moneyprotecter = 1;
+    } else if (meta.manualUse || meta.moveChancePer != null) {
+      const cur = run.items[id] ?? 0;
+      if (cur >= meta.stackCap) return { ok: false, reason: "已达叠加上限" };
+      run.items[id] = cur + 1;
     }
   } else {
     const id = offer.id as RogueOrnamentId;
@@ -467,8 +528,124 @@ export function settleStagePayout(run: RogueRun): void {
   run.shop = [];
 }
 
+export function ownedRogueCount(run: RogueRun, id: string): number {
+  const meta = catalogOf(id);
+  if (!meta) return 0;
+  if (meta.kind === "ornament") return ornamentStacks(run, id as RogueOrnamentId);
+  if (meta.revive) return run.revives;
+  if (meta.streakSave) return run.streakSaveCharges;
+  if (meta.pointExchangeMakes) return run.pointExchangeCharges;
+  if (meta.moneyProtect) return run.moneyProtect ? 1 : 0;
+  if (meta.nextBonusSec) return run.items.warmup ?? 0;
+  return run.items[id as RogueItemId] ?? 0;
+}
+
+/** Dev: grant one stack free (no gold). */
+export function devGrantRogue(
+  run: RogueRun,
+  id: string,
+): { ok: boolean; reason?: string } {
+  const meta = catalogOf(id);
+  if (!meta || meta.status !== "active") return { ok: false, reason: "未知物品" };
+
+  if (meta.kind === "item") {
+    const itemId = id as RogueItemId;
+    if (meta.revive) {
+      if (run.revives >= REVIVE_CAP) return { ok: false, reason: "重生已满" };
+      run.revives += 1;
+    } else if (meta.nextBonusSec) {
+      if ((run.items.warmup ?? 0) >= meta.stackCap) return { ok: false, reason: "已达叠加上限" };
+      run.items.warmup = (run.items.warmup ?? 0) + 1;
+      run.nextBonusClock = Math.max(run.nextBonusClock, meta.nextBonusSec);
+    } else if (meta.streakSave) {
+      if (run.streakSaveCharges >= 3) return { ok: false, reason: "已达叠加上限" };
+      run.streakSaveCharges += 1;
+      run.items.streakSave = run.streakSaveCharges;
+    } else if (meta.pointExchangeMakes) {
+      if (run.pointExchangeCharges > 0 || run.pointExchangeLeft > 0) {
+        return { ok: false, reason: "已持有" };
+      }
+      run.pointExchangeCharges += 1;
+      run.items.pointexchanger = run.pointExchangeCharges;
+    } else if (meta.moneyProtect) {
+      if (run.moneyProtect) return { ok: false, reason: "已持有" };
+      run.moneyProtect = true;
+      run.items.moneyprotecter = 1;
+    } else if (meta.manualUse || meta.moveChancePer != null) {
+      const cur = run.items[itemId] ?? 0;
+      if (cur >= meta.stackCap) return { ok: false, reason: "已达叠加上限" };
+      run.items[itemId] = cur + 1;
+    } else {
+      return { ok: false, reason: "无法添加" };
+    }
+  } else {
+    const ornId = id as RogueOrnamentId;
+    const owned = run.ornaments.find((o) => o.id === ornId);
+    const stacks = owned?.stacks ?? 0;
+    if (stacks >= meta.stackCap) return { ok: false, reason: "已达叠加上限" };
+    if (owned) owned.stacks += 1;
+    else run.ornaments.push({ id: ornId, stacks: 1 });
+    if (meta.glassSafe) run.glassSafe += 1;
+    if (ornId === "blackhole") {
+      run.blackholeCharges = ornamentStacks(run, "blackhole");
+    }
+  }
+  return { ok: true };
+}
+
+/** Dev: remove one stack. */
+export function devRevokeRogue(
+  run: RogueRun,
+  id: string,
+): { ok: boolean; reason?: string } {
+  const meta = catalogOf(id);
+  if (!meta) return { ok: false, reason: "未知物品" };
+  if (ownedRogueCount(run, id) <= 0) return { ok: false, reason: "未持有" };
+
+  if (meta.kind === "item") {
+    const itemId = id as RogueItemId;
+    if (meta.revive) {
+      run.revives = Math.max(0, run.revives - 1);
+    } else if (meta.nextBonusSec) {
+      run.items.warmup = Math.max(0, (run.items.warmup ?? 0) - 1);
+      if ((run.items.warmup ?? 0) <= 0) run.nextBonusClock = 0;
+    } else if (meta.streakSave) {
+      run.streakSaveCharges = Math.max(0, run.streakSaveCharges - 1);
+      run.items.streakSave = run.streakSaveCharges;
+    } else if (meta.pointExchangeMakes) {
+      run.pointExchangeCharges = Math.max(0, run.pointExchangeCharges - 1);
+      run.items.pointexchanger = run.pointExchangeCharges;
+    } else if (meta.moneyProtect) {
+      run.moneyProtect = false;
+      run.items.moneyprotecter = 0;
+    } else if (meta.manualUse || meta.moveChancePer != null) {
+      run.items[itemId] = Math.max(0, (run.items[itemId] ?? 0) - 1);
+    } else {
+      return { ok: false, reason: "无法移除" };
+    }
+  } else {
+    const ornId = id as RogueOrnamentId;
+    const owned = run.ornaments.find((o) => o.id === ornId);
+    if (!owned) return { ok: false, reason: "未持有" };
+    owned.stacks -= 1;
+    if (owned.stacks <= 0) {
+      run.ornaments = run.ornaments.filter((o) => o.id !== ornId);
+    }
+    if (meta.glassSafe) run.glassSafe = Math.max(0, run.glassSafe - 1);
+    if (ornId === "blackhole") {
+      run.blackholeCharges = ornamentStacks(run, "blackhole");
+    }
+  }
+  return { ok: true };
+}
+
 export function openRogueShop(run: RogueRun, ballId?: string): void {
   run.shop = rollShopStock(run, { ballId });
+}
+
+/** Dev hub: no random stock — UI lists the full catalog. */
+export function openDevRogueShop(run: RogueRun): void {
+  run.shop = [];
 }
 
 export function advanceRogueStage(run: RogueRun): void {
@@ -484,6 +661,13 @@ export function advanceRogueStage(run: RogueRun): void {
   run.rollGoldAcc = 0;
   run.blackholeCharges = ornamentStacks(run, "blackhole");
   run.pendingStreakSave = false;
+  run.buffComboLeft = 0;
+  run.buffPowerLeft = 0;
+  run.buffBunshinLeft = 0;
+  run.buffBunshinClones = 0;
+  run.buffFlameLeft = 0;
+  run.pendingFlameReuse = false;
+  run.whatsThatAcc = 0;
 }
 
 export function toRogueHud(run: RogueRun | null): RogueHud | null {
@@ -517,6 +701,12 @@ export function toRogueHud(run: RogueRun | null): RogueHud | null {
     pointExchangeCharges: run.pointExchangeCharges,
     moneyProtect: run.moneyProtect,
     blackholeCharges: run.blackholeCharges,
+    buffComboLeft: run.buffComboLeft,
+    buffPowerLeft: run.buffPowerLeft,
+    buffBunshinLeft: run.buffBunshinLeft,
+    buffBunshinClones: run.buffBunshinClones,
+    buffFlameLeft: run.buffFlameLeft,
+    pendingFlameReuse: run.pendingFlameReuse,
   };
 }
 

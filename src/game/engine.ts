@@ -23,23 +23,32 @@ import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./ty
 import {
   advanceRogueStage,
   applyRogueMakeMods,
+  catalogOf,
   createRogueRun,
+  hasChaosBase,
   hasHeroMoment,
+  miniMeStacks,
   openRogueShop,
+  openDevRogueShop,
   ROGUE_CAMPAIGN_STAGES,
+  rogueBallRMul,
+  rogueBlackholeSec,
   rogueComboWindowBonus,
   rogueDecayBase,
+  rogueHoopInnerMul,
+  rogueMoveChanceDelta,
   roguePhysMul,
   rogueStartStreak,
-  rogueBlackholeSec,
   ornamentStacks,
   settleStagePayout,
   toRogueHud,
   tryBuyOffer,
+  devGrantRogue,
+  devRevokeRogue,
   type RogueRun,
 } from "./rogue";
 
-export const GAME_REV = 284;
+export const GAME_REV = 293;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -92,6 +101,11 @@ export type GameHandle = {
   setBall: (id: BallId) => void;
   setPlayMode: (mode: PlayMode) => void;
   buyRogue: (uid: string) => void;
+  /** Dev catalog: grant / revoke one stack. */
+  grantRogue: (id: string) => void;
+  revokeRogue: (id: string) => void;
+  /** Dev: close catalog shop without advancing stage. */
+  closeRogueShop: () => void;
   rogueContinue: () => void;
   rogueConfirmSettle: () => void;
   rogueEndless: () => void;
@@ -100,6 +114,8 @@ export type GameHandle = {
   useRogue: (id: string) => void;
   /** Answer连击保护 prompt. */
   answerStreakSave: (use: boolean) => void;
+  /** Answer热火饮料续用 prompt. */
+  answerFlameReuse: (use: boolean) => void;
   dev: (cmd: DevCmd) => void;
   resize: () => void;
 };
@@ -199,13 +215,33 @@ export function createGame(
     life: number;
     hit: boolean[];
   };
+  type MiniGhost = {
+    delay: number;
+    x: number;
+    y: number;
+  };
   let pathHist: PathSample[] = [];
   let pathClock = 0;
   let ninjaGhosts: NinjaGhost[] = [];
   let ninjaGates: NinjaGate[] = [];
+  let miniGhosts: MiniGhost[] = [];
 
   function activeBallR() {
-    return ballRadius(world.ballR, ballId);
+    let r = ballRadius(world.ballR, ballId);
+    if (isRogueMode() && rogueRun) {
+      const mul = rogueBallRMul(rogueRun);
+      // 叠在球种半径上：经典→弹力球大小；弹力球再缩一半
+      if (mul < 1) r *= mul;
+    }
+    return r;
+  }
+
+  function applyRogueHoopScale(h: Hoop) {
+    if (!isRogueMode() || !rogueRun) return;
+    const mul = rogueHoopInnerMul(rogueRun);
+    if (mul <= 1) return;
+    h.inner = world.hoopInner * mul;
+    h.net = buildNet(h);
   }
 
   function remakeBall(side: -1 | 1) {
@@ -224,7 +260,28 @@ export function createGame(
     return ballId === "ninja";
   }
 
+  function bunshinActive() {
+    return Boolean(
+      isRogueMode() &&
+        rogueRun &&
+        rogueRun.buffBunshinLeft > 0 &&
+        rogueRun.buffBunshinClones > 0,
+    );
+  }
+
+  function miniMeActive() {
+    return Boolean(isRogueMode() && rogueRun && miniMeStacks(rogueRun) > 0 && phase === "playing");
+  }
+
+  function miniMeCloneCount() {
+    if (!miniMeActive() || !rogueRun) return 0;
+    return Math.min(5, Math.max(1, miniMeStacks(rogueRun)));
+  }
+
   function ninjaCloneCount() {
+    if (bunshinActive() && rogueRun) {
+      return Math.min(5, Math.max(1, rogueRun.buffBunshinClones));
+    }
     if (!isNinja() || phase !== "playing") return 0;
     if (streak >= NINJA_CLONE_AT[2]) return 3;
     if (streak >= NINJA_CLONE_AT[1]) return 2;
@@ -237,6 +294,7 @@ export function createGame(
     pathClock = 0;
     ninjaGhosts = [];
     ninjaGates = [];
+    miniGhosts = [];
   }
 
   function syncNinjaGhosts() {
@@ -244,7 +302,7 @@ export function createGame(
     while (ninjaGhosts.length < n) {
       const i = ninjaGhosts.length;
       ninjaGhosts.push({
-        delay: NINJA_DELAYS[i]!,
+        delay: NINJA_DELAYS[i] ?? 0.11 * (i + 1),
         scoredLock: 0,
         x: ball.x,
         y: ball.y,
@@ -254,8 +312,21 @@ export function createGame(
     if (ninjaGhosts.length > n) ninjaGhosts.length = n;
   }
 
+  function syncMiniGhosts() {
+    const n = miniMeCloneCount();
+    while (miniGhosts.length < n) {
+      const i = miniGhosts.length;
+      miniGhosts.push({
+        delay: 0.16 + i * 0.11,
+        x: ball.x,
+        y: ball.y,
+      });
+    }
+    if (miniGhosts.length > n) miniGhosts.length = n;
+  }
+
   function pushNinjaPath(dt: number) {
-    if (!isNinja()) return;
+    if (!isNinja() && !bunshinActive() && !miniMeActive()) return;
     pathClock += dt;
     pathHist.push({ x: ball.x, y: ball.y, t: pathClock });
     const keep = pathClock - 1.05;
@@ -280,12 +351,21 @@ export function createGame(
   }
 
   function ninjaClonesDraw() {
-    return ninjaGhosts.map((g, i) => ({
+    const body = ninjaGhosts.map((g, i) => ({
       x: g.x,
       y: g.y,
       r: ball.r,
       alpha: 0.42 - i * 0.08,
     }));
+    // 小小我：本体半径的一半（弹力球/儿童装已缩小后，再取其一半）
+    const miniR = ball.r * 0.5;
+    const mini = miniGhosts.map((g, i) => ({
+      x: g.x,
+      y: g.y,
+      r: miniR,
+      alpha: 0.4 - i * 0.06,
+    }));
+    return [...body, ...mini];
   }
 
   function hasChain() {
@@ -763,6 +843,7 @@ export function createGame(
         moveKind: hoop.moveKind,
         ballId,
         phys: { ...devPhys },
+        playMode,
       },
       ballId,
       playMode,
@@ -803,6 +884,7 @@ export function createGame(
       if (k === "ball") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "ball"));
       if (k === "jumpFwd") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "jumpFwd"));
       if (k === "jumpUp") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "jumpUp"));
+      if (k === "grav") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "grav"));
     }
     if (!devOn && isPrison() && prisonMode) {
       if (prisonMode === "free") {
@@ -1041,7 +1123,182 @@ export function createGame(
         kind: "tag",
       });
       emitHud();
+      return;
     }
+    if (id === "comboboost") {
+      const n = rogueRun.items.comboboost ?? 0;
+      if (n <= 0) return;
+      rogueRun.items.comboboost = n - 1;
+      const sec = catalogOf("comboboost")?.comboBoostSec ?? 5;
+      rogueRun.buffComboLeft = Math.max(rogueRun.buffComboLeft, sec);
+      callouts.push({
+        text: "连击兴奋剂",
+        x: world.w * 0.5,
+        y: world.h * 0.28,
+        life: 1,
+        max: 1,
+        kind: "tag",
+      });
+      paused = false;
+      last = performance.now();
+      acc = 0;
+      emitHud();
+      return;
+    }
+    if (id === "ineedpower") {
+      const n = rogueRun.items.ineedpower ?? 0;
+      if (n <= 0) return;
+      rogueRun.items.ineedpower = n - 1;
+      const sec = catalogOf("ineedpower")?.powerBoostSec ?? 4;
+      rogueRun.buffPowerLeft = Math.max(rogueRun.buffPowerLeft, sec);
+      callouts.push({
+        text: "大力丸",
+        x: world.w * 0.5,
+        y: world.h * 0.28,
+        life: 1,
+        max: 1,
+        kind: "tag",
+      });
+      paused = false;
+      last = performance.now();
+      acc = 0;
+      emitHud();
+      return;
+    }
+    if (id === "Bunshin") {
+      const n = rogueRun.items.Bunshin ?? 0;
+      if (n <= 0) return;
+      rogueRun.items.Bunshin = n - 1;
+      const meta = catalogOf("Bunshin");
+      const sec = meta?.bunshinSec ?? 10;
+      const add = meta?.bunshinClones ?? 1;
+      const cap = meta?.stackCap ?? 5;
+      rogueRun.buffBunshinClones = Math.min(cap, rogueRun.buffBunshinClones + add);
+      rogueRun.buffBunshinLeft = Math.max(rogueRun.buffBunshinLeft, sec);
+      if (pathHist.length === 0) {
+        pathClock = 0;
+        pathHist.push({ x: ball.x, y: ball.y, t: 0 });
+      }
+      syncNinjaGhosts();
+      callouts.push({
+        text: `分身×${rogueRun.buffBunshinClones}`,
+        x: world.w * 0.5,
+        y: world.h * 0.28,
+        life: 1,
+        max: 1,
+        kind: "tag",
+      });
+      paused = false;
+      last = performance.now();
+      acc = 0;
+      emitHud();
+      return;
+    }
+    if (id === "flameON") {
+      const n = rogueRun.items.flameON ?? 0;
+      if (n <= 0) return;
+      rogueRun.items.flameON = n - 1;
+      const sec = catalogOf("flameON")?.flameSec ?? 10;
+      rogueRun.buffFlameLeft = Math.max(rogueRun.buffFlameLeft, sec);
+      combo = Math.max(combo, STAGE_BLAZE);
+      callouts.push({
+        text: "烈焰",
+        x: world.w * 0.5,
+        y: world.h * 0.28,
+        life: 1,
+        max: 1,
+        kind: "tag",
+      });
+      paused = false;
+      last = performance.now();
+      acc = 0;
+      emitHud();
+    }
+  }
+
+  function resolveFlameReusePrompt(use: boolean) {
+    if (!isRogueMode() || !rogueRun || !rogueRun.pendingFlameReuse) return;
+    rogueRun.pendingFlameReuse = false;
+    if (use && (rogueRun.items.flameON ?? 0) > 0) {
+      rogueRun.items.flameON = (rogueRun.items.flameON ?? 0) - 1;
+      const sec = catalogOf("flameON")?.flameSec ?? 10;
+      rogueRun.buffFlameLeft = sec;
+      combo = Math.max(combo, STAGE_BLAZE);
+      callouts.push({
+        text: "烈焰续杯",
+        x: world.w * 0.5,
+        y: world.h * 0.28,
+        life: 1,
+        max: 1,
+        kind: "tag",
+      });
+    }
+    paused = false;
+    last = performance.now();
+    acc = 0;
+    emitHud();
+  }
+
+  function tickRogueBuffs(dt: number) {
+    if (!isRogueMode() || !rogueRun || phase !== "playing" || paused) return;
+    let dirty = false;
+    if (rogueRun.buffComboLeft > 0) {
+      rogueRun.buffComboLeft = Math.max(0, rogueRun.buffComboLeft - dt);
+      dirty = true;
+    }
+    if (rogueRun.buffPowerLeft > 0) {
+      rogueRun.buffPowerLeft = Math.max(0, rogueRun.buffPowerLeft - dt);
+      dirty = true;
+    }
+    if (rogueRun.buffBunshinLeft > 0) {
+      rogueRun.buffBunshinLeft = Math.max(0, rogueRun.buffBunshinLeft - dt);
+      if (rogueRun.buffBunshinLeft <= 0) {
+        rogueRun.buffBunshinClones = 0;
+      }
+      dirty = true;
+    }
+    if (rogueRun.buffFlameLeft > 0) {
+      combo = Math.max(combo, STAGE_BLAZE);
+      rogueRun.buffFlameLeft = Math.max(0, rogueRun.buffFlameLeft - dt);
+      dirty = true;
+      if (rogueRun.buffFlameLeft <= 0 && (rogueRun.items.flameON ?? 0) > 0) {
+        rogueRun.pendingFlameReuse = true;
+        paused = true;
+        emitHud();
+        return;
+      }
+    }
+    const dickN = ornamentStacks(rogueRun, "WhatsThat");
+    if (dickN > 0 && gfx.clouds !== "off") {
+      rogueRun.whatsThatAcc += dt;
+      const every = 14;
+      if (rogueRun.whatsThatAcc >= every) {
+        rogueRun.whatsThatAcc -= every;
+        const per = catalogOf("WhatsThat")?.dickCloudScore ?? 20;
+        const gain = per * dickN;
+        score += gain;
+        rogueRun.stageScore = score;
+        rogueRun.peakMake = Math.max(rogueRun.peakMake, gain);
+        callouts.push({
+          text: "迪克云",
+          x: world.w * 0.5,
+          y: world.h * 0.22,
+          life: 1.1,
+          max: 1.1,
+          kind: "tag",
+        });
+        callouts.push({
+          text: `+${gain}`,
+          x: world.w * 0.5,
+          y: world.h * 0.28,
+          life: 0.9,
+          max: 0.9,
+          kind: "score",
+        });
+        dirty = true;
+      }
+    }
+    if (dirty) emitHud();
   }
 
   function spawnAntiMatter() {
@@ -1479,6 +1736,7 @@ export function createGame(
     if (isRogueMode()) {
       rogueRun = createRogueRun();
       rogueStageDecay = null;
+      if (devOn) rogueRun.endless = true;
     } else {
       rogueRun = null;
       rogueStageDecay = null;
@@ -1517,6 +1775,7 @@ export function createGame(
     wentOffTop = false;
     fromBelow = false;
     hoop = makeHoop(world, -1, true);
+    applyRogueHoopScale(hoop);
     other = null;
     remakeBall(1);
     ball.vx = jumpVx() * 0.18;
@@ -1662,6 +1921,10 @@ export function createGame(
     buzzer = false;
     buzzerTimer = 0;
     timeUp = false;
+    champMode = false;
+    champBank = 0;
+    champIdleLeft = -1;
+    champFinishing = false;
     noteBest();
     emitHud();
   }
@@ -1670,7 +1933,8 @@ export function createGame(
     if (!isRogueMode() || !rogueRun || phase !== "settle") return;
     // Campaign clear (stage 5): stay on settle for End / Endless UI.
     if (rogueRun.stage >= ROGUE_CAMPAIGN_STAGES) return;
-    openRogueShop(rogueRun, ballId);
+    if (devOn) openDevRogueShop(rogueRun);
+    else openRogueShop(rogueRun, ballId);
     phase = "hub";
     emitHud();
   }
@@ -1742,6 +2006,7 @@ export function createGame(
     wentOffTop = false;
     fromBelow = false;
     hoop = makeHoop(world, -1, true);
+    applyRogueHoopScale(hoop);
     other = null;
     remakeBall(1);
     ball.vx = jumpVx() * 0.18;
@@ -1771,6 +2036,13 @@ export function createGame(
         comboCounting = true;
       }
       rogueRun.pendingStreakSave = false;
+      rogueRun.buffComboLeft = 0;
+      rogueRun.buffPowerLeft = 0;
+      rogueRun.buffBunshinLeft = 0;
+      rogueRun.buffBunshinClones = 0;
+      rogueRun.buffFlameLeft = 0;
+      rogueRun.pendingFlameReuse = false;
+      rogueRun.whatsThatAcc = 0;
       // 黑洞饰品：每关开局自动开启（时长 = 4s × 层数）
       const holeSec = rogueBlackholeSec(rogueRun);
       if (holeSec > 0) openAntiHole(holeSec);
@@ -1794,6 +2066,52 @@ export function createGame(
     if (!isRogueMode() || !rogueRun || phase !== "hub") return;
     const res = tryBuyOffer(rogueRun, uid);
     if (!res.ok) return;
+    emitHud();
+  }
+
+  function grantRogueGear(id: string) {
+    if (!isRogueMode() || !rogueRun) return;
+    const res = devGrantRogue(rogueRun, id);
+    if (!res.ok) return;
+    ball.r = activeBallR();
+    if (hoop) applyRogueHoopScale(hoop);
+    if (other) applyRogueHoopScale(other);
+    if (id === "miniMe" && phase === "playing") {
+      if (pathHist.length === 0) {
+        pathClock = 0;
+        pathHist.push({ x: ball.x, y: ball.y, t: 0 });
+      }
+      syncMiniGhosts();
+    }
+    if (id === "funsize") {
+      ball.r = activeBallR();
+    }
+    emitHud();
+  }
+
+  function closeDevRogueShop() {
+    if (!isRogueMode() || !rogueRun || phase !== "hub") return;
+    phase = "playing";
+    paused = false;
+    last = performance.now();
+    acc = 0;
+    if (miniMeActive()) {
+      if (pathHist.length === 0) {
+        pathClock = 0;
+        pathHist.push({ x: ball.x, y: ball.y, t: 0 });
+      }
+      syncMiniGhosts();
+    }
+    emitHud();
+  }
+
+  function revokeRogueGear(id: string) {
+    if (!isRogueMode() || !rogueRun) return;
+    const res = devRevokeRogue(rogueRun, id);
+    if (!res.ok) return;
+    ball.r = activeBallR();
+    if (hoop) applyRogueHoopScale(hoop);
+    if (other) applyRogueHoopScale(other);
     emitHud();
   }
 
@@ -1942,6 +2260,7 @@ export function createGame(
     shotAirborne = false;
     other = null;
     hoop = makeHoop(world, -1, true);
+    applyRogueHoopScale(hoop);
     resetAntiRun();
     remakeBall(1);
     particles = [];
@@ -2019,6 +2338,108 @@ export function createGame(
         if (cmd.id !== "void") resetGraf();
         emitHud();
         return;
+      case "playMode": {
+        if (cmd.mode !== "classic" && cmd.mode !== "minute" && cmd.mode !== "rogue") return;
+        playMode = cmd.mode;
+        persist();
+        if (!devOn) enterSandbox();
+        else {
+          beginPlay();
+          hint = false;
+          timerArmed = false;
+          timer = timerMax;
+          devFreeze = true;
+          devHoldHeat = true;
+          madeCount = 1;
+          applyKitPhys();
+        }
+        if (playMode === "rogue" && rogueRun) {
+          rogueRun.gold = Math.max(rogueRun.gold, 99);
+          rogueRun.peakGold = Math.max(rogueRun.peakGold, rogueRun.gold);
+          if (devOn) rogueRun.endless = true;
+        }
+        emitHud();
+        return;
+      }
+      case "rogueTool": {
+        if (!devOn) enterSandbox();
+        playMode = "rogue";
+        persist();
+        if (!rogueRun) {
+          rogueRun = createRogueRun();
+        }
+        if (devOn) rogueRun.endless = true;
+        if (cmd.kind === "gold") {
+          rogueRun.gold += 50;
+          rogueRun.peakGold = Math.max(rogueRun.peakGold, rogueRun.gold);
+          callouts.push({
+            text: "+50金",
+            x: world.w * 0.5,
+            y: world.h * 0.28,
+            life: 0.9,
+            max: 0.9,
+            kind: "tag",
+          });
+          emitHud();
+          return;
+        }
+        if (cmd.kind === "clearScore") {
+          score = 0;
+          rogueRun.stageScore = 0;
+          rogueRun.runScore = 0;
+          callouts.push({
+            text: "分数清零",
+            x: world.w * 0.5,
+            y: world.h * 0.28,
+            life: 0.9,
+            max: 0.9,
+            kind: "tag",
+          });
+          emitHud();
+          return;
+        }
+        if (cmd.kind === "shop") {
+          openDevRogueShop(rogueRun);
+          phase = "hub";
+          paused = false;
+          emitHud();
+          return;
+        }
+        if (cmd.kind === "closeShop") {
+          if (phase === "hub") {
+            phase = "playing";
+            paused = false;
+            last = performance.now();
+            acc = 0;
+            if (miniMeActive()) {
+              if (pathHist.length === 0) {
+                pathClock = 0;
+                pathHist.push({ x: ball.x, y: ball.y, t: 0 });
+              }
+              syncMiniGhosts();
+            }
+          }
+          emitHud();
+          return;
+        }
+        if (cmd.kind === "clearSettle") {
+          rogueRun.stage = ROGUE_CAMPAIGN_STAGES;
+          rogueRun.target = 200;
+          rogueRun.stageScore = Math.max(rogueRun.stageScore, 200);
+          rogueRun.peakStreak = Math.max(rogueRun.peakStreak, 5);
+          rogueRun.peakStreakAll = Math.max(rogueRun.peakStreakAll, 5);
+          rogueRun.peakMake = Math.max(rogueRun.peakMake, 12);
+          rogueRun.runScore = Math.max(rogueRun.runScore, 800);
+          rogueRun.gold = Math.max(rogueRun.gold, 40);
+          rogueRun.peakGold = Math.max(rogueRun.peakGold, rogueRun.gold);
+          rogueRun.stagesCleared = Math.max(rogueRun.stagesCleared, 4);
+          rogueRun.endless = false;
+          enterRogueSettle();
+          return;
+        }
+        emitHud();
+        return;
+      }
       case "score":
         score = Math.max(0, Math.floor(cmd.n));
         emitHud();
@@ -2223,7 +2644,9 @@ export function createGame(
         } else {
           timeUp = true;
           champIdleLeft = -1;
-          if (predictBuzzerMake()) {
+          // 肉鸽非无限关：倒计时耗尽一律进入绝杀窗，进球达目标即可过关
+          const forceClutch = isRogueMode() && rogueRun && !rogueRun.endless;
+          if (forceClutch || predictBuzzerMake()) {
             buzzer = true;
             buzzerTimer =
               isRogueMode() && rogueRun && hasHeroMoment(rogueRun)
@@ -2238,12 +2661,23 @@ export function createGame(
       const settled =
         ball.y + ball.r >= world.floorY - 2 && Math.abs(ball.vy) < 90 && Math.abs(ball.vx) < 70;
       if (buzzerTimer <= 0 || settled) {
-        if (!ball.scored) {
+        if (
+          isRogueMode() &&
+          rogueRun &&
+          !rogueRun.endless &&
+          rogueRun.stageScore >= rogueRun.target
+        ) {
+          enterRogueSettle();
+        } else if (!ball.scored) {
           failRogueOrOver();
         }
       }
     } else if (timeUp && !buzzer && phase === "playing") {
-      if (predictBuzzerMake()) {
+      if (isRogueMode() && rogueRun && !rogueRun.endless) {
+        buzzer = true;
+        buzzerTimer = hasHeroMoment(rogueRun) ? BUZZER_WINDOW * 2 : BUZZER_WINDOW;
+        audio.buzzer();
+      } else if (predictBuzzerMake()) {
         buzzer = true;
         buzzerTimer =
           isRogueMode() && rogueRun && hasHeroMoment(rogueRun)
@@ -2385,7 +2819,8 @@ export function createGame(
         ball.omega = ball.vx / Math.max(8, ball.r);
         if (isRogueMode() && rogueRun && phase === "playing") {
           const jn = ornamentStacks(rogueRun, "jiahao");
-          if (jn > 0 && Math.abs(ball.vx) > 8 && Math.abs(ball.vx) < 140) {
+          if (jn > 0) {
+            // 接触地面累计 0.5s → +1 金 ×层数（不要求滚动）
             rogueRun.rollGoldAcc += dt;
             while (rogueRun.rollGoldAcc >= 0.5) {
               rogueRun.rollGoldAcc -= 0.5;
@@ -2395,6 +2830,7 @@ export function createGame(
           }
         }
       } else {
+        if (rogueRun) rogueRun.rollGoldAcc = 0;
         ball.vx *= 1 - Math.min(0.85, 0.035 * air * dt);
         // Preserve spin longer in black-hole mode so rim deflection stays reliable.
         const spinDrag = holeOn ? 0.06 : 0.28;
@@ -2429,6 +2865,7 @@ export function createGame(
       if (phase === "playing") {
         if (isAnti()) tryCollectAntiMatter();
         if (holeOn) stepAntiHole(dt);
+        tickRogueBuffs(dt);
       }
       collideFloor();
       if (chain && hasChain()) {
@@ -2703,48 +3140,134 @@ export function createGame(
     }
   }
 
-  /** Collide with hoop support brace (was visual-only — small balls tunneled through). */
+  /** Collide with hoop support brace — swept so small/fast balls cannot tunnel. */
   function collideBrace(h: Hoop) {
     const segs = braceColliders(h, world);
     const hitR = ball.r;
+    const ax = prevBallX;
+    const ay = prevBallY;
+    const bx = ball.x;
+    const by = ball.y;
     for (const s of segs) {
-      const dx = s.x1 - s.x0;
-      const dy = s.y1 - s.y0;
-      const len2 = dx * dx + dy * dy || 0.0001;
-      let t = ((ball.x - s.x0) * dx + (ball.y - s.y0) * dy) / len2;
-      t = Math.max(0, Math.min(1, t));
-      const px = s.x0 + dx * t;
-      const py = s.y0 + dy * t;
-      let ox = ball.x - px;
-      let oy = ball.y - py;
-      let dist = Math.hypot(ox, oy);
       const need = hitR + s.halfW;
-      if (dist >= need) continue;
-      if (dist < 0.0001) {
-        const len = Math.hypot(dx, dy) || 1;
-        ox = -dy / len;
-        oy = dx / len;
-        dist = 0.0001;
+      // Closest points between travel segment and brace segment
+      const hit = closestSegSeg(ax, ay, bx, by, s.x0, s.y0, s.x1, s.y1);
+      if (hit.dist >= need) {
+        // Also catch rest-overlap at end position (stationary / slow)
+        const end = closestPointOnSeg(bx, by, s.x0, s.y0, s.x1, s.y1);
+        if (end.dist >= need) continue;
+        resolveBraceHit(end.x, end.y, s.x1 - s.x0, s.y1 - s.y0, need, end.dist);
+        continue;
       }
-      const nx = ox / dist;
-      const ny = oy / dist;
-      const overlap = need - dist;
-      ball.x += nx * (overlap + 0.35);
-      ball.y += ny * (overlap + 0.35);
-      const vn = ball.vx * nx + ball.vy * ny;
-      if (vn >= 0) continue;
-      const rest = bounceRest("board");
-      ball.vx -= (1 + rest) * vn * nx;
-      ball.vy -= (1 + rest) * vn * ny;
-      const tx = -ny;
-      const ty = nx;
-      const vt = ball.vx * tx + ball.vy * ty;
-      const grip = Math.min(0.92, 0.12 * pMul("boardFric"));
-      ball.vx -= grip * vt * tx;
-      ball.vy -= grip * vt * ty;
-      ball.hitBoard = true;
-      if (-vn > 90) audio.board(Math.min(1, (-vn - 60) / 520));
+      resolveBraceHit(hit.px, hit.py, s.x1 - s.x0, s.y1 - s.y0, need, hit.dist);
     }
+  }
+
+  function closestPointOnSeg(
+    px: number,
+    py: number,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+  ) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const len2 = dx * dx + dy * dy || 0.0001;
+    let t = ((px - x0) * dx + (py - y0) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const x = x0 + dx * t;
+    const y = y0 + dy * t;
+    return { x, y, dist: Math.hypot(px - x, py - y) };
+  }
+
+  /** Closest points between segments A→B (ball path) and C→D (brace). */
+  function closestSegSeg(
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    cx: number,
+    cy: number,
+    dx: number,
+    dy: number,
+  ) {
+    const d1x = bx - ax;
+    const d1y = by - ay;
+    const d2x = dx - cx;
+    const d2y = dy - cy;
+    const rx = ax - cx;
+    const ry = ay - cy;
+    const a = d1x * d1x + d1y * d1y;
+    const e = d2x * d2x + d2y * d2y;
+    const f = d2x * rx + d2y * ry;
+    const eps = 1e-8;
+    let s = 0;
+    let t = 0;
+    if (a <= eps && e <= eps) {
+      // both points
+    } else if (a <= eps) {
+      t = Math.max(0, Math.min(1, f / e));
+    } else {
+      const c = d1x * rx + d1y * ry;
+      if (e <= eps) {
+        s = Math.max(0, Math.min(1, -c / a));
+      } else {
+        const b = d1x * d2x + d1y * d2y;
+        const denom = a * e - b * b;
+        s = Math.abs(denom) > eps ? Math.max(0, Math.min(1, (b * f - c * e) / denom)) : 0;
+        t = (b * s + f) / e;
+        if (t < 0) {
+          t = 0;
+          s = Math.max(0, Math.min(1, -c / a));
+        } else if (t > 1) {
+          t = 1;
+          s = Math.max(0, Math.min(1, (b - c) / a));
+        }
+      }
+    }
+    const qx = ax + d1x * s;
+    const qy = ay + d1y * s;
+    const px = cx + d2x * t;
+    const py = cy + d2y * t;
+    return { dist: Math.hypot(qx - px, qy - py), qx, qy, px, py };
+  }
+
+  function resolveBraceHit(
+    px: number,
+    py: number,
+    segDx: number,
+    segDy: number,
+    need: number,
+    dist: number,
+  ) {
+    let ox = ball.x - px;
+    let oy = ball.y - py;
+    let d = Math.hypot(ox, oy);
+    if (d < 0.0001) {
+      const len = Math.hypot(segDx, segDy) || 1;
+      ox = -segDy / len;
+      oy = segDx / len;
+      d = 0.0001;
+    }
+    const nx = ox / d;
+    const ny = oy / d;
+    const overlap = need - Math.min(dist, d);
+    ball.x += nx * (overlap + 0.35);
+    ball.y += ny * (overlap + 0.35);
+    const vn = ball.vx * nx + ball.vy * ny;
+    if (vn >= 0) return;
+    const rest = bounceRest("board");
+    ball.vx -= (1 + rest) * vn * nx;
+    ball.vy -= (1 + rest) * vn * ny;
+    const tx = -ny;
+    const ty = nx;
+    const vt = ball.vx * tx + ball.vy * ty;
+    const grip = Math.min(0.92, 0.12 * pMul("boardFric"));
+    ball.vx -= grip * vt * tx;
+    ball.vy -= grip * vt * ty;
+    ball.hitBoard = true;
+    if (-vn > 90) audio.board(Math.min(1, (-vn - 60) / 520));
   }
 
   function wrapX() {
@@ -2843,53 +3366,96 @@ export function createGame(
     const goingUp = ball.vy < -8;
     const bothWays = holeOn;
 
-    const holePad = -ball.r * 0.1;
-    const inHole = Math.abs(ball.x - hoop.x) < hoop.inner + holePad;
-    if (inHole && prevBallY > hoop.y && ball.y <= hoop.y && ball.vy < 0) fromBelow = true;
-    // Sticky overRim: currently above, or tunneled from above this frame.
-    if (inHole && (ball.y + ball.r * 0.18 < hoop.y || prevBallY + ball.r * 0.18 < hoop.y)) {
-      overRim = true;
-    }
-    if (!inHole && Math.abs(ball.x - hoop.x) > hoop.inner + ball.r * 0.35) overRim = false;
-    const below = ball.y >= hoop.y;
-    if (overRim && goingDown && below && inHole) {
-      registerScore({ at: hoop });
-      return;
-    }
-    // Black hole: upward through the rim also counts (穿针引线).
-    if (
-      bothWays &&
-      inHole &&
-      goingUp &&
-      ball.y <= hoop.y &&
-      (fromBelow || (prevBallY > hoop.y && ball.y <= hoop.y))
-    ) {
-      fromBelow = true;
-      registerScore({ at: hoop });
-      return;
-    }
-
+    // 小球穿框/贴支撑轴：用轨迹与篮筐平面求交，避免单帧隧穿漏判
+    const scoreSlack = Math.max(0, (world.ballR - ball.r) * 0.45);
+    if (tryRimPlaneScore(hoop, bothWays, scoreSlack)) return;
     if (other && (other.frostLeft > 0 || other.active)) {
-      const oIn = Math.abs(ball.x - other.x) < other.inner + holePad;
-      if (oIn && (ball.y + ball.r * 0.18 < other.y || prevBallY + ball.r * 0.18 < other.y)) {
+      tryRimPlaneScore(other, bothWays, scoreSlack);
+    }
+  }
+
+  /** Downward (or black-hole upward) crossing of the rim plane inside the opening. */
+  function tryRimPlaneScore(
+    h: Hoop,
+    bothWays: boolean,
+    slack: number,
+  ): boolean {
+    const holePad = -ball.r * 0.1 + slack;
+    const openR = h.inner + holePad;
+    const stickyR = h.inner + ball.r * 0.35 + slack;
+
+    const inHoleNow = Math.abs(ball.x - h.x) < openR;
+    const isOther = other != null && h === other;
+
+    if (isOther) {
+      if (inHoleNow && (ball.y + ball.r * 0.18 < h.y || prevBallY + ball.r * 0.18 < h.y)) {
         otherOverRim = true;
       }
-      if (!oIn && Math.abs(ball.x - other.x) > other.inner + ball.r * 0.35) otherOverRim = false;
-      if (otherOverRim && goingDown && ball.y >= other.y && oIn) {
-        registerScore({ at: other });
-        return;
+      if (!inHoleNow && Math.abs(ball.x - h.x) > stickyR) otherOverRim = false;
+    } else {
+      if (inHoleNow && prevBallY > h.y && ball.y <= h.y && ball.vy < 0) fromBelow = true;
+      if (inHoleNow && (ball.y + ball.r * 0.18 < h.y || prevBallY + ball.r * 0.18 < h.y)) {
+        overRim = true;
+      }
+      if (!inHoleNow && Math.abs(ball.x - h.x) > stickyR) overRim = false;
+    }
+
+    // Continuous segment vs rim plane (catches tunneling / brace-adjacent paths)
+    const y0 = prevBallY;
+    const y1 = ball.y;
+    const crossedDown = y0 < h.y && y1 >= h.y && ball.vy > 4;
+    const crossedUp = y0 > h.y && y1 <= h.y && ball.vy < -4;
+    if (crossedDown || (bothWays && crossedUp)) {
+      const dy = y1 - y0;
+      const t = Math.abs(dy) < 1e-6 ? 1 : (h.y - y0) / dy;
+      const xAt = prevBallX + (ball.x - prevBallX) * Math.max(0, Math.min(1, t));
+      // 略放宽：贴支撑轴/筐沿擦过也算进筐
+      if (Math.abs(xAt - h.x) < h.inner + slack + ball.r * 0.12) {
+        if (crossedUp) fromBelow = true;
+        if (isOther) otherOverRim = true;
+        else overRim = true;
+        registerScore({ at: h });
+        return true;
+      }
+    }
+
+    const goingDown = ball.vy > 8;
+    const goingUp = ball.vy < -8;
+    const below = ball.y >= h.y;
+    if (isOther) {
+      if (otherOverRim && goingDown && below && inHoleNow) {
+        registerScore({ at: h });
+        return true;
       }
       if (
         bothWays &&
-        oIn &&
+        inHoleNow &&
         goingUp &&
-        ball.y <= other.y &&
-        (prevBallY > other.y || ball.y - ball.r * 0.18 > other.y)
+        ball.y <= h.y &&
+        (prevBallY > h.y || ball.y - ball.r * 0.18 > h.y)
       ) {
         fromBelow = true;
-        registerScore({ at: other });
+        registerScore({ at: h });
+        return true;
+      }
+    } else {
+      if (overRim && goingDown && below && inHoleNow) {
+        registerScore({ at: h });
+        return true;
+      }
+      if (
+        bothWays &&
+        inHoleNow &&
+        goingUp &&
+        ball.y <= h.y &&
+        (fromBelow || (prevBallY > h.y && ball.y <= h.y))
+      ) {
+        fromBelow = true;
+        registerScore({ at: h });
+        return true;
       }
     }
+    return false;
   }
 
   function checkGhostScore(g: NinjaGhost, gi: number) {
@@ -2913,25 +3479,49 @@ export function createGame(
   }
 
   function stepNinjaGhosts(dt: number) {
-    if (!isNinja()) {
-      if (ninjaGhosts.length || ninjaGates.length) resetNinjaPath();
+    if (!isNinja() && !bunshinActive()) {
+      ninjaGhosts = [];
+      ninjaGates = [];
+      if (!miniMeActive() && pathHist.length) {
+        pathHist = [];
+        pathClock = 0;
+      }
+    } else {
+      for (let i = ninjaGates.length - 1; i >= 0; i--) {
+        const gate = ninjaGates[i]!;
+        gate.life -= dt;
+        if (gate.life <= 0) ninjaGates.splice(i, 1);
+      }
+      syncNinjaGhosts();
+      for (let gi = 0; gi < ninjaGhosts.length; gi++) {
+        const g = ninjaGhosts[gi]!;
+        if (g.scoredLock > 0) g.scoredLock = Math.max(0, g.scoredLock - dt);
+        const p = sampleNinjaPath(g.delay);
+        if (!p) continue;
+        g.prevY = g.y;
+        g.x = p.x;
+        g.y = p.y;
+        if (phase === "playing") checkGhostScore(g, gi);
+      }
+    }
+    stepMiniGhosts();
+  }
+
+  function stepMiniGhosts() {
+    if (!miniMeActive()) {
+      if (miniGhosts.length) miniGhosts = [];
       return;
     }
-    for (let i = ninjaGates.length - 1; i >= 0; i--) {
-      const gate = ninjaGates[i]!;
-      gate.life -= dt;
-      if (gate.life <= 0) ninjaGates.splice(i, 1);
+    if (pathHist.length === 0) {
+      pathClock = 0;
+      pathHist.push({ x: ball.x, y: ball.y, t: 0 });
     }
-    syncNinjaGhosts();
-    for (let gi = 0; gi < ninjaGhosts.length; gi++) {
-      const g = ninjaGhosts[gi]!;
-      if (g.scoredLock > 0) g.scoredLock = Math.max(0, g.scoredLock - dt);
+    syncMiniGhosts();
+    for (const g of miniGhosts) {
       const p = sampleNinjaPath(g.delay);
       if (!p) continue;
-      g.prevY = g.y;
       g.x = p.x;
       g.y = p.y;
-      if (phase === "playing") checkGhostScore(g, gi);
     }
   }
 
@@ -2946,14 +3536,15 @@ export function createGame(
       scoredLock = 0.22;
       // Keep threading in the direction of the make (upward anti makes were getting yanked back).
       ball.vy += (ball.vy < 0 ? -1 : 1) * 70;
-      if (isNinja()) {
+      if (isNinja() || bunshinActive()) {
         const gateAt = "inner" in scoredHoop ? scoredHoop : hoop;
+        const slots = Math.max(3, ninjaCloneCount());
         ninjaGates.push({
           x: gateAt.x,
           y: gateAt.y,
           inner: gateAt.inner,
           life: 1.6,
-          hit: [false, false, false],
+          hit: Array.from({ length: slots }, () => false),
         });
       }
       // Score on secondary hoop → promote it so nextHoop freezes the right stand.
@@ -2966,6 +3557,16 @@ export function createGame(
       }
     }
     let swish = ghost ? true : !ball.hitRim && !ball.hitBoard;
+    if (
+      !ghost &&
+      isRogueMode() &&
+      rogueRun &&
+      !swish &&
+      miniMeStacks(rogueRun) > 0 &&
+      Math.random() < 0.22 * miniMeStacks(rogueRun)
+    ) {
+      swish = true;
+    }
     const bank = ghost ? false : ball.hitBoard;
     const toilet = ghost ? false : rimHits >= 3;
     const lucky = ghost ? false : hitBoardTop;
@@ -2975,8 +3576,23 @@ export function createGame(
     const shackled = isPrison() && prisonMode === "shackle";
     const freed = isPrison() && prisonMode === "free";
 
-    if (comboCounting) streak += 1;
-    else streak = 1;
+    const bunshinGhost = ghost && bunshinActive() && !isNinja();
+
+    if (comboCounting) {
+      const boost =
+        bunshinGhost
+          ? 1
+          : isRogueMode() && rogueRun && rogueRun.buffComboLeft > 0
+            ? (catalogOf("comboboost")?.comboBoostAdd ?? 3)
+            : 1;
+      streak += boost;
+    } else {
+      streak = bunshinGhost
+        ? 1
+        : isRogueMode() && rogueRun && rogueRun.buffComboLeft > 0
+          ? (catalogOf("comboboost")?.comboBoostAdd ?? 3)
+          : 1;
+    }
     comboCounting = true;
     comboClock = 0;
     if (!ghost) {
@@ -3023,12 +3639,20 @@ export function createGame(
       frostBonus += frostGain;
     }
 
-    let gain = isGlass() ? glassBase + streak : streak;
-    if (isFrost()) gain += frostBonus;
-    if (depth) gain += 30;
-    else if (needle) gain += 20;
-    else if (lucky) gain += 10;
-    else if (swish) gain += 3;
+    // 基础分 + 连击得分；混乱药丸只改基础分，连击分与后续加成照常
+    const streakPart = streak;
+    let basePart = isGlass() ? glassBase : 0;
+    if (isRogueMode() && rogueRun && hasChaosBase(rogueRun) && !bunshinGhost) {
+      basePart = Math.floor(Math.random() * 26) - 10;
+    }
+    let gain = bunshinGhost ? 1 : basePart + streakPart;
+    if (!bunshinGhost) {
+      if (isFrost()) gain += frostBonus;
+      if (depth) gain += 30;
+      else if (needle) gain += 20;
+      else if (lucky) gain += 10;
+      else if (swish) gain += 3;
+    }
     if (swish && prevStage >= 1 && prevStage < 4) {
       const next =
         prevStage === 1 ? STAGE_SMOKE : prevStage === 2 ? STAGE_IGNITE : STAGE_BLAZE;
@@ -3048,8 +3672,8 @@ export function createGame(
       }
     }
     const extra = prevStage >= 4 ? 3 : prevStage === 3 ? 2 : prevStage >= 2 ? 1 : 0;
-    gain += extra * streak;
-    if (freed) gain += prisonBonus;
+    if (!bunshinGhost) gain += extra * streak;
+    if (freed && !bunshinGhost) gain += prisonBonus;
     const clutch = !ghost && (buzzer || timeUp);
     const tag = clutch
       ? "绝杀"
@@ -3076,9 +3700,12 @@ export function createGame(
         timeUp = false;
       }
     }
-    if (champMode) gain *= CHAMP_SCORE_MULT;
+    if (champMode && !bunshinGhost) gain *= CHAMP_SCORE_MULT;
     if (isAnti() && holeOn) gain = 0;
-    if (isRogueMode() && rogueRun) {
+    if (isRogueMode() && rogueRun && !ghost && rogueRun.buffPowerLeft > 0) {
+      gain += catalogOf("ineedpower")?.powerBoostAdd ?? 20;
+    }
+    if (isRogueMode() && rogueRun && !bunshinGhost) {
       const mod = applyRogueMakeMods(gain, rogueRun, {
         swish,
         bank,
@@ -3115,6 +3742,33 @@ export function createGame(
       if (swish || bank || toilet || lucky || depth || needle || clutch) {
         rogueRun.specialMakes += 1;
       }
+      // 小小我：每层迷你分身 +1 连击、本体一半分
+      const minis = miniMeStacks(rogueRun);
+      if (minis > 0) {
+        for (let i = 0; i < minis; i++) {
+          streak += 1;
+          const half = Math.round(gain / 2);
+          score += half;
+          callouts.push({
+            text: half > 0 ? `小+${half}` : "小+0",
+            x: scoredHoop.x + (i - (minis - 1) / 2) * 22,
+            y: scoredHoop.y - 58,
+            life: 0.8,
+            max: 0.8,
+            kind: "tag",
+          });
+        }
+        combo = Math.max(combo, streak);
+        rogueRun.stageScore = score;
+        rogueRun.peakStreak = Math.max(rogueRun.peakStreak, streak);
+        rogueRun.peakStreakAll = Math.max(rogueRun.peakStreakAll, streak);
+        rogueRun.peakMake = Math.max(rogueRun.peakMake, gain + Math.round(gain / 2) * minis);
+      }
+    } else if (isRogueMode() && rogueRun && bunshinGhost) {
+      rogueRun.stageScore = score;
+      rogueRun.peakStreak = Math.max(rogueRun.peakStreak, streak);
+      rogueRun.peakStreakAll = Math.max(rogueRun.peakStreakAll, streak);
+      rogueRun.peakMake = Math.max(rogueRun.peakMake, gain);
     }
     noteBest();
     if (!timerArmed) timerArmed = true;
@@ -3215,8 +3869,20 @@ export function createGame(
     }
     if (champFinishing && clutch && !ghost) {
       syncNinjaGhosts();
-      emitHud();
       champFinishing = false;
+      champMode = false;
+      champIdleLeft = -1;
+      // 肉鸽：绝杀进球若已达目标则过关，否则本关失败；经典模式仍直接结束
+      if (isRogueMode() && rogueRun) {
+        emitHud();
+        if (!rogueRun.endless && rogueRun.stageScore >= rogueRun.target) {
+          enterRogueSettle();
+        } else {
+          failRogueOrOver();
+        }
+        return;
+      }
+      emitHud();
       gameOver({ quiet: true });
       return;
     }
@@ -3314,8 +3980,9 @@ export function createGame(
 
     hoop = makeHoop(world, nextSide, false, madeCount);
     hoop.x = nextSide < 0 ? -90 : world.w + 90;
+    applyRogueHoopScale(hoop);
     hoop.net = buildNet(hoop);
-    if (madeCount >= 50 && Math.random() < moveChance) {
+    if (madeCount >= 50 && Math.random() < Math.max(0, moveChance + (isRogueMode() && rogueRun ? rogueMoveChanceDelta(rogueRun) : 0))) {
       hoop.moving = true;
       hoop.moveDir = Math.random() < 0.5 ? 1 : -1;
       const pool: Array<0 | 1 | 2 | 3 | 4> = [0, 3, 4];
@@ -3728,6 +4395,15 @@ export function createGame(
     buyRogue(uid) {
       buyRogueOffer(uid);
     },
+    grantRogue(id) {
+      grantRogueGear(id);
+    },
+    revokeRogue(id) {
+      revokeRogueGear(id);
+    },
+    closeRogueShop() {
+      closeDevRogueShop();
+    },
     rogueContinue() {
       continueRogueFromHub();
     },
@@ -3745,6 +4421,9 @@ export function createGame(
     },
     answerStreakSave(use) {
       resolveStreakSavePrompt(use);
+    },
+    answerFlameReuse(use) {
+      resolveFlameReusePrompt(use);
     },
     dev(cmd) {
       applyDev(cmd);

@@ -17,7 +17,12 @@ export type RogueItemId =
   | "warmup"
   | "streakSave"
   | "pointexchanger"
-  | "moneyprotecter";
+  | "moneyprotecter"
+  | "comboboost"
+  | "ineedpower"
+  | "Bunshin"
+  | "flameON"
+  | "tranquilizer";
 
 export type RogueOrnamentId =
   | "swishPlus"
@@ -46,7 +51,13 @@ export type RogueOrnamentId =
   | "jiahao"
   | "safepackage"
   | "deepbomb"
-  | "deepbombcoin";
+  | "deepbombcoin"
+  | "chaosdrug"
+  | "gravitywell"
+  | "WhatsThat"
+  | "miniMe"
+  | "funsize"
+  | "alice";
 
 export type RogueCatalogEntry = {
   id: RogueItemId | RogueOrnamentId;
@@ -83,6 +94,23 @@ export type RogueCatalogEntry = {
   streakSave?: boolean;
   pointExchangeMakes?: number;
   moneyProtect?: boolean;
+  /** Pause / inventory activate. */
+  manualUse?: boolean;
+  comboBoostAdd?: number;
+  comboBoostSec?: number;
+  powerBoostAdd?: number;
+  powerBoostSec?: number;
+  bunshinSec?: number;
+  bunshinClones?: number;
+  flameSec?: number;
+  moveChancePer?: number;
+  /** Ornament systems (batch 2). */
+  chaosBase?: boolean;
+  gravPer?: number;
+  dickCloudScore?: number;
+  miniMe?: boolean;
+  ballRScale?: number;
+  hoopInnerPer?: number;
   /** Shop filter notes. */
   requirePlainBall?: boolean;
   requireGlassBall?: boolean;
@@ -418,8 +446,8 @@ export const ROGUE_CATALOG: RogueCatalogEntry[] = [
   }),
   orn({
     id: "jiahao",
-    name: "自在极意功",
-    desc: "在地面缓慢滚动时每0.5秒获得1金币",
+    name: "自在极意豪",
+    desc: "接触地面0.5秒获得1金币",
     cost: 50,
     rarity: "legendary",
     stackable: true,
@@ -453,6 +481,120 @@ export const ROGUE_CATALOG: RogueCatalogEntry[] = [
     rarity: "rare",
     stackable: true,
     goldOn: { depth: 10 },
+  }),
+  // —— 第二批：饰品道具表2.xlsx ——
+  item({
+    id: "comboboost",
+    name: "连击兴奋剂",
+    desc: "使用后每次连击数+3，持续5s",
+    cost: 30,
+    rarity: "rare",
+    stackable: true,
+    manualUse: true,
+    comboBoostAdd: 3,
+    comboBoostSec: 5,
+    note: "手动打开",
+  }),
+  item({
+    id: "ineedpower",
+    name: "大力丸",
+    desc: "使用后每次进球得分+20，持续4s",
+    cost: 30,
+    rarity: "rare",
+    stackable: true,
+    manualUse: true,
+    powerBoostAdd: 20,
+    powerBoostSec: 4,
+    note: "手动打开",
+  }),
+  orn({
+    id: "chaosdrug",
+    name: "混乱药丸",
+    desc: "每次进球的基础得分为[-10,15]的随机数（不影响连击分与其他加成）",
+    cost: 30,
+    rarity: "rare",
+    stackable: false,
+    chaosBase: true,
+  }),
+  orn({
+    id: "gravitywell",
+    name: "重力井",
+    desc: "球的重力增加",
+    cost: 20,
+    rarity: "common",
+    stackable: true,
+    gravPer: 0.12,
+  }),
+  orn({
+    id: "WhatsThat",
+    name: "迪克云",
+    desc: "天空中出现迪克云时获得20分",
+    cost: 55,
+    rarity: "legendary",
+    stackable: true,
+    dickCloudScore: 20,
+  }),
+  item({
+    id: "Bunshin",
+    name: "分身术",
+    desc: "使用后获得1个影子分身，持续10秒。可叠用增加分身数；分身加连击，进球固定1分。",
+    cost: 40,
+    rarity: "epic",
+    stackable: true,
+    manualUse: true,
+    bunshinSec: 10,
+    bunshinClones: 1,
+    note: "手动打开；同时生效的使用次数=分身数量",
+  }),
+  orn({
+    id: "miniMe",
+    name: "小小我",
+    desc: "获得一个迷你分身",
+    cost: 55,
+    rarity: "legendary",
+    stackable: true,
+    miniMe: true,
+    note: "迷你分身可以增加连击数，所有得分是本体的一半（四舍五入）。迷你分身的空心球概率更高",
+  }),
+  item({
+    id: "flameON",
+    name: "热火饮料",
+    desc: "使用后进入烈焰状态，持续10s",
+    cost: 35,
+    rarity: "epic",
+    stackable: true,
+    manualUse: true,
+    flameSec: 10,
+    note: "手动打开，当前道具用完如果剩余不等于0则弹窗询问是否使用下一个",
+  }),
+  orn({
+    id: "funsize",
+    name: "儿童装",
+    desc: "篮球半径缩小为当前一半",
+    cost: 40,
+    rarity: "epic",
+    stackable: false,
+    ballRScale: 0.5,
+    note: "叠在球种尺寸上：普通球≈弹力球大小；弹力球再缩一半。其他数值不变，空心更容易",
+  }),
+  orn({
+    id: "alice",
+    name: "梦游仙境",
+    desc: "篮筐变大",
+    cost: 50,
+    rarity: "legendary",
+    stackable: true,
+    hoopInnerPer: 0.18,
+    note: "篮筐变大，但是篮架其余部分尺寸不变",
+  }),
+  item({
+    id: "tranquilizer",
+    name: "镇静剂",
+    desc: "动态篮架的出现概率-5%",
+    cost: 40,
+    rarity: "epic",
+    stackable: true,
+    moveChancePer: -0.05,
   }),
 ];
 

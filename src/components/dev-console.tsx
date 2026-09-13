@@ -5,6 +5,7 @@ import {
   DEV_GRAF,
   DEV_MOVES,
   DEV_PHYS,
+  DEV_PLAY_MODES,
   DEV_SCENES,
   DEV_STAGES,
   type DevCmd,
@@ -12,6 +13,7 @@ import {
 } from "@/game/dev";
 import type { DevHud } from "@/game/dev";
 import { BALLS } from "@/game/balls";
+import type { PlayMode } from "@/game/types";
 import { cn } from "@/lib/utils";
 
 type Tab = "match" | "fx" | "phys" | "world";
@@ -82,7 +84,14 @@ export function DevConsole({
             ) : null}
             {tab === "fx" ? <FxTab sear={dev.sear} burning={dev.burning} moveKind={dev.moving ? dev.moveKind : -1} onCmd={onCmd} /> : null}
             {tab === "phys" ? <PhysTab phys={dev.phys} onCmd={onCmd} /> : null}
-            {tab === "world" ? <WorldTab scene={dev.scene} ballId={dev.ballId} onCmd={onCmd} /> : null}
+            {tab === "world" ? (
+              <WorldTab
+                scene={dev.scene}
+                ballId={dev.ballId}
+                playMode={dev.playMode}
+                onCmd={onCmd}
+              />
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -251,14 +260,34 @@ function PhysTab({ phys, onCmd }: { phys: DevPhys; onCmd: (cmd: DevCmd) => void 
 function WorldTab({
   scene,
   ballId,
+  playMode,
   onCmd,
 }: {
   scene: DevHud["scene"];
   ballId: DevHud["ballId"];
+  playMode: PlayMode;
   onCmd: (cmd: DevCmd) => void;
 }) {
   return (
     <div>
+      <Row title="模式">
+        {DEV_PLAY_MODES.map((m) => (
+          <Chip
+            key={m.id}
+            label={m.label}
+            on={playMode === m.id}
+            onClick={() => onCmd({ t: "playMode", mode: m.id })}
+          />
+        ))}
+      </Row>
+      {playMode === "rogue" ? (
+        <Row title="肉鸽工具">
+          <Chip label="+50金" onClick={() => onCmd({ t: "rogueTool", kind: "gold" })} />
+          <Chip label="分数清零" onClick={() => onCmd({ t: "rogueTool", kind: "clearScore" })} />
+          <Chip label="开商店" onClick={() => onCmd({ t: "rogueTool", kind: "shop" })} />
+          <Chip label="通关结算" onClick={() => onCmd({ t: "rogueTool", kind: "clearSettle" })} />
+        </Row>
+      ) : null}
       <Row title="场景">
         {DEV_SCENES.map((s) => (
           <Chip key={s.id} label={s.label} on={scene === s.id} onClick={() => onCmd({ t: "scene", id: s.id })} />
@@ -272,7 +301,9 @@ function WorldTab({
       <Row title="沙盒">
         <Chip label="退出开发者" onClick={() => onCmd({ t: "exit" })} />
       </Row>
-      <p className="text-xs leading-relaxed text-subtle">新功能的测试开关加在这一页。空空间没有墙和天空，街头会载入当前场景包。</p>
+      <p className="text-xs leading-relaxed text-subtle">
+        选「肉鸽」可在沙盒里测关卡/商店/饰品。空空间没有墙和天空，街头会载入当前场景包。
+      </p>
     </div>
   );
 }

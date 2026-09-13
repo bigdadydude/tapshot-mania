@@ -14,6 +14,7 @@ import {
   type RogueItemId,
   type RogueOrnamentId,
 } from "@/game/rogue";
+import { ROGUE_CATALOG, RARITY_LABEL, type RogueCatalogEntry } from "@/game/rogue-catalog";
 import { cn } from "@/lib/utils";
 
 primeArt();
@@ -98,7 +99,7 @@ export function GameView() {
   function openPause() {
     const g = gameRef.current;
     if (!g) return;
-    if (hud.rogue?.pendingStreakSave) return;
+    if (hud.rogue?.pendingStreakSave || hud.rogue?.pendingFlameReuse) return;
     if (hud.phase === "playing") {
       if (hud.paused) {
         g.resume();
@@ -196,8 +197,12 @@ export function GameView() {
           {hud.phase === "hub" && menu === "none" && hud.rogue ? (
             <HubCard
               rogue={hud.rogue}
+              devMode={hud.dev.on}
               onBuy={(uid) => gameRef.current?.buyRogue(uid)}
+              onGrant={(id) => gameRef.current?.grantRogue(id)}
+              onRevoke={(id) => gameRef.current?.revokeRogue(id)}
               onContinue={() => gameRef.current?.rogueContinue()}
+              onClose={() => gameRef.current?.closeRogueShop()}
               onTitle={toTitle}
             />
           ) : null}
@@ -238,7 +243,15 @@ export function GameView() {
         />
       ) : null}
 
-      {showPause && !hud.rogue?.pendingStreakSave ? (
+      {hud.rogue?.pendingFlameReuse ? (
+        <FlameReusePrompt
+          charges={hud.rogue.items.flameON ?? 0}
+          onYes={() => gameRef.current?.answerFlameReuse(true)}
+          onNo={() => gameRef.current?.answerFlameReuse(false)}
+        />
+      ) : null}
+
+      {showPause && !hud.rogue?.pendingStreakSave && !hud.rogue?.pendingFlameReuse ? (
         <PauseMenu
           canResume={hud.phase === "playing"}
           rogue={hud.playMode === "rogue" ? hud.rogue : null}
@@ -248,7 +261,15 @@ export function GameView() {
           onTitle={toTitle}
           onUse={(id) => {
             gameRef.current?.useRogue(id);
-            if (id === "pointexchanger") setMenu("none");
+            if (
+              id === "pointexchanger" ||
+              id === "comboboost" ||
+              id === "ineedpower" ||
+              id === "Bunshin" ||
+              id === "flameON"
+            ) {
+              setMenu("none");
+            }
           }}
           onEndRun={
             hud.playMode === "rogue"
@@ -735,13 +756,21 @@ function SettleCard({
 
 function HubCard({
   rogue,
+  devMode = false,
   onBuy,
+  onGrant,
+  onRevoke,
   onContinue,
+  onClose,
   onTitle,
 }: {
   rogue: NonNullable<HudState["rogue"]>;
+  devMode?: boolean;
   onBuy: (uid: string) => void;
+  onGrant?: (id: string) => void;
+  onRevoke?: (id: string) => void;
   onContinue: () => void;
+  onClose?: () => void;
   onTitle: () => void;
 }) {
   const items = rogue.shop.filter((o) => o.kind === "item");
@@ -749,10 +778,24 @@ function HubCard({
   // Same finger-up that opened the shop must not hit 下一关 / buy.
   const [armed, setArmed] = useState(false);
   useEffect(() => {
+    if (devMode) return;
     setArmed(false);
     const t = window.setTimeout(() => setArmed(true), 450);
     return () => window.clearTimeout(t);
-  }, [rogue.stage]);
+  }, [rogue.stage, devMode]);
+
+  if (devMode && onGrant && onRevoke) {
+    return (
+      <DevCatalogHub
+        rogue={rogue}
+        onGrant={onGrant}
+        onRevoke={onRevoke}
+        onContinue={onContinue}
+        onClose={onClose}
+        onTitle={onTitle}
+      />
+    );
+  }
 
   return (
     <div className="pointer-events-none flex max-h-[70dvh] w-full flex-col items-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
@@ -827,6 +870,164 @@ function HubCard({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function DevCatalogHub({
+  rogue,
+  onGrant,
+  onRevoke,
+  onContinue,
+  onClose,
+  onTitle,
+}: {
+  rogue: NonNullable<HudState["rogue"]>;
+  onGrant: (id: string) => void;
+  onRevoke: (id: string) => void;
+  onContinue: () => void;
+  onClose?: () => void;
+  onTitle: () => void;
+}) {
+  const items = ROGUE_CATALOG.filter((e) => e.status === "active" && e.kind === "item");
+  const orns = ROGUE_CATALOG.filter((e) => e.status === "active" && e.kind === "ornament");
+
+  function stacksOf(entry: RogueCatalogEntry): number {
+    // Mirror ownedRogueCount using hud fields (run lives in engine).
+    if (entry.kind === "ornament") {
+      return rogue.ornaments.find((o) => o.id === entry.id)?.stacks ?? 0;
+    }
+    if (entry.id === "rematch") return rogue.revives;
+    if (entry.id === "streakSave") return rogue.streakSaveCharges;
+    if (entry.id === "pointexchanger") return rogue.pointExchangeCharges;
+    if (entry.id === "moneyprotecter") return rogue.moneyProtect ? 1 : 0;
+    return rogue.items[entry.id as RogueItemId] ?? 0;
+  }
+
+  return (
+    <div className="pointer-events-none flex max-h-[78dvh] w-full flex-col items-center px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <div className="pointer-events-auto flex w-full max-w-sm flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-lg">
+        <div className="border-b border-border px-4 py-3 text-center">
+          <p className="text-xs font-medium tracking-widest text-muted">开发者目录</p>
+          <p className="mt-1 text-sm text-fg">
+            金币 <span className="font-semibold tabular-nums">{rogue.gold}</span>
+            <span className="text-subtle"> · 无限分 · 全量目录</span>
+          </p>
+        </div>
+        <div className="max-h-[min(52dvh,22rem)] overflow-y-auto overscroll-contain px-2 py-2 [-webkit-overflow-scrolling:touch]">
+          <p className="sticky top-0 z-10 bg-bg-elevated px-2 py-1.5 text-[10px] font-medium tracking-widest text-subtle">
+            道具
+          </p>
+          <div className="mb-2 space-y-1">
+            {items.map((e) => (
+              <DevCatalogRow
+                key={e.id}
+                name={e.name}
+                rarity={RARITY_LABEL[e.rarity]}
+                stacks={stacksOf(e)}
+                stackCap={e.stackCap}
+                onUse={() => onGrant(e.id)}
+                onClose={() => onRevoke(e.id)}
+              />
+            ))}
+          </div>
+          <p className="sticky top-0 z-10 bg-bg-elevated px-2 py-1.5 text-[10px] font-medium tracking-widest text-subtle">
+            饰品
+          </p>
+          <div className="space-y-1">
+            {orns.map((e) => (
+              <DevCatalogRow
+                key={e.id}
+                name={e.name}
+                rarity={RARITY_LABEL[e.rarity]}
+                stacks={stacksOf(e)}
+                stackCap={e.stackCap}
+                onUse={() => onGrant(e.id)}
+                onClose={() => onRevoke(e.id)}
+              />
+            ))}
+          </div>
+        </div>
+        <div className="flex gap-2 border-t border-border p-3">
+          <button
+            type="button"
+            onClick={onTitle}
+            className="h-11 flex-1 rounded-lg border border-border text-sm text-muted"
+          >
+            放弃
+          </button>
+          {onClose ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-11 flex-1 rounded-lg border border-border text-sm text-fg"
+            >
+              关闭
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onContinue}
+            className="h-11 flex-[1.2] rounded-lg bg-accent text-sm font-medium text-accent-fg"
+          >
+            下一关
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DevCatalogRow({
+  name,
+  rarity,
+  stacks,
+  stackCap,
+  onUse,
+  onClose,
+}: {
+  name: string;
+  rarity: string;
+  stacks: number;
+  stackCap: number;
+  onUse: () => void;
+  onClose: () => void;
+}) {
+  const atCap = stacks >= stackCap;
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-bg-subtle/80 px-2.5 py-2">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-fg">
+          {name}
+          <span className="ml-1.5 tabular-nums text-muted">×{stacks}</span>
+        </p>
+        <p className="text-[10px] text-subtle">
+          {rarity}
+          {stackCap > 1 ? ` · 上限 ${stackCap}` : ""}
+        </p>
+      </div>
+      <button
+        type="button"
+        disabled={atCap}
+        onClick={onUse}
+        className={cn(
+          "h-9 shrink-0 rounded-md px-2.5 text-xs font-medium",
+          atCap ? "bg-border text-subtle" : "bg-accent text-accent-fg",
+        )}
+      >
+        使用
+      </button>
+      <button
+        type="button"
+        disabled={stacks <= 0}
+        onClick={onClose}
+        className={cn(
+          "h-9 shrink-0 rounded-md border px-2.5 text-xs font-medium",
+          stacks <= 0 ? "border-border text-subtle" : "border-border text-fg",
+        )}
+      >
+        关闭
+      </button>
     </div>
   );
 }
@@ -1051,6 +1252,42 @@ function StreakSavePrompt({
   );
 }
 
+function FlameReusePrompt({
+  charges,
+  onYes,
+  onNo,
+}: {
+  charges: number;
+  onYes: () => void;
+  onNo: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-bg/75 px-6">
+      <div className="w-full max-w-xs rounded-xl border border-border bg-bg-elevated p-5 shadow-lg">
+        <p className="text-center text-xs font-medium tracking-widest text-muted">热火饮料</p>
+        <p className="mt-3 text-center text-sm text-fg">烈焰结束，是否继续使用下一瓶？</p>
+        <p className="mt-1 text-center text-xs text-subtle">剩余 {charges} 瓶</p>
+        <div className="mt-5 flex gap-2">
+          <button
+            type="button"
+            onClick={onNo}
+            className="h-12 flex-1 rounded-lg border border-border text-sm text-muted"
+          >
+            不用了
+          </button>
+          <button
+            type="button"
+            onClick={onYes}
+            className="h-12 flex-[1.2] rounded-lg bg-accent text-sm font-medium text-accent-fg"
+          >
+            继续喝
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PauseMenu({
   canResume,
   rogue,
@@ -1089,6 +1326,38 @@ function PauseMenu({
         kind: "item",
       });
     }
+    if ((rogue.items.comboboost ?? 0) > 0) {
+      usable.push({
+        id: "comboboost",
+        label: `${itemLabel("comboboost")} ×${rogue.items.comboboost}`,
+        hint: "5 秒内每次进球连击 +3",
+        kind: "item",
+      });
+    }
+    if ((rogue.items.ineedpower ?? 0) > 0) {
+      usable.push({
+        id: "ineedpower",
+        label: `${itemLabel("ineedpower")} ×${rogue.items.ineedpower}`,
+        hint: "4 秒内每次进球 +20 分",
+        kind: "item",
+      });
+    }
+    if ((rogue.items.Bunshin ?? 0) > 0) {
+      usable.push({
+        id: "Bunshin",
+        label: `${itemLabel("Bunshin")} ×${rogue.items.Bunshin}`,
+        hint: "10 秒影子分身；再使用可叠更多分身",
+        kind: "item",
+      });
+    }
+    if ((rogue.items.flameON ?? 0) > 0) {
+      usable.push({
+        id: "flameON",
+        label: `${itemLabel("flameON")} ×${rogue.items.flameON}`,
+        hint: "10 秒烈焰；结束后可续杯",
+        kind: "item",
+      });
+    }
   }
 
   const passiveOrns =
@@ -1101,6 +1370,23 @@ function PauseMenu({
       passiveItems.push(`${itemLabel("pointexchanger")}进行中（剩${rogue.pointExchangeLeft}）`);
     }
     if ((rogue.items.warmup ?? 0) > 0) passiveItems.push(`${itemLabel("warmup")}（下关）`);
+    if ((rogue.items.tranquilizer ?? 0) > 0) {
+      passiveItems.push(`${itemLabel("tranquilizer")} ×${rogue.items.tranquilizer}`);
+    }
+    if (rogue.buffComboLeft > 0) {
+      passiveItems.push(`${itemLabel("comboboost")} ${rogue.buffComboLeft.toFixed(1)}s`);
+    }
+    if (rogue.buffPowerLeft > 0) {
+      passiveItems.push(`${itemLabel("ineedpower")} ${rogue.buffPowerLeft.toFixed(1)}s`);
+    }
+    if (rogue.buffBunshinLeft > 0) {
+      passiveItems.push(
+        `${itemLabel("Bunshin")} ×${rogue.buffBunshinClones} ${rogue.buffBunshinLeft.toFixed(1)}s`,
+      );
+    }
+    if (rogue.buffFlameLeft > 0) {
+      passiveItems.push(`${itemLabel("flameON")} ${rogue.buffFlameLeft.toFixed(1)}s`);
+    }
   }
 
   return (

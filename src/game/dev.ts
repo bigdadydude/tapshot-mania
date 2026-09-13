@@ -1,5 +1,6 @@
 import type { GrafKey } from "./scenes";
 import type { BallId } from "./balls";
+import type { PlayMode } from "./types";
 
 export type DevSceneId = "void" | "street";
 
@@ -44,6 +45,7 @@ export type DevHud = {
   moveKind: number;
   ballId: BallId;
   phys: DevPhys;
+  playMode: PlayMode;
 };
 
 export const DEFAULT_DEV: DevHud = {
@@ -59,6 +61,7 @@ export const DEFAULT_DEV: DevHud = {
   moveKind: 0,
   ballId: "plain",
   phys: { ...DEFAULT_PHYS },
+  playMode: "classic",
 };
 
 export type DevCmd =
@@ -66,6 +69,8 @@ export type DevCmd =
   | { t: "enter" }
   | { t: "exit" }
   | { t: "scene"; id: DevSceneId }
+  | { t: "playMode"; mode: PlayMode }
+  | { t: "rogueTool"; kind: "gold" | "shop" | "clearSettle" | "clearScore" | "closeShop" }
   | { t: "score"; n: number }
   | { t: "addScore"; n: number }
   | { t: "combo"; n: number }
@@ -84,6 +89,12 @@ export type DevCmd =
   | { t: "skin"; id: BallId }
   | { t: "phys"; k: keyof DevPhys; n: number }
   | { t: "physReset" };
+
+export const DEV_PLAY_MODES: { id: PlayMode; label: string }[] = [
+  { id: "classic", label: "经典" },
+  { id: "minute", label: "1分钟" },
+  { id: "rogue", label: "肉鸽" },
+];
 
 export const DEV_SCENES: { id: DevSceneId; label: string }[] = [
   { id: "void", label: "空空间" },
