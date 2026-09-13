@@ -53,7 +53,7 @@ export const BALLS: BallKit[] = [
   {
     id: "ninja",
     name: "忍者球",
-    skill: "连击召唤轨迹分身；分身只加连击，不计分",
+    skill: "连击10/26/40各获一个影分身；分身只加连击，不计分",
     heat: false,
     wrap: "ground",
     score: "normal",
