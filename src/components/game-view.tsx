@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { AudioLines, Music, Pause, Volume2, VolumeX } from "lucide-react";
 import { createGame, rankFor, GAME_REV, type GameHandle } from "@/game/engine";
 import { primeArt } from "@/game/art";
@@ -378,35 +378,209 @@ function TitleCard({
   onTitleTap: () => void;
   onDev: () => void;
 }) {
-  const playable = playableBalls();
-  const idx = Math.max(0, playable.findIndex((b) => b.id === ballId));
-  const minuteBlocked = ballId === "champ";
+  type Slide =
+    | { kind: "random"; key: "random" }
+    | { kind: "ball"; key: BallId; ball: (typeof BALLS)[number] };
+
+  const playable = useMemo(() => playableBalls(), []);
+  const items: Slide[] = useMemo(
+    () => [
+      { kind: "random", key: "random" },
+      ...playable.map((b) => ({ kind: "ball" as const, key: b.id, ball: b })),
+    ],
+    [playable],
+  );
+  const n = items.length;
+  const [focusKey, setFocusKey] = useState<Slide["key"]>(ballId);
+  const focusIdx = Math.max(
+    0,
+    items.findIndex((it) => it.key === focusKey),
+  );
+  const minuteBlocked = focusKey !== "random" && focusKey === "champ";
   const sliderRef = useRef<HTMLDivElement>(null);
   const cardW = 220;
   const gap = 12;
+  const step = cardW + gap;
+  const loopCards = useMemo(() => [...items, ...items, ...items], [items]);
+  const jumping = useRef(false);
+  const drag = useRef<{
+    id: number;
+    x: number;
+    scroll: number;
+    moved: boolean;
+  } | null>(null);
+  const ignoreClick = useRef(false);
+
+  function midOffset(logical: number) {
+    return (n + logical) * step;
+  }
+
+  function wrapLoop() {
+    const el = sliderRef.current;
+    if (!el || n <= 1) return;
+    const raw = el.scrollLeft / step;
+    if (raw < n - 0.5) {
+      jumping.current = true;
+      el.scrollLeft += n * step;
+      jumping.current = false;
+    } else if (raw >= n * 2 - 0.5) {
+      jumping.current = true;
+      el.scrollLeft -= n * step;
+      jumping.current = false;
+    }
+  }
+
+  function commitLogical(logical: number) {
+    const it = items[((logical % n) + n) % n];
+    if (!it) return;
+    setFocusKey(it.key);
+    if (it.kind === "ball") onBall(it.ball.id);
+  }
+
+  function snapToNearest() {
+    const el = sliderRef.current;
+    if (!el || n <= 0) return;
+    wrapLoop();
+    const raw = Math.round(el.scrollLeft / step);
+    const target = raw * step;
+    if (Math.abs(el.scrollLeft - target) > 1) {
+      el.scrollTo({ left: target, behavior: "smooth" });
+    }
+    wrapLoop();
+    const logical = ((Math.round(el.scrollLeft / step) % n) + n) % n;
+    commitLogical(logical);
+  }
+
+  function goToLogical(logical: number, smooth: boolean) {
+    const el = sliderRef.current;
+    if (!el || n <= 0) return;
+    const target = midOffset(((logical % n) + n) % n);
+    if (smooth) el.scrollTo({ left: target, behavior: "smooth" });
+    else el.scrollLeft = target;
+    commitLogical(logical);
+  }
+
+  useEffect(() => {
+    // Keep highlight in sync if engine ball changes (e.g. mode forced plain).
+    if (focusKey !== "random" && focusKey !== ballId) {
+      setFocusKey(ballId);
+    }
+  }, [ballId, focusKey]);
 
   useEffect(() => {
     const el = sliderRef.current;
-    if (!el) return;
-    const target = idx * (cardW + gap);
-    if (Math.abs(el.scrollLeft - target) <= 2) return;
+    if (!el || n <= 0 || jumping.current || drag.current) return;
+    const target = midOffset(focusIdx);
+    if (Math.abs(el.scrollLeft - target) <= 3) return;
     el.scrollTo({ left: target, behavior: "smooth" });
-  }, [idx, cardW, gap]);
+  }, [focusIdx, n, step]);
 
   useEffect(() => {
     const el = sliderRef.current;
-    if (!el) return;
-    el.scrollLeft = idx * (cardW + gap);
+    if (!el || n <= 0) return;
+    el.scrollLeft = midOffset(focusIdx);
   }, []);
 
-  function settleSlider() {
+  function onPointerDown(e: PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
     const el = sliderRef.current;
     if (!el) return;
-    const step = cardW + gap;
-    const next = Math.round(el.scrollLeft / step);
-    const clamped = Math.max(0, Math.min(playable.length - 1, next));
-    const b = playable[clamped];
-    if (b && b.id !== ballId) onBall(b.id);
+    drag.current = {
+      id: e.pointerId,
+      x: e.clientX,
+      scroll: el.scrollLeft,
+      moved: false,
+    };
+    try {
+      el.setPointerCapture(e.pointerId);
+    } catch {
+      /* synthetic / already released pointers */
+    }
+  }
+
+  // Window-level move/up so mouse drag keeps working outside the strip.
+  useEffect(() => {
+    const onMove = (e: globalThis.PointerEvent) => {
+      const d = drag.current;
+      const el = sliderRef.current;
+      if (!d || d.id !== e.pointerId || !el) return;
+      const dx = e.clientX - d.x;
+      if (!d.moved && Math.abs(dx) > 5) {
+        d.moved = true;
+        el.classList.remove("snap-x", "snap-mandatory");
+      }
+      if (!d.moved) return;
+      el.scrollLeft = d.scroll - dx;
+      wrapLoop();
+      d.x = e.clientX;
+      d.scroll = el.scrollLeft;
+    };
+    const onUp = (e: globalThis.PointerEvent) => {
+      const d = drag.current;
+      if (!d || d.id !== e.pointerId) return;
+      drag.current = null;
+      const el = sliderRef.current;
+      el?.classList.add("snap-x", "snap-mandatory");
+      try {
+        el?.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      if (d.moved) {
+        ignoreClick.current = true;
+        snapToNearest();
+        window.setTimeout(() => {
+          ignoreClick.current = false;
+        }, 0);
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [n, step, items]);
+
+  useEffect(() => {
+    const el = sliderRef.current;
+    if (!el) return;
+    let t = 0;
+    const onScrollEnd = () => {
+      if (drag.current || jumping.current) return;
+      snapToNearest();
+    };
+    const onScroll = () => {
+      if (jumping.current || drag.current?.moved) return;
+      wrapLoop();
+      window.clearTimeout(t);
+      t = window.setTimeout(onScrollEnd, 120);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    el.addEventListener("scrollend", onScrollEnd);
+    return () => {
+      window.clearTimeout(t);
+      el.removeEventListener("scroll", onScroll);
+      el.removeEventListener("scrollend", onScrollEnd);
+    };
+  }, [n, step, items]);
+
+  function selectItem(it: Slide) {
+    if (ignoreClick.current) return;
+    const logical = items.findIndex((x) => x.key === it.key);
+    if (logical >= 0) goToLogical(logical, true);
+  }
+
+  function handleStart() {
+    if (focusKey === "random") {
+      let pool = playable;
+      if (playMode === "minute") pool = playable.filter((b) => b.id !== "champ");
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      if (pick) onBall(pick.id);
+    }
+    onStart();
   }
 
   return (
@@ -482,46 +656,62 @@ function TitleCard({
       <div className="pointer-events-auto mb-4 w-full max-w-xs">
         <div
           ref={sliderRef}
-          onScroll={() => {
-            // Live highlight while dragging; commit on scroll end via pointer/touch up.
-            settleSlider();
-          }}
-          onPointerUp={settleSlider}
-          onTouchEnd={settleSlider}
-          className="flex snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain px-[calc((100%-220px)/2)] pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          onPointerDown={onPointerDown}
+          className={cn(
+            "flex cursor-grab gap-3 overflow-x-auto overscroll-x-contain px-[calc((100%-220px)/2)] pb-1 active:cursor-grabbing",
+            "snap-x snap-mandatory [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            "select-none [touch-action:none]",
+          )}
           style={{ WebkitOverflowScrolling: "touch" }}
         >
-          {playable.map((b) => {
-            const on = b.id === ballId;
+          {loopCards.map((it, i) => {
+            const on = it.key === focusKey;
             return (
               <button
-                key={b.id}
+                key={`${Math.floor(i / Math.max(1, n))}-${it.key}`}
                 type="button"
-                onClick={() => onBall(b.id)}
+                onClick={() => selectItem(it)}
                 className={cn(
                   "flex h-[11.5rem] w-[220px] shrink-0 snap-center flex-col items-center rounded-xl border px-4 py-3 text-center",
                   on ? "border-accent bg-bg-elevated" : "border-border bg-bg-subtle/70",
                 )}
               >
-                <BallThumb kit={b} large />
-                <span className="mt-2.5 shrink-0 text-base font-medium text-fg">{b.name}</span>
-                <span className="mt-1 line-clamp-3 min-h-[2.75rem] text-center text-xs leading-snug text-subtle">
-                  {b.skill}
-                </span>
+                {it.kind === "random" ? (
+                  <>
+                    <span
+                      className="flex size-20 items-center justify-center rounded-full border border-dashed border-fg/40 bg-fg/10 text-2xl font-black text-fg"
+                      aria-hidden
+                    >
+                      ?
+                    </span>
+                    <span className="mt-2.5 shrink-0 text-base font-medium text-fg">随机球</span>
+                    <span className="mt-1 line-clamp-3 min-h-[2.75rem] text-center text-xs leading-snug text-subtle">
+                      开局时从可用球种中随机抽取
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <BallThumb kit={it.ball} large />
+                    <span className="mt-2.5 shrink-0 text-base font-medium text-fg">{it.ball.name}</span>
+                    <span className="mt-1 line-clamp-3 min-h-[2.75rem] text-center text-xs leading-snug text-subtle">
+                      {it.ball.skill}
+                    </span>
+                  </>
+                )}
               </button>
             );
           })}
         </div>
         <div className="mt-2.5 flex items-center justify-center gap-1.5">
-          {playable.map((b, i) => (
+          {items.map((it, i) => (
             <button
-              key={b.id}
+              key={it.key}
               type="button"
-              aria-label={b.name}
-              onClick={() => onBall(b.id)}
+              aria-label={it.kind === "random" ? "随机球" : it.ball.name}
+              onClick={() => goToLogical(i, true)}
               className={cn(
                 "size-1.5 rounded-full transition-colors",
-                i === idx ? "bg-accent" : "bg-border",
+                i === focusIdx ? "bg-accent" : "bg-border",
               )}
             />
           ))}
@@ -530,7 +720,7 @@ function TitleCard({
 
       <button
         type="button"
-        onClick={onStart}
+        onClick={handleStart}
         className={cn(
           "pointer-events-auto h-12 w-full max-w-xs rounded-lg bg-accent text-accent-fg",
           "text-base font-medium tracking-wide",
@@ -1375,7 +1565,16 @@ function FusePickPanel({
   onPick: (id: BallId | null) => void;
 }) {
   const primary = playableBalls().find((b) => b.id === ballId) ?? playableBalls()[0]!;
-  const others = playableBalls().filter((b) => b.id !== ballId);
+  const [offers] = useState(() => {
+    const pool = playableBalls().filter((b) => b.id !== ballId);
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const a = pool[i]!;
+      pool[i] = pool[j]!;
+      pool[j] = a;
+    }
+    return pool.slice(0, Math.min(3, pool.length));
+  });
   const [pick, setPick] = useState<BallId | null>(null);
 
   return (
@@ -1384,9 +1583,11 @@ function FusePickPanel({
         <p className="text-center text-xs font-medium tracking-widest text-muted">开局融合</p>
         <p className="mt-2 text-center text-sm font-medium text-fg">{primary.name}</p>
         <p className="mt-1 text-center text-xs leading-relaxed text-subtle">{primary.skill}</p>
-        <p className="mt-4 text-[10px] font-medium tracking-widest text-subtle">选择副球（技能叠加，外观仍用主球）</p>
-        <div className="mt-2 max-h-[40dvh] space-y-1.5 overflow-y-auto">
-          {others.map((b) => (
+        <p className="mt-4 text-[10px] font-medium tracking-widest text-subtle">
+          本局随机三球（不含主球），选一个融合
+        </p>
+        <div className="mt-2 space-y-1.5">
+          {offers.map((b) => (
             <button
               key={b.id}
               type="button"
