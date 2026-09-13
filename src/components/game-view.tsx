@@ -682,8 +682,7 @@ function SettleCard({
             <button
               type="button"
               disabled={!ready}
-              onPointerDown={(e) => {
-                e.stopPropagation();
+              onClick={() => {
                 if (!ready) return;
                 onEnd();
               }}
@@ -697,8 +696,7 @@ function SettleCard({
             <button
               type="button"
               disabled={!ready}
-              onPointerDown={(e) => {
-                e.stopPropagation();
+              onClick={() => {
                 if (!ready) return;
                 onEndless();
               }}
@@ -716,8 +714,7 @@ function SettleCard({
           <button
             type="button"
             disabled={!ready}
-            onPointerDown={(e) => {
-              e.stopPropagation();
+            onClick={() => {
               if (!ready) return;
               onConfirm();
             }}
@@ -749,6 +746,14 @@ function HubCard({
 }) {
   const items = rogue.shop.filter((o) => o.kind === "item");
   const orns = rogue.shop.filter((o) => o.kind === "ornament");
+  // Same finger-up that opened the shop must not hit 下一关 / buy.
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    setArmed(false);
+    const t = window.setTimeout(() => setArmed(true), 450);
+    return () => window.clearTimeout(t);
+  }, [rogue.stage]);
+
   return (
     <div className="pointer-events-none flex max-h-[70dvh] w-full flex-col items-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
       <div className="pointer-events-auto flex w-full max-w-xs flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-lg">
@@ -767,7 +772,13 @@ function HubCard({
                 <p className="px-1 text-xs text-subtle">本关无道具上架</p>
               ) : (
                 items.map((o) => (
-                  <ShopRow key={o.uid} offer={o} gold={rogue.gold} onBuy={onBuy} />
+                  <ShopRow
+                    key={o.uid}
+                    offer={o}
+                    gold={rogue.gold}
+                    onBuy={onBuy}
+                    locked={!armed}
+                  />
                 ))
               )}
             </div>
@@ -779,7 +790,13 @@ function HubCard({
                 <p className="px-1 text-xs text-subtle">本关无饰品上架</p>
               ) : (
                 orns.map((o) => (
-                  <ShopRow key={o.uid} offer={o} gold={rogue.gold} onBuy={onBuy} />
+                  <ShopRow
+                    key={o.uid}
+                    offer={o}
+                    gold={rogue.gold}
+                    onBuy={onBuy}
+                    locked={!armed}
+                  />
                 ))
               )}
             </div>
@@ -788,17 +805,25 @@ function HubCard({
         <div className="flex gap-2 border-t border-border p-3">
           <button
             type="button"
+            disabled={!armed}
             onClick={onTitle}
-            className="h-11 flex-1 rounded-lg border border-border text-sm text-muted"
+            className={cn(
+              "h-11 flex-1 rounded-lg border border-border text-sm",
+              armed ? "text-muted" : "text-subtle opacity-60",
+            )}
           >
             放弃
           </button>
           <button
             type="button"
+            disabled={!armed}
             onClick={onContinue}
-            className="h-11 flex-[1.4] rounded-lg bg-accent text-sm font-medium text-accent-fg"
+            className={cn(
+              "h-11 flex-[1.4] rounded-lg text-sm font-medium",
+              armed ? "bg-accent text-accent-fg" : "bg-border text-subtle",
+            )}
           >
-            下一关
+            {armed ? "下一关" : "…"}
           </button>
         </div>
       </div>
@@ -810,16 +835,22 @@ function ShopRow({
   offer,
   gold,
   onBuy,
+  locked = false,
 }: {
   offer: NonNullable<HudState["rogue"]>["shop"][number];
   gold: number;
   onBuy: (uid: string) => void;
+  locked?: boolean;
 }) {
+  const can = !locked && !offer.sold && gold >= offer.cost;
   return (
     <button
       type="button"
-      disabled={offer.sold || gold < offer.cost}
-      onClick={() => onBuy(offer.uid)}
+      disabled={!can}
+      onClick={() => {
+        if (!can) return;
+        onBuy(offer.uid);
+      }}
       className={cn(
         "flex w-full items-start justify-between gap-2 rounded-lg border px-3 py-2 text-left",
         offer.sold ? "border-border/50 bg-bg-subtle/40 opacity-50" : "border-border bg-bg-subtle/80",
