@@ -44,6 +44,8 @@ export type DevHud = {
   moving: boolean;
   moveKind: number;
   ballId: BallId;
+  /** Rogue secondary fuse ball (skills only). */
+  fuseBall: BallId | null;
   phys: DevPhys;
   playMode: PlayMode;
 };
@@ -60,6 +62,7 @@ export const DEFAULT_DEV: DevHud = {
   moving: false,
   moveKind: 0,
   ballId: "plain",
+  fuseBall: null,
   phys: { ...DEFAULT_PHYS },
   playMode: "classic",
 };
@@ -71,6 +74,7 @@ export type DevCmd =
   | { t: "scene"; id: DevSceneId }
   | { t: "playMode"; mode: PlayMode }
   | { t: "rogueTool"; kind: "gold" | "shop" | "clearSettle" | "clearScore" | "closeShop" }
+  | { t: "rogueFuse"; id: BallId | null }
   | { t: "score"; n: number }
   | { t: "addScore"; n: number }
   | { t: "combo"; n: number }

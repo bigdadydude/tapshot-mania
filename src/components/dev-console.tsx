@@ -12,7 +12,7 @@ import {
   type DevPhys,
 } from "@/game/dev";
 import type { DevHud } from "@/game/dev";
-import { BALLS } from "@/game/balls";
+import { playableBalls } from "@/game/balls";
 import type { PlayMode } from "@/game/types";
 import { cn } from "@/lib/utils";
 
@@ -88,6 +88,7 @@ export function DevConsole({
               <WorldTab
                 scene={dev.scene}
                 ballId={dev.ballId}
+                fuseBall={dev.fuseBall}
                 playMode={dev.playMode}
                 onCmd={onCmd}
               />
@@ -260,11 +261,13 @@ function PhysTab({ phys, onCmd }: { phys: DevPhys; onCmd: (cmd: DevCmd) => void 
 function WorldTab({
   scene,
   ballId,
+  fuseBall,
   playMode,
   onCmd,
 }: {
   scene: DevHud["scene"];
   ballId: DevHud["ballId"];
+  fuseBall: DevHud["fuseBall"];
   playMode: PlayMode;
   onCmd: (cmd: DevCmd) => void;
 }) {
@@ -281,12 +284,31 @@ function WorldTab({
         ))}
       </Row>
       {playMode === "rogue" ? (
-        <Row title="肉鸽工具">
-          <Chip label="+50金" onClick={() => onCmd({ t: "rogueTool", kind: "gold" })} />
-          <Chip label="分数清零" onClick={() => onCmd({ t: "rogueTool", kind: "clearScore" })} />
-          <Chip label="开商店" onClick={() => onCmd({ t: "rogueTool", kind: "shop" })} />
-          <Chip label="通关结算" onClick={() => onCmd({ t: "rogueTool", kind: "clearSettle" })} />
-        </Row>
+        <>
+          <Row title="肉鸽工具">
+            <Chip label="+50金" onClick={() => onCmd({ t: "rogueTool", kind: "gold" })} />
+            <Chip label="分数清零" onClick={() => onCmd({ t: "rogueTool", kind: "clearScore" })} />
+            <Chip label="开商店" onClick={() => onCmd({ t: "rogueTool", kind: "shop" })} />
+            <Chip label="通关结算" onClick={() => onCmd({ t: "rogueTool", kind: "clearSettle" })} />
+          </Row>
+          <Row title="融合球">
+            {playableBalls()
+              .filter((b) => b.id !== ballId)
+              .map((b) => (
+              <Chip
+                key={b.id}
+                label={b.name}
+                on={fuseBall === b.id}
+                onClick={() => onCmd({ t: "rogueFuse", id: b.id })}
+              />
+            ))}
+            <Chip
+              label="清除融合"
+              on={fuseBall == null}
+              onClick={() => onCmd({ t: "rogueFuse", id: null })}
+            />
+          </Row>
+        </>
       ) : null}
       <Row title="场景">
         {DEV_SCENES.map((s) => (
@@ -294,7 +316,7 @@ function WorldTab({
         ))}
       </Row>
       <Row title="球">
-        {BALLS.map((b) => (
+        {playableBalls().map((b) => (
           <Chip key={b.id} label={b.name} on={ballId === b.id} onClick={() => onCmd({ t: "skin", id: b.id })} />
         ))}
       </Row>
@@ -302,7 +324,7 @@ function WorldTab({
         <Chip label="退出开发者" onClick={() => onCmd({ t: "exit" })} />
       </Row>
       <p className="text-xs leading-relaxed text-subtle">
-        选「肉鸽」可在沙盒里测关卡/商店/饰品。空空间没有墙和天空，街头会载入当前场景包。
+        选「肉鸽」可在沙盒里测关卡/商店/饰品。空空间没有墙和天空，街头会载入当前场景包。融合球即时叠加技能，外观仍用主球。
       </p>
     </div>
   );

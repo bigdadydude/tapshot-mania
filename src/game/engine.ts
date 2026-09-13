@@ -14,7 +14,7 @@ import {
 } from "./net";
 import { boardGeom, braceColliders, drawBoot, drawScene } from "./render";
 import { loadSave, writeSave } from "./save";
-import { ballRadius, getBall, parseBall, type BallId } from "./balls";
+import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { DEFAULT_PHYS, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevPhys, type DevSceneId } from "./dev";
 import type { GrafKey } from "./scenes";
@@ -43,6 +43,7 @@ import {
   settleStagePayout,
   toRogueHud,
   tryBuyOffer,
+  clearRogueLoadout,
   devGrantRogue,
   devRevokeRogue,
   type RogueRun,
@@ -72,7 +73,19 @@ const CHAMP_SCORE_MULT = 2;
 const CHAMP_IDLE = 5;
 /** Anti ball: chance to spawn antimatter pickup after a make. */
 const ANTI_SPAWN_CHANCE = 0.55;
-const ANTI_HOLE_DUR = 15;
+const ANTI_HOLE_DUR_MIN = 10;
+const ANTI_HOLE_DUR_MAX = 20;
+/** Antimatter field linger (sec) × this = seconds shaved off hole duration. */
+const ANTI_LINGER_PENALTY = 0.75;
+const GLASS_BASE_START = 20;
+const GLASS_BASE_MAX = 50;
+const GLASS_RIM_HURT = 2;
+const GLASS_BANK_HURT = 1;
+const GLASS_BOARD_TOP_HURT = 3;
+const GLASS_LAND_HURT = 4;
+const GLASS_SWISH_HEAL = 4;
+/** Ignore soft scrapes / stuck contacts (glass restitution is 0). */
+const GLASS_IMPACT_MIN = 95;
 const FROST_BONUS_PER_HIT = 2;
 const PRISON_FREE_PER_COMBO = 3;
 const PRISON_FREE_EXTEND = 10;
@@ -104,18 +117,24 @@ export type GameHandle = {
   /** Dev catalog: grant / revoke one stack. */
   grantRogue: (id: string) => void;
   revokeRogue: (id: string) => void;
+  /** Clear all owned items / ornaments (shop 重置). */
+  resetRogueLoadout: () => void;
   /** Dev: close catalog shop without advancing stage. */
   closeRogueShop: () => void;
   rogueContinue: () => void;
   rogueConfirmSettle: () => void;
   rogueEndless: () => void;
   rogueEndRun: () => void;
+  /** Dev settle: return to sandbox play without exiting developer mode. */
+  devBackFromSettle: () => void;
   /** Activate inventory item / usable ornament from pause. */
   useRogue: (id: string) => void;
   /** Answer连击保护 prompt. */
   answerStreakSave: (use: boolean) => void;
   /** Answer热火饮料续用 prompt. */
   answerFlameReuse: (use: boolean) => void;
+  /** Rogue open-run fuse: secondary ball or null = 不融合. */
+  setRogueFuse: (id: BallId | null) => void;
   dev: (cmd: DevCmd) => void;
   resize: () => void;
 };
@@ -188,10 +207,12 @@ export function createGame(
   let trail: TrailPt[] = [];
   let ghostX = 0;
   let ghostY = 0;
-  let chain: Chain | null = getBall(ballId).chain
+  let chain: Chain | null = effectiveBall(ballId, null).chain
     ? makeChain(ball.x, ball.y, ball.r, hoop.side < 0 ? 1 : -1)
     : null;
-  let prisonMode: "shackle" | "free" | null = getBall(ballId).chain ? "shackle" : null;
+  let prisonMode: "shackle" | "free" | null = effectiveBall(ballId, null).chain
+    ? "shackle"
+    : null;
   let prisonTarget = 1;
   let prisonBonus = 0;
   let prisonFreeLeft = 0;
@@ -227,7 +248,7 @@ export function createGame(
   let miniGhosts: MiniGhost[] = [];
 
   function activeBallR() {
-    let r = ballRadius(world.ballR, ballId);
+    let r = world.ballR * kit().rScale;
     if (isRogueMode() && rogueRun) {
       const mul = rogueBallRMul(rogueRun);
       // 叠在球种半径上：经典→弹力球大小；弹力球再缩一半
@@ -252,12 +273,21 @@ export function createGame(
     return { x: world.w * 0.5, y: world.h * 0.42 };
   }
 
+  function fuseId(): BallId | null {
+    if (!isRogueMode() || !rogueRun) return null;
+    return rogueRun.fuseBall;
+  }
+
+  function kit() {
+    return effectiveBall(ballId, fuseId());
+  }
+
   function isPrison() {
-    return getBall(ballId).chain === true;
+    return kit().chain;
   }
 
   function isNinja() {
-    return ballId === "ninja";
+    return kit().ninja;
   }
 
   function bunshinActive() {
@@ -705,7 +735,7 @@ export function createGame(
   let fromBelow = false;
   let rimAudioArmed = true;
   let glassLand = false;
-  let glassBase = 20;
+  let glassBase = GLASS_BASE_START;
   let frostBonus = 0;
   let champBank = 0;
   let champMode = false;
@@ -715,7 +745,10 @@ export function createGame(
   let champFinishing = false;
   /** Anti ball: antimatter charge 0–100, pickups, timed black hole. */
   let antiCharge = 0;
-  let antiMatter: { x: number; y: number; r: number; pct: number } | null = null;
+  let antiMatter: { x: number; y: number; r: number; pct: number; age: number } | null =
+    null;
+  /** Sum of antimatter field linger this charge cycle (cuts hole duration). */
+  let antiLingerAcc = 0;
   let holeOn = false;
   let holeX = 0;
   let holeY = 0;
@@ -727,6 +760,9 @@ export function createGame(
   let holeTick = 0;
   let otherOverRim = false;
   let boardHitLock = 0;
+  /** Glass: one rim / board penalty per shot (ball restitution 0 rattles otherwise). */
+  let glassRimHurtShot = false;
+  let glassBoardHurtShot = false;
 
   function resetShotFlags() {
     ball.hitRim = false;
@@ -736,6 +772,8 @@ export function createGame(
     hitBoardTop = false;
     wentOffTop = false;
     fromBelow = false;
+    glassRimHurtShot = false;
+    glassBoardHurtShot = false;
   }
 
   function isMinuteMode() {
@@ -842,6 +880,7 @@ export function createGame(
         moving: hoop.moving,
         moveKind: hoop.moveKind,
         ballId,
+        fuseBall: fuseId(),
         phys: { ...devPhys },
         playMode,
       },
@@ -910,7 +949,7 @@ export function createGame(
   }
 
   function isGlass() {
-    return getBall(ballId).score === "glass";
+    return kit().glass;
   }
 
   function hurtGlass(n: number, x: number, y: number) {
@@ -940,6 +979,27 @@ export function createGame(
     });
     emitHud();
     if (glassBase <= 0) failRogueOrOver();
+  }
+
+  function healGlass(n: number, x: number, y: number) {
+    if (!isGlass() || phase !== "playing") return;
+    const before = glassBase;
+    glassBase = Math.min(GLASS_BASE_MAX, glassBase + n);
+    const got = glassBase - before;
+    if (got <= 0) return;
+    callouts.push({
+      text: `+${got}`,
+      x,
+      y,
+      life: 0.85,
+      max: 0.85,
+      kind: "base",
+    });
+  }
+
+  function rollAntiHoleDur(lingerSec: number) {
+    const shaved = lingerSec * ANTI_LINGER_PENALTY;
+    return Math.max(ANTI_HOLE_DUR_MIN, ANTI_HOLE_DUR_MAX - shaved);
   }
 
   function applyKitPhys() {
@@ -988,24 +1048,25 @@ export function createGame(
   }
 
   function canHeat() {
-    return getBall(ballId).heat;
+    return kit().heat;
   }
 
   function isFrost() {
-    return getBall(ballId).frost === true;
+    return kit().frost;
   }
 
   function isChamp() {
-    return getBall(ballId).champ === true;
+    return kit().champ;
   }
 
   function isAnti() {
-    return getBall(ballId).anti === true;
+    return kit().anti;
   }
 
   function resetAntiRun() {
     antiCharge = 0;
     antiMatter = null;
+    antiLingerAcc = 0;
     holeOn = false;
     holeLeft = 0;
     holeScoreAcc = 0;
@@ -1024,6 +1085,7 @@ export function createGame(
     holeLived = 0;
     holeTick = 0;
     antiMatter = null;
+    antiLingerAcc = 0;
     // Refill countdown bar when the hole ends (classic shot clock only).
     if (phase === "playing" && !isMinuteMode()) {
       timer = timerMax;
@@ -1032,13 +1094,16 @@ export function createGame(
     emitHud();
   }
 
-  function openAntiHole(dur = ANTI_HOLE_DUR) {
+  function openAntiHole(dur?: number) {
+    const resolved =
+      typeof dur === "number" && dur > 0 ? dur : rollAntiHoleDur(antiLingerAcc);
+    antiLingerAcc = 0;
     const c = holeCenter();
     holeX = c.x;
     holeY = c.y;
     holeR = Math.max(28, world.w * 0.09);
     holeOn = true;
-    holeLeft = dur;
+    holeLeft = resolved;
     holeScoreAcc = 0;
     holeLived = 0;
     holeTick = 0;
@@ -1050,7 +1115,7 @@ export function createGame(
       if (!timerArmed) timerArmed = true;
     }
     callouts.push({
-      text: "黑洞",
+      text: `黑洞 ${Math.round(resolved)}s`,
       x: holeX,
       y: holeY - holeR * 1.6,
       life: 1,
@@ -1086,8 +1151,6 @@ export function createGame(
       holeLeft = Math.max(0, holeLeft - dt);
     }
     if (holeLeft <= 0) {
-      // Anti ball: linger until streak breaks; rogue ornament hole ends on timer.
-      if (isAnti() && comboCounting && streak > 0) return;
       closeAntiHole();
     }
   }
@@ -1334,6 +1397,7 @@ export function createGame(
       y,
       r: Math.max(14, world.ballR * 0.7),
       pct,
+      age: 0,
     };
   }
 
@@ -1342,6 +1406,7 @@ export function createGame(
     const d = Math.hypot(ball.x - antiMatter.x, ball.y - antiMatter.y);
     if (d > ball.r + antiMatter.r) return;
     const got = antiMatter.pct;
+    antiLingerAcc += antiMatter.age;
     antiMatter = null;
     antiCharge = Math.min(100, antiCharge + got);
     callouts.push({
@@ -1436,8 +1501,16 @@ export function createGame(
   }
 
   function applyBall(id: BallId) {
-    ballId = parseBall(id);
-    glassBase = 20;
+    const next = parseBall(id);
+    // Champ is not allowed in 1-minute — fall back to classic when picking it.
+    if (next === "champ" && playMode === "minute") {
+      playMode = "classic";
+    }
+    ballId = next;
+    if (rogueRun && rogueRun.fuseBall === ballId) {
+      rogueRun.fuseBall = null;
+    }
+    glassBase = GLASS_BASE_START;
     glassLand = false;
     resetNinjaPath();
     if (!canHeat()) {
@@ -1472,6 +1545,7 @@ export function createGame(
     if (!isAnti()) {
       antiCharge = 0;
       antiMatter = null;
+      antiLingerAcc = 0;
       holeOn = false;
       holeLeft = 0;
       holeScoreAcc = 0;
@@ -1518,6 +1592,82 @@ export function createGame(
     }
     persist();
     emitHud();
+  }
+
+  /** Rogue open-run / dev: OR secondary ball skills onto primary look/feel. */
+  function applyRogueFuse(id: BallId | null) {
+    if (!isRogueMode()) return;
+    if (!rogueRun) rogueRun = createRogueRun();
+    const next = id && parseBall(id) !== ballId ? parseBall(id) : null;
+    rogueRun.fuseBall = next;
+    rogueRun.fusePicked = true;
+    refreshFuseSkills();
+    if (phase === "playing" && paused) {
+      paused = false;
+      last = performance.now();
+      acc = 0;
+      hint = true;
+    }
+    emitHud();
+  }
+
+  function refreshFuseSkills() {
+    if (!canHeat() && !isFrost()) {
+      resetTrail();
+      hoop.sear = 0;
+      hoop.burning = false;
+      hoop.char = 0;
+      if (other) {
+        other.sear = 0;
+        other.burning = false;
+        other.char = 0;
+      }
+      whiteFlash = 0;
+      burnFlash = 0;
+    }
+    if (!isFrost()) {
+      frostBonus = 0;
+      hoop.frost = 0;
+      hoop.frostLeft = 0;
+      if (other) {
+        other.frost = 0;
+        other.frostLeft = 0;
+      }
+    }
+    if (!isChamp()) {
+      champBank = 0;
+      champMode = false;
+      champIdleLeft = -1;
+      champFinishing = false;
+    }
+    if (!isAnti()) {
+      antiCharge = 0;
+      antiMatter = null;
+      antiLingerAcc = 0;
+      holeOn = false;
+      holeLeft = 0;
+      holeScoreAcc = 0;
+      holeLived = 0;
+      holeTick = 0;
+    } else if (!holeOn && !antiMatter && antiCharge <= 0) {
+      resetAntiRun();
+    }
+    if (!isNinja() && !bunshinActive()) resetNinjaPath();
+    if (isPrison()) {
+      if (prisonMode == null) resetPrisonRun();
+      else syncChain();
+    } else {
+      prisonMode = null;
+      prisonBonus = 0;
+      prisonFreeLeft = 0;
+      prisonFreeExtendUsed = false;
+      prisonShackleBest = 0;
+      chain = null;
+    }
+    if (isGlass() && glassBase <= 0) glassBase = GLASS_BASE_START;
+    ball.r = activeBallR();
+    if (ball.y + ball.r > world.floorY) ball.y = world.floorY - ball.r;
+    syncChain();
   }
 
   function cloudGroove(): "drift" | "g1" | "g2" | "g3" {
@@ -1736,7 +1886,11 @@ export function createGame(
     if (isRogueMode()) {
       rogueRun = createRogueRun();
       rogueStageDecay = null;
-      if (devOn) rogueRun.endless = true;
+      if (devOn) {
+        rogueRun.endless = true;
+        // Sandbox skips open-run fuse UI; use 融合球 chips instead.
+        rogueRun.fusePicked = true;
+      }
     } else {
       rogueRun = null;
       rogueStageDecay = null;
@@ -1787,7 +1941,7 @@ export function createGame(
     resetTrail();
     resetGraf();
     glassLand = false;
-    glassBase = 20;
+    glassBase = GLASS_BASE_START;
     frostBonus = 0;
     champBank = 0;
     champMode = false;
@@ -1815,6 +1969,11 @@ export function createGame(
         max: 1.2,
         kind: "tag",
       });
+    }
+    // Formal rogue: wait for one-shot fuse pick before play.
+    if (isRogueMode() && rogueRun && !rogueRun.fusePicked && !devOn) {
+      paused = true;
+      hint = false;
     }
     emitHud();
   }
@@ -1970,6 +2129,68 @@ export function createGame(
     gameOver({ quiet: true });
   }
 
+  /** Dev settle / clear UI: stay in sandbox instead of dumping to title. */
+  function returnDevFromSettle() {
+    if (!devOn || !isRogueMode() || !rogueRun) return;
+    if (phase !== "settle" && phase !== "over") return;
+    phase = "playing";
+    paused = false;
+    rogueRun.endless = true;
+    last = performance.now();
+    acc = 0;
+    hint = false;
+    timerArmed = false;
+    timer = timerMax;
+    buzzer = false;
+    buzzerTimer = 0;
+    timeUp = false;
+    champMode = false;
+    champIdleLeft = -1;
+    champFinishing = false;
+    if (isGlass() && glassBase <= 0) glassBase = GLASS_BASE_START;
+    glassLand = false;
+    remakeBall(hoop.side < 0 ? 1 : -1);
+    prevBallX = ball.x;
+    prevBallY = ball.y;
+    resetShotFlags();
+    callouts.push({
+      text: "返回沙盒",
+      x: world.w * 0.5,
+      y: world.h * 0.28,
+      life: 0.9,
+      max: 0.9,
+      kind: "tag",
+    });
+    emitHud();
+  }
+
+  function resetRogueOwnedLoadout() {
+    if (!isRogueMode() || !rogueRun) return;
+    clearRogueLoadout(rogueRun);
+    ball.r = activeBallR();
+    if (hoop) applyRogueHoopScale(hoop);
+    if (other) applyRogueHoopScale(other);
+    // Hoop scale may need rebuild when ornaments removed.
+    hoop.inner = world.hoopInner;
+    hoop.net = buildNet(hoop);
+    applyRogueHoopScale(hoop);
+    if (other) {
+      other.inner = world.hoopInner;
+      other.net = buildNet(other);
+      applyRogueHoopScale(other);
+    }
+    resetNinjaPath();
+    callouts.push({
+      text: "装备已重置",
+      x: world.w * 0.5,
+      y: world.h * 0.28,
+      life: 0.9,
+      max: 0.9,
+      kind: "tag",
+    });
+    emitHud();
+  }
+
   function startRogueStageCourt() {
     madeCount = 0;
     score = 0;
@@ -2024,7 +2245,7 @@ export function createGame(
     champMode = false;
     champIdleLeft = -1;
     champFinishing = false;
-    glassBase = 20;
+    glassBase = GLASS_BASE_START;
     resetPrisonRun();
     resetNinjaPath();
 
@@ -2228,6 +2449,16 @@ export function createGame(
 
   function resumePlay() {
     if (!paused) return;
+    if (
+      isRogueMode() &&
+      rogueRun &&
+      !devOn &&
+      (!rogueRun.fusePicked ||
+        rogueRun.pendingStreakSave ||
+        rogueRun.pendingFlameReuse)
+    ) {
+      return;
+    }
     paused = false;
     last = performance.now();
     acc = 0;
@@ -2340,6 +2571,7 @@ export function createGame(
         return;
       case "playMode": {
         if (cmd.mode !== "classic" && cmd.mode !== "minute" && cmd.mode !== "rogue") return;
+        if (cmd.mode === "minute" && ballId === "champ") return;
         playMode = cmd.mode;
         persist();
         if (!devOn) enterSandbox();
@@ -2437,7 +2669,28 @@ export function createGame(
           enterRogueSettle();
           return;
         }
-        emitHud();
+        return;
+      }
+      case "rogueFuse": {
+        if (!devOn) enterSandbox();
+        playMode = "rogue";
+        persist();
+        if (!rogueRun) {
+          rogueRun = createRogueRun();
+          if (devOn) {
+            rogueRun.endless = true;
+            rogueRun.fusePicked = true;
+          }
+        }
+        applyRogueFuse(cmd.id);
+        callouts.push({
+          text: cmd.id ? `融合·${getBall(cmd.id).name}` : "清除融合",
+          x: world.w * 0.5,
+          y: world.h * 0.28,
+          life: 0.9,
+          max: 0.9,
+          kind: "tag",
+        });
         return;
       }
       case "score":
@@ -2865,6 +3118,7 @@ export function createGame(
       if (phase === "playing") {
         if (isAnti()) tryCollectAntiMatter();
         if (holeOn) stepAntiHole(dt);
+        if (antiMatter && !holeOn && isAnti()) antiMatter.age += dt;
         tickRogueBuffs(dt);
       }
       collideFloor();
@@ -3060,12 +3314,20 @@ export function createGame(
       }
     }
     const throughHole = Math.abs(ball.x - h.x) < h.inner * 0.55 && ball.vy > 28;
+    const impact = -vn;
     if (h.active && rimHitLock <= 0) {
       rimHits += 1;
       rimHitLock = 0.08;
-      if (!ball.scored && !throughHole) hurtGlass(2, ball.x, ball.y);
+      if (
+        !ball.scored &&
+        !throughHole &&
+        !glassRimHurtShot &&
+        impact >= GLASS_IMPACT_MIN
+      ) {
+        glassRimHurtShot = true;
+        hurtGlass(GLASS_RIM_HURT, ball.x, ball.y);
+      }
     }
-    const impact = -vn;
     if (rimAudioArmed && !ball.scored && !throughHole && impact > 160) {
       audio.rim(Math.min(1, (impact - 120) / 520));
       rimAudioArmed = false;
@@ -3131,12 +3393,20 @@ export function createGame(
     ball.omega += (-vt / Math.max(8, ball.r)) * 0.2 * pMul("boardFric");
     ball.omega = clamp(ball.omega, -9, 9);
     ball.hitBoard = true;
-    if (h.active && ny < -0.55) hitBoardTop = true;
+    const topHit = h.active && ny < -0.55;
+    if (topHit) hitBoardTop = true;
     const impact = -vn;
     if (impact > 90) audio.board(Math.min(1, (impact - 60) / 520));
     if (h.active && boardHitLock <= 0 && !ball.scored) {
       boardHitLock = 0.08;
-      hurtGlass(2, ball.x, ball.y);
+      if (!glassBoardHurtShot && impact >= GLASS_IMPACT_MIN) {
+        glassBoardHurtShot = true;
+        hurtGlass(
+          topHit ? GLASS_BOARD_TOP_HURT : GLASS_BANK_HURT,
+          ball.x,
+          ball.y,
+        );
+      }
     }
   }
 
@@ -3342,7 +3612,8 @@ export function createGame(
         }
       }
       if (isGlass() && glassLand && phase === "playing") {
-        hurtGlass(20, ball.x, ball.y - ball.r * 2.2);
+        hurtGlass(GLASS_LAND_HURT, ball.x, ball.y - ball.r * 2.2);
+        glassLand = false;
       }
     } else if (incoming > 0) {
       ball.vy = 0;
@@ -3577,6 +3848,7 @@ export function createGame(
     const freed = isPrison() && prisonMode === "free";
 
     const bunshinGhost = ghost && bunshinActive() && !isNinja();
+    const ninjaGhost = ghost && isNinja();
 
     if (comboCounting) {
       const boost =
@@ -3642,20 +3914,19 @@ export function createGame(
     // 基础分 + 连击得分；混乱药丸只改基础分，连击分与后续加成照常
     const streakPart = streak;
     let basePart = isGlass() ? glassBase : 0;
-    if (isRogueMode() && rogueRun && hasChaosBase(rogueRun) && !bunshinGhost) {
+    if (isRogueMode() && rogueRun && hasChaosBase(rogueRun) && !bunshinGhost && !ninjaGhost) {
       basePart = Math.floor(Math.random() * 26) - 10;
     }
-    let gain = bunshinGhost ? 1 : basePart + streakPart;
-    if (!bunshinGhost) {
+    let gain = bunshinGhost ? 1 : ninjaGhost ? 0 : basePart + streakPart;
+    if (!bunshinGhost && !ninjaGhost) {
       if (isFrost()) gain += frostBonus;
       if (depth) gain += 30;
       else if (needle) gain += 20;
       else if (lucky) gain += 10;
       else if (swish) gain += 3;
     }
-    if (swish && prevStage >= 1 && prevStage < 4) {
-      const next =
-        prevStage === 1 ? STAGE_SMOKE : prevStage === 2 ? STAGE_IGNITE : STAGE_BLAZE;
+    if (swish && prevStage >= 2 && prevStage < 4) {
+      const next = prevStage === 2 ? STAGE_IGNITE : STAGE_BLAZE;
       if (combo < next) combo = next;
     }
     if (recoverTo > 0) {
@@ -3671,9 +3942,10 @@ export function createGame(
         }
       }
     }
+    // Heat bonus = flat extra combo points (+1 冒烟 / +2 起火 / +3 烈焰).
     const extra = prevStage >= 4 ? 3 : prevStage === 3 ? 2 : prevStage >= 2 ? 1 : 0;
-    if (!bunshinGhost) gain += extra * streak;
-    if (freed && !bunshinGhost) gain += prisonBonus;
+    if (!bunshinGhost && !ninjaGhost) gain += extra;
+    if (freed && !bunshinGhost && !ninjaGhost) gain += prisonBonus;
     const clutch = !ghost && (buzzer || timeUp);
     const tag = clutch
       ? "绝杀"
@@ -3693,19 +3965,19 @@ export function createGame(
                     ? "擦板球"
                     : "";
     if (clutch) {
-      gain += 5;
+      if (!ninjaGhost) gain += 5;
       if (!champFinishing) {
         buzzer = false;
         buzzerTimer = 0;
         timeUp = false;
       }
     }
-    if (champMode && !bunshinGhost) gain *= CHAMP_SCORE_MULT;
+    if (champMode && !bunshinGhost && !ninjaGhost) gain *= CHAMP_SCORE_MULT;
     if (isAnti() && holeOn) gain = 0;
     if (isRogueMode() && rogueRun && !ghost && rogueRun.buffPowerLeft > 0) {
       gain += catalogOf("ineedpower")?.powerBoostAdd ?? 20;
     }
-    if (isRogueMode() && rogueRun && !bunshinGhost) {
+    if (isRogueMode() && rogueRun && !bunshinGhost && !ninjaGhost) {
       const mod = applyRogueMakeMods(gain, rogueRun, {
         swish,
         bank,
@@ -3799,7 +4071,7 @@ export function createGame(
     const boardTop = ghost
       ? popY - popInner * RIM_RY - 40
       : boardGeom(hoop, world).visY;
-    const hideMakeScore = isAnti() && holeOn;
+    const hideMakeScore = (isAnti() && holeOn) || (ninjaGhost && gain <= 0);
     if (!hideMakeScore) {
       callouts.push({
         text: `+${gain}`,
@@ -3822,17 +4094,8 @@ export function createGame(
         kind: "tag",
       });
     }
-    if (isGlass() && streak >= 2) {
-      glassBase += 2;
-      callouts.push({
-        text: "+2",
-        x: popX,
-        y: popY - popInner * RIM_RY + 18,
-        capY: boardTop + 8,
-        life: 0.85,
-        max: 0.85,
-        kind: "base",
-      });
+    if (isGlass() && swish && !ghost) {
+      healGlass(GLASS_SWISH_HEAL, popX, popY - popInner * RIM_RY + 18);
     }
     if (frostGain > 0) {
       callouts.push({
@@ -4382,6 +4645,7 @@ export function createGame(
     },
     setPlayMode(mode) {
       if (mode !== "classic" && mode !== "minute" && mode !== "rogue") return;
+      if (mode === "minute" && ballId === "champ") return;
       if (playMode === mode) return;
       playMode = mode;
       if (phase === "title" || phase === "over") {
@@ -4401,6 +4665,9 @@ export function createGame(
     revokeRogue(id) {
       revokeRogueGear(id);
     },
+    resetRogueLoadout() {
+      resetRogueOwnedLoadout();
+    },
     closeRogueShop() {
       closeDevRogueShop();
     },
@@ -4416,6 +4683,9 @@ export function createGame(
     rogueEndRun() {
       endRogueFromSettle();
     },
+    devBackFromSettle() {
+      returnDevFromSettle();
+    },
     useRogue(id) {
       useRogueGear(id);
     },
@@ -4424,6 +4694,9 @@ export function createGame(
     },
     answerFlameReuse(use) {
       resolveFlameReusePrompt(use);
+    },
+    setRogueFuse(id) {
+      applyRogueFuse(id);
     },
     dev(cmd) {
       applyDev(cmd);

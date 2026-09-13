@@ -1,5 +1,6 @@
 /** Roguelike run tables and pure helpers. */
 
+import type { BallId } from "./balls";
 import {
   activeCatalog,
   RARITY_WEIGHT,
@@ -96,6 +97,10 @@ export type RogueRun = {
   peakMake: number;
   /** Acc for jiahao floor gold. */
   rollGoldAcc: number;
+  /** Secondary ball fused at run start (skills OR onto primary). */
+  fuseBall: BallId | null;
+  /** Whether the open-run fuse picker was dismissed (incl. 不融合). */
+  fusePicked: boolean;
 };
 
 export type RogueHud = {
@@ -133,6 +138,8 @@ export type RogueHud = {
   buffBunshinClones: number;
   buffFlameLeft: number;
   pendingFlameReuse: boolean;
+  fuseBall: BallId | null;
+  fusePicked: boolean;
 };
 
 const STAGE_SCORE = 200;
@@ -199,6 +206,8 @@ export function createRogueRun(): RogueRun {
     peakStreakAll: 0,
     peakMake: 0,
     rollGoldAcc: 0,
+    fuseBall: null,
+    fusePicked: false,
   };
 }
 
@@ -593,6 +602,30 @@ export function devGrantRogue(
   return { ok: true };
 }
 
+export function clearRogueLoadout(run: RogueRun) {
+  run.ornaments = [];
+  run.items = {};
+  run.revives = 0;
+  run.streakSave = false;
+  run.streakSaveCharges = 0;
+  run.pendingStreakSave = false;
+  run.pointExchangeLeft = 0;
+  run.pointExchangeCharges = 0;
+  run.moneyProtect = false;
+  run.glassSafe = 0;
+  run.blackholeCharges = 0;
+  run.buffComboLeft = 0;
+  run.buffPowerLeft = 0;
+  run.buffBunshinLeft = 0;
+  run.buffBunshinClones = 0;
+  run.buffFlameLeft = 0;
+  run.pendingFlameReuse = false;
+  run.whatsThatAcc = 0;
+  run.nextDecay = null;
+  run.nextBonusClock = 0;
+  run.rollGoldAcc = 0;
+}
+
 /** Dev: remove one stack. */
 export function devRevokeRogue(
   run: RogueRun,
@@ -707,6 +740,8 @@ export function toRogueHud(run: RogueRun | null): RogueHud | null {
     buffBunshinClones: run.buffBunshinClones,
     buffFlameLeft: run.buffFlameLeft,
     pendingFlameReuse: run.pendingFlameReuse,
+    fuseBall: run.fuseBall,
+    fusePicked: run.fusePicked,
   };
 }
 

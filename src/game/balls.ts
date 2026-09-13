@@ -31,6 +31,8 @@ export type BallKit = {
   /** Radius vs world.ballR (classic). Diameter of rubber = classic radius → 0.5. */
   rScale?: number;
   phys?: Partial<DevPhys>;
+  /** false = kept in data but hidden from pickers / remapped by parseBall. */
+  playable?: boolean;
 };
 
 export const BALLS: BallKit[] = [
@@ -51,7 +53,7 @@ export const BALLS: BallKit[] = [
   {
     id: "ninja",
     name: "忍者球",
-    skill: "连击召唤轨迹分身，分身也计连击",
+    skill: "连击召唤轨迹分身；分身只加连击，不计分",
     heat: false,
     wrap: "ground",
     score: "normal",
@@ -100,7 +102,7 @@ export const BALLS: BallKit[] = [
   {
     id: "champ",
     name: "冠军球",
-    skill: "存剩余时间的两成，耗尽后开启双倍冠军时刻",
+    skill: "存剩余时间的两成，耗尽后开启双倍冠军时刻（不可用于1分钟）",
     heat: false,
     champ: true,
     wrap: "ground",
@@ -118,7 +120,7 @@ export const BALLS: BallKit[] = [
   {
     id: "anti",
     name: "反重力球",
-    skill: "收集反物质开黑洞；洞内按秒加分，离洞越远时间越慢",
+    skill: "收集反物质开黑洞；洞时长20秒起，场上留存越久洞越短（不低于10秒）",
     heat: false,
     anti: true,
     wrap: "ground",
@@ -132,7 +134,7 @@ export const BALLS: BallKit[] = [
   {
     id: "glass",
     name: "玻璃球",
-    skill: "易碎品，别落地！",
+    skill: "基础分从20起；打铁−2、擦板−1、板上端−3、落地−4，空心+4，上限50",
     heat: false,
     src: "/game/balls/glass.webp?v=5",
     fallback: "/game/balls/glass.png?v=5",
@@ -148,11 +150,12 @@ export const BALLS: BallKit[] = [
   {
     id: "prison",
     name: "监狱球",
-    skill: "链拖铁球；释放如经典球",
+    skill: "链拖铁球；释放如经典球（暂未开放）",
     heat: false,
     wrap: "ground",
     score: "normal",
     chain: true,
+    playable: false,
     phys: {
       jumpUp: 0.95,
       jumpFwd: 0.95,
@@ -162,8 +165,17 @@ export const BALLS: BallKit[] = [
 
 export const DEFAULT_BALL: BallId = "plain";
 
+export function isPlayableBall(id: BallId): boolean {
+  return getBall(id).playable !== false;
+}
+
+export function playableBalls(): BallKit[] {
+  return BALLS.filter((b) => b.playable !== false);
+}
+
 export function parseBall(v: unknown): BallId {
-  return v === "lava" ||
+  const id =
+    v === "lava" ||
     v === "frost" ||
     v === "champ" ||
     v === "anti" ||
@@ -172,8 +184,9 @@ export function parseBall(v: unknown): BallId {
     v === "prison" ||
     v === "rubber" ||
     v === "ninja"
-    ? v
-    : DEFAULT_BALL;
+      ? v
+      : DEFAULT_BALL;
+  return isPlayableBall(id) ? id : DEFAULT_BALL;
 }
 
 export function getBall(id: BallId): BallKit {
@@ -184,4 +197,68 @@ export function getBall(id: BallId): BallKit {
 export function ballRadius(worldBallR: number, id: BallId) {
   const scale = getBall(id).rScale ?? 1;
   return worldBallR * scale;
+}
+
+/**
+ * Rogue fusion: look / wrap / phys stay on primary;
+ * skill flags OR from fused secondary; rScale multiplies (e.g. 弹力球副球缩小).
+ */
+export type EffectiveBall = {
+  id: BallId;
+  fuseId: BallId | null;
+  name: string;
+  skill: string;
+  heat: boolean;
+  frost: boolean;
+  champ: boolean;
+  anti: boolean;
+  chain: boolean;
+  ninja: boolean;
+  glass: boolean;
+  wrap: "ground" | "height";
+  rScale: number;
+  phys?: Partial<DevPhys>;
+  src?: string;
+  fallback?: string;
+};
+
+export function effectiveBall(primaryId: BallId, fuseId: BallId | null): EffectiveBall {
+  const primary = getBall(primaryId);
+  const fuse = fuseId && fuseId !== primaryId ? getBall(fuseId) : null;
+  const heat = primary.heat || Boolean(fuse?.heat);
+  const frost = Boolean(primary.frost) || Boolean(fuse?.frost);
+  const champ = Boolean(primary.champ) || Boolean(fuse?.champ);
+  const anti = Boolean(primary.anti) || Boolean(fuse?.anti);
+  const chain = Boolean(primary.chain) || Boolean(fuse?.chain);
+  const ninja = primaryId === "ninja" || fuseId === "ninja";
+  const glass = primary.score === "glass" || fuse?.score === "glass";
+  const skill = fuse
+    ? `${primary.skill} · 融${fuse.name}：${fuse.skill}`
+    : primary.skill;
+  const name = fuse ? `${primary.name}+${fuse.name}` : primary.name;
+  return {
+    id: primaryId,
+    fuseId: fuse ? fuse.id : null,
+    name,
+    skill,
+    heat,
+    frost,
+    champ,
+    anti,
+    chain,
+    ninja,
+    glass,
+    wrap: primary.wrap,
+    rScale: (primary.rScale ?? 1) * (fuse?.rScale ?? 1),
+    phys: primary.phys,
+    src: primary.src,
+    fallback: primary.fallback,
+  };
+}
+
+/** Pause / settle loadout: `经典球 + 冰冻球` or just primary. */
+export function ballFuseLabel(primaryId: BallId, fuseId: BallId | null): string {
+  const primary = getBall(primaryId).name;
+  if (!fuseId || fuseId === primaryId) return primary;
+  return `${primary} + ${getBall(fuseId).name}`;
 }

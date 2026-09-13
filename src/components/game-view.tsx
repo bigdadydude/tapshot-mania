@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
-import { AudioLines, ChevronLeft, ChevronRight, Music, Pause, Volume2, VolumeX } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { AudioLines, Music, Pause, Volume2, VolumeX } from "lucide-react";
 import { createGame, rankFor, GAME_REV, type GameHandle } from "@/game/engine";
 import { primeArt } from "@/game/art";
 import { DEFAULT_DEV, wantDevQuery } from "@/game/dev";
-import { BALLS, DEFAULT_BALL, type BallId } from "@/game/balls";
+import { BALLS, DEFAULT_BALL, ballFuseLabel, playableBalls, type BallId } from "@/game/balls";
 import { DEFAULT_GFX, type CloudMode, type Gfx, type HudState, type PlayMode } from "@/game/types";
 import { DevConsole } from "@/components/dev-console";
 import {
@@ -90,16 +90,26 @@ export function GameView() {
 
   useEffect(() => {
     if (hud.phase === "playing" && hud.paused && menu === "none") {
-      if (hud.rogue?.pendingStreakSave) return;
+      if (hud.rogue?.pendingStreakSave || hud.rogue?.pendingFlameReuse) return;
+      if (hud.playMode === "rogue" && hud.rogue && !hud.rogue.fusePicked) return;
       setMenu("pause");
     }
     if (hud.phase === "playing" && !hud.paused && menu === "pause") setMenu("none");
-  }, [hud.paused, hud.phase, menu, hud.rogue?.pendingStreakSave]);
+  }, [
+    hud.paused,
+    hud.phase,
+    menu,
+    hud.playMode,
+    hud.rogue?.pendingStreakSave,
+    hud.rogue?.pendingFlameReuse,
+    hud.rogue?.fusePicked,
+  ]);
 
   function openPause() {
     const g = gameRef.current;
     if (!g) return;
     if (hud.rogue?.pendingStreakSave || hud.rogue?.pendingFlameReuse) return;
+    if (hud.playMode === "rogue" && hud.rogue && !hud.rogue.fusePicked) return;
     if (hud.phase === "playing") {
       if (hud.paused) {
         g.resume();
@@ -192,6 +202,8 @@ export function GameView() {
               onConfirm={() => gameRef.current?.rogueConfirmSettle()}
               onEndless={() => gameRef.current?.rogueEndless()}
               onEnd={() => gameRef.current?.rogueEndRun()}
+              devMode={hud.dev.on}
+              onDevBack={() => gameRef.current?.devBackFromSettle()}
             />
           ) : null}
           {hud.phase === "hub" && menu === "none" && hud.rogue ? (
@@ -203,7 +215,7 @@ export function GameView() {
               onRevoke={(id) => gameRef.current?.revokeRogue(id)}
               onContinue={() => gameRef.current?.rogueContinue()}
               onClose={() => gameRef.current?.closeRogueShop()}
-              onTitle={toTitle}
+              onReset={() => gameRef.current?.resetRogueLoadout()}
             />
           ) : null}
           {hud.phase === "over" && menu === "none" ? (
@@ -216,6 +228,8 @@ export function GameView() {
               playMode={hud.playMode}
               onRetry={() => gameRef.current?.retry()}
               onTitle={toTitle}
+              devMode={hud.dev.on}
+              onDevBack={() => gameRef.current?.devBackFromSettle()}
             />
           ) : null}
 
@@ -234,6 +248,18 @@ export function GameView() {
         </div>
       </div>
 
+      {hud.phase === "playing" &&
+      menu === "none" &&
+      hud.playMode === "rogue" &&
+      hud.rogue &&
+      !hud.rogue.fusePicked &&
+      !hud.dev.on ? (
+        <FusePickPanel
+          ballId={hud.ballId}
+          onPick={(id) => gameRef.current?.setRogueFuse(id)}
+        />
+      ) : null}
+
       {hud.rogue?.pendingStreakSave ? (
         <StreakSavePrompt
           streak={hud.combo}
@@ -251,10 +277,14 @@ export function GameView() {
         />
       ) : null}
 
-      {showPause && !hud.rogue?.pendingStreakSave && !hud.rogue?.pendingFlameReuse ? (
+      {showPause &&
+      !hud.rogue?.pendingStreakSave &&
+      !hud.rogue?.pendingFlameReuse &&
+      !(hud.playMode === "rogue" && hud.rogue && !hud.rogue.fusePicked) ? (
         <PauseMenu
           canResume={hud.phase === "playing"}
           rogue={hud.playMode === "rogue" ? hud.rogue : null}
+          ballId={hud.ballId}
           onDismiss={hud.phase === "playing" ? resume : () => setMenu("none")}
           onRestart={restart}
           onSettings={() => setMenu("settings")}
@@ -348,48 +378,39 @@ function TitleCard({
   onTitleTap: () => void;
   onDev: () => void;
 }) {
-  const idx = Math.max(
-    0,
-    BALLS.findIndex((b) => b.id === ballId),
-  );
-  const kit = BALLS[idx] ?? BALLS[0]!;
-  const dragRef = useRef<{ x: number; y: number } | null>(null);
-  const [dragX, setDragX] = useState(0);
-  const [dragging, setDragging] = useState(false);
+  const playable = playableBalls();
+  const idx = Math.max(0, playable.findIndex((b) => b.id === ballId));
+  const minuteBlocked = ballId === "champ";
+  const sliderRef = useRef<HTMLDivElement>(null);
+  const cardW = 220;
+  const gap = 12;
 
-  function selectAt(i: number) {
-    const next = ((i % BALLS.length) + BALLS.length) % BALLS.length;
-    const b = BALLS[next];
-    if (b) onBall(b.id);
-  }
+  useEffect(() => {
+    const el = sliderRef.current;
+    if (!el) return;
+    const target = idx * (cardW + gap);
+    if (Math.abs(el.scrollLeft - target) <= 2) return;
+    el.scrollTo({ left: target, behavior: "smooth" });
+  }, [idx, cardW, gap]);
 
-  function onPointerDown(e: PointerEvent<HTMLDivElement>) {
-    dragRef.current = { x: e.clientX, y: e.clientY };
-    setDragging(true);
-    setDragX(0);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  }
+  useEffect(() => {
+    const el = sliderRef.current;
+    if (!el) return;
+    el.scrollLeft = idx * (cardW + gap);
+  }, []);
 
-  function onPointerMove(e: PointerEvent<HTMLDivElement>) {
-    const d = dragRef.current;
-    if (!d) return;
-    setDragX(e.clientX - d.x);
-  }
-
-  function endDrag(e: PointerEvent<HTMLDivElement>) {
-    const d = dragRef.current;
-    dragRef.current = null;
-    setDragging(false);
-    const dx = d ? e.clientX - d.x : 0;
-    const dy = d ? e.clientY - d.y : 0;
-    setDragX(0);
-    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.15) return;
-    if (dx < 0) selectAt(idx + 1);
-    else selectAt(idx - 1);
+  function settleSlider() {
+    const el = sliderRef.current;
+    if (!el) return;
+    const step = cardW + gap;
+    const next = Math.round(el.scrollLeft / step);
+    const clamped = Math.max(0, Math.min(playable.length - 1, next));
+    const b = playable[clamped];
+    if (b && b.id !== ballId) onBall(b.id);
   }
 
   return (
-    <div className="pointer-events-none flex flex-col items-center px-6 pb-[max(1.75rem,env(safe-area-inset-bottom))]">
+    <div className="pointer-events-none flex flex-col items-center px-4 pb-[max(1.75rem,env(safe-area-inset-bottom))]">
       <div className="mb-4 text-center">
         <h1
           className="pointer-events-auto font-sans text-5xl font-black leading-none tracking-tight text-fg"
@@ -418,80 +439,93 @@ function TitleCard({
           ] as const
         ).map((m) => {
           const on = playMode === m.id;
+          const blocked = m.id === "minute" && minuteBlocked;
           return (
             <button
               key={m.id}
               type="button"
-              onClick={() => onMode(m.id)}
+              disabled={blocked}
+              aria-disabled={blocked}
+              onClick={() => {
+                if (blocked) return;
+                onMode(m.id);
+              }}
               className={cn(
-                "rounded-xl border px-2 py-2.5 text-left",
-                on ? "border-accent bg-bg-elevated" : "border-border bg-bg-subtle/80",
+                "relative overflow-hidden rounded-xl border px-2 py-2.5 text-left",
+                blocked
+                  ? "cursor-not-allowed border-border/70 bg-bg-subtle/50 opacity-70"
+                  : on
+                    ? "border-accent bg-bg-elevated"
+                    : "border-border bg-bg-subtle/80",
               )}
             >
-              <span className={cn("block text-sm font-medium", on ? "text-fg" : "text-muted")}>
+              <span
+                className={cn(
+                  "block text-sm font-medium",
+                  blocked ? "text-muted" : on ? "text-fg" : "text-muted",
+                )}
+              >
                 {m.label}
               </span>
               <span className="mt-0.5 block text-[10px] leading-tight text-subtle">{m.tip}</span>
+              {blocked ? (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute left-1/2 top-1/2 h-0.5 w-[130%] -translate-x-1/2 -translate-y-1/2 rotate-[-28deg] bg-red-500 shadow-sm"
+                />
+              ) : null}
             </button>
           );
         })}
       </div>
 
-      <div className="pointer-events-auto mb-4 flex w-full max-w-xs items-center gap-1">
-        <button
-          type="button"
-          aria-label="上一个球"
-          onClick={() => selectAt(idx - 1)}
-          className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-bg-elevated text-fg"
-        >
-          <ChevronLeft className="size-5" />
-        </button>
-
+      <div className="pointer-events-auto mb-4 w-full max-w-xs">
         <div
-          className="relative min-w-0 flex-1 touch-none select-none overflow-hidden"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={endDrag}
-          onPointerCancel={() => {
-            dragRef.current = null;
-            setDragging(false);
-            setDragX(0);
+          ref={sliderRef}
+          onScroll={() => {
+            // Live highlight while dragging; commit on scroll end via pointer/touch up.
+            settleSlider();
           }}
+          onPointerUp={settleSlider}
+          onTouchEnd={settleSlider}
+          className="flex snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain px-[calc((100%-220px)/2)] pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          style={{ WebkitOverflowScrolling: "touch" }}
         >
-          <div
-            className="flex flex-col items-center rounded-xl border border-accent bg-bg-elevated px-4 py-4"
-            style={{
-              transform: `translateX(${dragX * 0.35}px)`,
-              transition: dragging ? "none" : "transform 180ms ease-out",
-            }}
-          >
-            <BallThumb kit={kit} large />
-            <span className="mt-3 text-base font-medium text-fg">{kit.name}</span>
-            <span className="mt-1 min-h-8 text-center text-xs leading-snug text-subtle">
-              {kit.skill}
-            </span>
-            <div className="mt-3 flex items-center justify-center gap-1.5">
-              {BALLS.map((b, i) => (
-                <span
-                  key={b.id}
-                  className={cn(
-                    "size-1.5 rounded-full",
-                    i === idx ? "bg-accent" : "bg-border",
-                  )}
-                />
-              ))}
-            </div>
-          </div>
+          {playable.map((b) => {
+            const on = b.id === ballId;
+            return (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => onBall(b.id)}
+                className={cn(
+                  "flex h-[11.5rem] w-[220px] shrink-0 snap-center flex-col items-center rounded-xl border px-4 py-3 text-center",
+                  on ? "border-accent bg-bg-elevated" : "border-border bg-bg-subtle/70",
+                )}
+              >
+                <BallThumb kit={b} large />
+                <span className="mt-2.5 shrink-0 text-base font-medium text-fg">{b.name}</span>
+                <span className="mt-1 line-clamp-3 min-h-[2.75rem] text-center text-xs leading-snug text-subtle">
+                  {b.skill}
+                </span>
+              </button>
+            );
+          })}
         </div>
-
-        <button
-          type="button"
-          aria-label="下一个球"
-          onClick={() => selectAt(idx + 1)}
-          className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-bg-elevated text-fg"
-        >
-          <ChevronRight className="size-5" />
-        </button>
+        <div className="mt-2.5 flex items-center justify-center gap-1.5">
+          {playable.map((b, i) => (
+            <button
+              key={b.id}
+              type="button"
+              aria-label={b.name}
+              onClick={() => onBall(b.id)}
+              className={cn(
+                "size-1.5 rounded-full transition-colors",
+                i === idx ? "bg-accent" : "bg-border",
+              )}
+            />
+          ))}
+        </div>
       </div>
 
       <button
@@ -626,11 +660,15 @@ function SettleCard({
   onConfirm,
   onEndless,
   onEnd,
+  devMode = false,
+  onDevBack,
 }: {
   rogue: NonNullable<HudState["rogue"]>;
   onConfirm: () => void;
   onEndless: () => void;
   onEnd: () => void;
+  devMode?: boolean;
+  onDevBack?: () => void;
 }) {
   const bd = rogue.lastBreakdown;
   const cleared = rogue.stage >= ROGUE_CAMPAIGN_STAGES && !rogue.endless;
@@ -661,8 +699,23 @@ function SettleCard({
   }, [rogue.gold, rogue.goldBefore, rogue.stage]);
 
   return (
-    <div className="pointer-events-none flex w-full flex-col items-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-      <div className="pointer-events-auto w-full max-w-xs rounded-xl border border-border bg-bg-elevated px-5 py-5 shadow-lg">
+    <div
+      className={cn(
+        "flex w-full flex-col items-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))]",
+        devMode && onDevBack ? "pointer-events-auto" : "pointer-events-none",
+      )}
+      onClick={
+        devMode && onDevBack
+          ? () => {
+              onDevBack();
+            }
+          : undefined
+      }
+    >
+      <div
+        className="pointer-events-auto w-full max-w-xs rounded-xl border border-border bg-bg-elevated px-5 py-5 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
         <p className="text-center text-xs font-medium tracking-widest text-muted">
           {cleared ? "通关结算" : `第 ${rogue.stage} 关结算`}
         </p>
@@ -705,14 +758,15 @@ function SettleCard({
               disabled={!ready}
               onClick={() => {
                 if (!ready) return;
-                onEnd();
+                if (devMode && onDevBack) onDevBack();
+                else onEnd();
               }}
               className={cn(
                 "h-12 flex-1 rounded-lg text-sm font-medium",
                 ready ? "border border-border text-muted" : "bg-border text-subtle",
               )}
             >
-              结束游戏
+              {devMode ? "返回沙盒" : "结束游戏"}
             </button>
             <button
               type="button"
@@ -750,6 +804,11 @@ function SettleCard({
           </button>
         )}
       </div>
+      {devMode && onDevBack ? (
+        <p className="pointer-events-none mt-3 text-center text-sm text-fg">
+          点击空白处返回沙盒
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -762,7 +821,7 @@ function HubCard({
   onRevoke,
   onContinue,
   onClose,
-  onTitle,
+  onReset,
 }: {
   rogue: NonNullable<HudState["rogue"]>;
   devMode?: boolean;
@@ -771,7 +830,7 @@ function HubCard({
   onRevoke?: (id: string) => void;
   onContinue: () => void;
   onClose?: () => void;
-  onTitle: () => void;
+  onReset: () => void;
 }) {
   const items = rogue.shop.filter((o) => o.kind === "item");
   const orns = rogue.shop.filter((o) => o.kind === "ornament");
@@ -792,7 +851,7 @@ function HubCard({
         onRevoke={onRevoke}
         onContinue={onContinue}
         onClose={onClose}
-        onTitle={onTitle}
+        onReset={onReset}
       />
     );
   }
@@ -849,13 +908,13 @@ function HubCard({
           <button
             type="button"
             disabled={!armed}
-            onClick={onTitle}
+            onClick={onReset}
             className={cn(
               "h-11 flex-1 rounded-lg border border-border text-sm",
               armed ? "text-muted" : "text-subtle opacity-60",
             )}
           >
-            放弃
+            重置
           </button>
           <button
             type="button"
@@ -880,14 +939,14 @@ function DevCatalogHub({
   onRevoke,
   onContinue,
   onClose,
-  onTitle,
+  onReset,
 }: {
   rogue: NonNullable<HudState["rogue"]>;
   onGrant: (id: string) => void;
   onRevoke: (id: string) => void;
   onContinue: () => void;
   onClose?: () => void;
-  onTitle: () => void;
+  onReset: () => void;
 }) {
   const items = ROGUE_CATALOG.filter((e) => e.status === "active" && e.kind === "item");
   const orns = ROGUE_CATALOG.filter((e) => e.status === "active" && e.kind === "ornament");
@@ -951,10 +1010,10 @@ function DevCatalogHub({
         <div className="flex gap-2 border-t border-border p-3">
           <button
             type="button"
-            onClick={onTitle}
+            onClick={onReset}
             className="h-11 flex-1 rounded-lg border border-border text-sm text-muted"
           >
-            放弃
+            重置
           </button>
           {onClose ? (
             <button
@@ -1077,6 +1136,8 @@ function OverCard({
   playMode,
   onRetry,
   onTitle,
+  devMode = false,
+  onDevBack,
 }: {
   score: number;
   best: number;
@@ -1086,12 +1147,18 @@ function OverCard({
   playMode: PlayMode;
   onRetry: () => void;
   onTitle: () => void;
+  devMode?: boolean;
+  onDevBack?: () => void;
 }) {
   const isRogue = playMode === "rogue" && rogue;
   const isBest = isRogue
     ? rogue.stage >= best && best > 0
     : score > 0 && score === best;
-  const ballName = BALLS.find((b) => b.id === ballId)?.name ?? "篮球";
+  const ballName = ballFuseLabel(ballId, rogue?.fuseBall ?? null);
+  const blankBack = () => {
+    if (devMode && onDevBack) onDevBack();
+    else onTitle();
+  };
 
   if (isRogue) {
     const ornLines = rogue.ornaments.map((o) =>
@@ -1135,7 +1202,7 @@ function OverCard({
     return (
       <div
         className="pointer-events-auto absolute inset-0 z-20 flex flex-col items-center justify-end bg-bg/50 px-4 pb-[max(1.75rem,env(safe-area-inset-bottom))] pt-16"
-        onClick={onTitle}
+        onClick={blankBack}
       >
         <div
           className="mb-4 w-full max-w-xs overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-lg"
@@ -1181,15 +1248,21 @@ function OverCard({
           </div>
         </div>
         <p className="pointer-events-none mb-2 text-center text-sm text-fg">
-          点击空白处返回主界面
+          {devMode ? "点击空白处返回沙盒" : "点击空白处返回主界面"}
         </p>
       </div>
     );
   }
 
   return (
-    <div className="pointer-events-none flex flex-col items-center px-6 pb-[max(1.75rem,env(safe-area-inset-bottom))]">
-      <div className="mb-5 w-full max-w-xs rounded-xl border border-border bg-bg-elevated px-6 py-6 text-center shadow-lg">
+    <div
+      className="pointer-events-auto absolute inset-0 z-20 flex flex-col items-center justify-end bg-bg/50 px-6 pb-[max(1.75rem,env(safe-area-inset-bottom))] pt-16"
+      onClick={onTitle}
+    >
+      <div
+        className="mb-5 w-full max-w-xs rounded-xl border border-border bg-bg-elevated px-6 py-6 text-center shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
         <p className="text-xs font-medium tracking-widest text-muted">时间到</p>
         <p className="mt-3 font-sans text-6xl font-black leading-none tabular-nums text-fg">
           {score}
@@ -1199,7 +1272,10 @@ function OverCard({
       </div>
       <button
         type="button"
-        onClick={onRetry}
+        onClick={(e) => {
+          e.stopPropagation();
+          onRetry();
+        }}
         className={cn(
           "pointer-events-auto h-12 w-full max-w-xs rounded-lg bg-accent text-accent-fg",
           "text-base font-medium tracking-wide",
@@ -1208,6 +1284,9 @@ function OverCard({
       >
         再来一局
       </button>
+      <p className="pointer-events-none mt-3 mb-2 text-center text-sm text-fg">
+        点击空白处返回主界面
+      </p>
     </div>
   );
 }
@@ -1288,9 +1367,73 @@ function FlameReusePrompt({
   );
 }
 
+function FusePickPanel({
+  ballId,
+  onPick,
+}: {
+  ballId: BallId;
+  onPick: (id: BallId | null) => void;
+}) {
+  const primary = playableBalls().find((b) => b.id === ballId) ?? playableBalls()[0]!;
+  const others = playableBalls().filter((b) => b.id !== ballId);
+  const [pick, setPick] = useState<BallId | null>(null);
+
+  return (
+    <div className="pointer-events-auto absolute inset-0 z-40 flex flex-col items-center justify-center bg-bg/75 px-4">
+      <div className="w-full max-w-sm rounded-xl border border-border bg-bg-elevated p-5 shadow-lg">
+        <p className="text-center text-xs font-medium tracking-widest text-muted">开局融合</p>
+        <p className="mt-2 text-center text-sm font-medium text-fg">{primary.name}</p>
+        <p className="mt-1 text-center text-xs leading-relaxed text-subtle">{primary.skill}</p>
+        <p className="mt-4 text-[10px] font-medium tracking-widest text-subtle">选择副球（技能叠加，外观仍用主球）</p>
+        <div className="mt-2 max-h-[40dvh] space-y-1.5 overflow-y-auto">
+          {others.map((b) => (
+            <button
+              key={b.id}
+              type="button"
+              onClick={() => setPick(b.id)}
+              className={cn(
+                "flex w-full flex-col rounded-lg border px-3 py-2.5 text-left transition-colors",
+                pick === b.id
+                  ? "border-accent bg-accent/10"
+                  : "border-border bg-bg-subtle/50 active:scale-[0.99]",
+              )}
+            >
+              <span className="text-sm font-medium text-fg">{b.name}</span>
+              <span className="mt-0.5 text-[11px] leading-snug text-subtle">{b.skill}</span>
+            </button>
+          ))}
+        </div>
+        <div className="mt-4 flex flex-col gap-2">
+          <button
+            type="button"
+            disabled={pick == null}
+            onClick={() => pick != null && onPick(pick)}
+            className={cn(
+              "h-12 w-full rounded-lg text-sm font-medium",
+              pick != null
+                ? "bg-accent text-accent-fg active:scale-[0.98]"
+                : "cursor-not-allowed bg-bg-subtle text-muted",
+            )}
+          >
+            确认融合
+          </button>
+          <button
+            type="button"
+            onClick={() => onPick(null)}
+            className="h-11 w-full rounded-lg border border-border text-sm text-muted"
+          >
+            不融合
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PauseMenu({
   canResume,
   rogue,
+  ballId,
   onDismiss,
   onRestart,
   onSettings,
@@ -1300,6 +1443,7 @@ function PauseMenu({
 }: {
   canResume: boolean;
   rogue: HudState["rogue"];
+  ballId: BallId;
   onDismiss: () => void;
   onRestart: () => void;
   onSettings: () => void;
@@ -1407,6 +1551,7 @@ function PauseMenu({
               第 {rogue.stage} 关 · 目标 {rogue.target} · 金{" "}
               <span className="font-semibold tabular-nums">{rogue.gold}</span>
             </p>
+            <p>球种 · {ballFuseLabel(ballId, rogue.fuseBall)}</p>
             <p>
               总分 {rogue.runScore + rogue.stageScore} · 本关 {rogue.stageScore}
             </p>
