@@ -27,6 +27,7 @@ const LEGIT_WAIT = new Set([
   "flight-scores",
   "hole-flight-scores",
   "let-drop",
+  "ride-flight",
   "chain-wait",
   "let-rattle",
   "wait-spacing",
@@ -120,12 +121,9 @@ export function createAiController(): AiController {
         Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36;
       const below = world.ball.y + world.ball.r * 0.15 >= world.hoop.y;
       const sitting = spd < 78 && close && below;
-      const dropLimit = comboPaceLimit(world) + 0.25;
-      const staleDrop =
-        decision.reason === "let-drop" &&
-        below &&
-        ((world.comboCounting && world.streak > 0 && world.comboClock > dropLimit) ||
-          sitting);
+      // Only a parked ball is stale. Combo-clock mash on a live let-drop
+      // resets jumpVx and is how ninja/heat wrap instead of finishing.
+      const staleDrop = decision.reason === "let-drop" && below && sitting;
       const staleBounce = decision.reason === "floor-bounce" && sitting;
       if (world.scored || (LEGIT_WAIT.has(decision.reason) && !staleDrop && !staleBounce)) {
         idle = 0;

@@ -22,11 +22,14 @@ function clockPanic(world: AiWorld, limit: number): boolean {
 }
 
 /**
- * Combo window is 4s. Ninja / heat / frost miss more if they sit in the
- * pocket — leave earlier. Classic / rubber keep the calmer 1.85s.
+ * Combo window is 4s. Ground-wrap kits crawl back in at 44 px/s after an
+ * overshoot — panic-tapping a live arc dumps combo. Ninja's tapJump writes
+ * jumpFwd 1.2, so it waits longest; heat/frost (jumpFwd 1.0) a bit longer
+ * than classic. Rubber / classic keep the calmer 1.85s poke.
  */
 export function comboPaceLimit(world: Pick<AiWorld, "kit">): number {
-  if (world.kit.ninja || world.kit.heat || world.kit.frost) return 1.45;
+  if (world.kit.ninja) return 2.45;
+  if (world.kit.heat || world.kit.frost) return 2.15;
   return 1.85;
 }
 
@@ -261,6 +264,7 @@ export const defaultPolicy: BallAiPolicy = {
       if (
         comboPressure(world) &&
         !current.scores &&
+        !longTravel(world) &&
         world.ball.y > world.hoop.y + world.hoop.inner
       ) {
         return tap("pace-boost");
@@ -298,6 +302,17 @@ export const defaultPolicy: BallAiPolicy = {
     if (next.scores && !next.bank) return tap("predicted-make");
     if (next.scores && !longTravel(world) && !world.hitBoard) {
       return tap(scoreTapReason(next));
+    }
+
+    // tapJump writes full jumpVx. Long-travel kits (ninja) must ride a live
+    // arc — a combo-pace poke from mid-court wraps at 44 px/s and the streak dies.
+    if (
+      longTravel(world) &&
+      flyingAtHoop(world) &&
+      !onFloor(world) &&
+      !world.onApproachSide
+    ) {
+      return hold("ride-flight");
     }
 
     if (clockPanic(world, 1.6) || comboPressure(world)) return tap("shot-clock");
@@ -514,9 +529,9 @@ export const champPolicy: BallAiPolicy = {
 };
 
 /**
- * Ninja: jumpFwd 1.2 + grav 0.9. Only intercept under the cylinder / a
- * floor stall — a 42% court no-tap zone was landing live shots and
- * breaking combo. Climb, keep-air, and chain stay on default.
+ * Ninja: jumpFwd 1.2 + grav 0.9. tapJump *writes* that vector, so a mid-air
+ * poke from in front of the rim wraps and then crawls in at 44 px/s.
+ * Launch / keep-air / wrap-in stay on default; ride the live arc otherwise.
  */
 export const ninjaPolicy: BallAiPolicy = {
   id: "ninja",
@@ -535,7 +550,7 @@ export const ninjaPolicy: BallAiPolicy = {
     if (world.scored) return hold("already-scored");
 
     const current = helpers.predictCurrent(world);
-    if (confidentMake(world, current.scores)) return abstain("flight");
+    if (confidentMake(world, current.scores)) return hold("flight-scores");
 
     if (world.onApproachSide) return abstain("default-shot");
 
@@ -550,7 +565,7 @@ export const ninjaPolicy: BallAiPolicy = {
       if (onFloor(world) || lowBounce(world)) {
         if (
           bounceOpening(world) &&
-          !clockPanic(world, 1.45) &&
+          !clockPanic(world, 1.7) &&
           !comboPressure(world)
         ) {
           return hold("floor-bounce");
@@ -562,38 +577,51 @@ export const ninjaPolicy: BallAiPolicy = {
       return hold("let-drop");
     }
 
+    // About to settle — default keep-air / floor-launch. Do not ride into a miss-jump.
+    if (onFloor(world) || lowBounce(world)) return abstain("default-shot");
+
+    if (flyingAtHoop(world) || world.shotOpen) return hold("ride-flight");
     return abstain("default-shot");
   },
 };
 
 /**
  * Frost: freeze can keep the scored stand as the live hoop. chain-next
- * from inside that cylinder is a glass slam. Drop out, then default
- * launches at the same (or the other frozen) stand. +2 per frozen make
- * is in-engine — just don't break the streak getting there.
+ * from inside that cylinder is a glass slam. Drop / bounce to spacing,
+ * then default launches. Frozen-make +2 is in-engine.
  */
 export const frostPolicy: BallAiPolicy = {
   id: "frost",
   priority: 20,
   match: (kit) => kit.frost,
-  vote(world): AiVote {
+  vote(world, helpers): AiVote {
     if (world.kit.glass) return abstain("glass-owns");
-    if (world.shotMade) {
-      if (closeToHoop(world, 0.4) && !world.onApproachSide) {
-        if (aboveRim(world) && !onFloor(world)) return hold("chain-wait");
-        return hold("let-drop");
+    const frozen = (world.hoop.frostLeft ?? 0) > 0.05;
+    const sameStand =
+      closeToHoop(world, 0.4) &&
+      !world.onApproachSide &&
+      (world.shotMade || frozen);
+    if (sameStand) {
+      if (aboveRim(world) && !onFloor(world)) return hold("chain-wait");
+      if (onFloor(world) || lowBounce(world)) {
+        const spd = Math.hypot(world.ball.vx, world.ball.vy);
+        if (onFloor(world) && spd < 90) return tap("reset-boost");
+        return hold("floor-bounce");
       }
-      return abstain("chain");
+      return hold("let-drop");
     }
+    if (world.shotMade) return abstain("chain");
     if (world.scored) return hold("already-scored");
+    const current = helpers.predictCurrent(world);
+    if (confidentMake(world, current.scores)) return abstain("flight");
     return abstain("combo-driven");
   },
 };
 
 /**
- * Heat: default jumpFwd 1.0 (classic is 0.95). A last apex in the
- * pocket wraps. Release once we're flying at the hoop inside ~30% width.
- * Fire extras are combo-driven in-engine.
+ * Heat: default jumpFwd 1.0 (classic is 0.95). A last apex *in the rim
+ * pocket* wraps; a 30% court hold was falling short of first makes.
+ * Fire extras are combo-driven in-engine — protect the streak, don't poke.
  */
 export const heatPolicy: BallAiPolicy = {
   id: "heat",
@@ -603,14 +631,18 @@ export const heatPolicy: BallAiPolicy = {
     if (world.kit.glass) return abstain("glass-owns");
     if (world.shotMade) return abstain("chain");
     if (world.scored) return hold("already-scored");
-    if (world.onApproachSide || onFloor(world)) return abstain("default-shot");
+    if (world.onApproachSide || onFloor(world) || lowBounce(world)) {
+      return abstain("default-shot");
+    }
+    const pocket =
+      Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 2.05 + world.ball.r;
     if (
-      closeToHoop(world, 0.3) &&
+      pocket &&
       world.ball.y > world.hoop.y + world.ball.r * 0.12 &&
-      (flyingAtHoop(world) || underCylinder(world))
+      (flyingAtHoop(world) || underCylinder(world) || world.ball.vy > 18)
     ) {
       const current = helpers.predictCurrent(world);
-      if (confidentMake(world, current.scores)) return abstain("flight");
+      if (confidentMake(world, current.scores)) return hold("flight-scores");
       return hold("let-drop");
     }
     return abstain("combo-driven");

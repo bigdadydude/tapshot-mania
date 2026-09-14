@@ -441,6 +441,33 @@ describe("ball AI registry", () => {
     const ride = decideShot(flying, helpers);
     assert.notEqual(ride.reason, "apex-boost");
     assert.notEqual(ride.reason, "chase-boost");
+    assert.notEqual(ride.reason, "shot-clock");
+    assert.ok(ride.reason === "ride-flight" || ride.reason === "let-drop");
+  });
+
+  it("ninja rides a live arc instead of combo-pace poking", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const w = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      shotOpen: true,
+      combo: 8,
+      streak: 8,
+      comboClock: 1.7,
+      comboCounting: true,
+      ball: { x: hoop.x - 160, y: hoop.y + 80, vx: 280, vy: -30, r: 19.5 },
+    });
+    const d = decideShot(w, helpers);
+    assert.equal(d.tap, false);
+    assert.ok(d.reason === "ride-flight" || d.reason === "let-drop");
   });
 
   it("ninja taps out of a floor stall under the rim instead of freezing", () => {
@@ -794,6 +821,27 @@ describe("AI controller", () => {
       hoop: { x: 200, y: 300, inner: 28, side: -1, tube: 4, moving: false },
     });
     assert.equal(ai.tick(sky), false);
+    assert.notEqual(ai.lastDecision()?.reason, "watchdog");
+  });
+
+  it("watchdog does not mash a flying let-drop just because combo pace elapsed", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "stuck",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "hold", reason: "let-drop" }),
+    });
+    ai.setEnabled(true);
+    const flying = world({
+      dt: AI_WATCHDOG,
+      comboCounting: true,
+      streak: 8,
+      comboClock: 2.5,
+      ball: { x: 180, y: 400, vx: 220, vy: -40, r: 19.5 },
+      hoop: { x: 320, y: 330, inner: 28, side: 1, tube: 4.3, moving: false },
+    });
+    assert.equal(ai.tick(flying), false);
     assert.notEqual(ai.lastDecision()?.reason, "watchdog");
   });
 });
