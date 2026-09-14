@@ -67,10 +67,17 @@ export const defaultPolicy: BallAiPolicy = {
     if (confidentMake(world, current.scores)) return hold("flight-scores");
 
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
-    const aboveRim = world.ball.y + world.ball.r * 0.2 < world.hoop.y;
-    // Tapping resets jump velocity. Doing that above the rim launches into
-    // orbit and the shot clock dies — let it fall, then boost below.
-    if (aboveRim && !world.onApproachSide && !onFloor(world)) {
+    const releaseY = world.hoop.y + world.hoop.inner * 2.2;
+    // Stop mashing in a band below the rim (and anything above it). A last
+    // tap here resets jump at basket height and sails past the hoop.
+    const inRelease =
+      !onFloor(world) && !world.onApproachSide && world.ball.y < releaseY;
+    if (inRelease) {
+      if (pastHoop(world) && world.ball.vy > 8) return tap("wrap-boost");
+      if (world.ball.vy > 20) {
+        const save = helpers.predictTap(world);
+        if (save.scores && !current.scores) return tap("save-drop");
+      }
       return hold("let-drop");
     }
 

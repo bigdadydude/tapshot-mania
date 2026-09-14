@@ -217,6 +217,17 @@ describe("ball AI registry", () => {
     assert.equal(d.reason, "let-drop");
   });
 
+  it("releases in the band below the rim instead of sailing past", () => {
+    const hoop = { x: 200, y: 300, inner: 28, side: -1 as const, tube: 4, moving: false };
+    const w = world({
+      hoop,
+      ball: { x: 210, y: 348, vx: -80, vy: -200, r: 19.5 },
+    });
+    const d = decideShot(w, helpers);
+    assert.equal(d.tap, false);
+    assert.equal(d.reason, "let-drop");
+  });
+
   it("keeps boosting a rising far shot instead of trusting a long-range make guess", () => {
     const w = world({
       hoop: { x: 323, y: 330, inner: 28, side: 1, tube: 4.3, moving: false },
