@@ -264,6 +264,7 @@ export const defaultPolicy: BallAiPolicy = {
       !world.kit.glass &&
       (onFloor(world) || lowBounce(world))
     ) {
+      if (closeToHoop(world) && !comboPressure(world)) return hold("let-drop");
       return tap("keep-air");
     }
 
