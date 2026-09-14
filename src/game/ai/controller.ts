@@ -21,7 +21,6 @@ const SNAPPY = new Set([
   "keep-air",
   "floor-launch",
   "pace-boost",
-  "early-jump",
   "far-climb",
   "hole-spam",
 ]);
