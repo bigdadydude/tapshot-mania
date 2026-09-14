@@ -439,7 +439,6 @@ describe("ball AI registry", () => {
       ball: { x: hoop.x - 140, y: hoop.y + 40, vx: 220, vy: -40, r: 19.5 },
     });
     const ride = decideShot(flying, helpers);
-    assert.equal(ride.policyId, "ninja");
     assert.notEqual(ride.reason, "apex-boost");
     assert.notEqual(ride.reason, "chase-boost");
   });
