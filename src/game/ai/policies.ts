@@ -39,16 +39,55 @@ function nearRim(world: AiWorld): boolean {
   return Math.hypot(world.ball.x - world.hoop.x, world.ball.y - world.hoop.y) < reach;
 }
 
-/** Court-outside of the rim, toward the backboard — classic 擦板 window. */
-function boardSide(world: AiWorld): boolean {
+/** Court-facing backboard plane — same visW / gap ratios as `boardGeom`. */
+function boardFaceX(world: AiWorld): number {
   const h = world.hoop;
-  return h.side < 0
-    ? world.ball.x <= h.x - h.inner * 0.12
-    : world.ball.x >= h.x + h.inner * 0.12;
+  const gap = Math.max(10, h.inner * 0.48);
+  return h.side < 0 ? h.x - h.inner - gap : h.x + h.inner + gap;
+}
+
+/** Between the rim and the glass — the only place a bank tap should fire. */
+function nearBoard(world: AiWorld): boolean {
+  const h = world.hoop;
+  const face = boardFaceX(world);
+  const visW = Math.max(10, world.world.w * 0.052 * (2 / 3));
+  const pad = visW + world.ball.r * 1.8;
+  const rim = h.side < 0 ? h.x - h.inner * 0.22 : h.x + h.inner * 0.22;
+  if (h.side < 0) return world.ball.x <= rim && world.ball.x >= face - pad;
+  return world.ball.x >= rim && world.ball.x <= face + pad;
+}
+
+function inBankBand(world: AiWorld): boolean {
+  const top = world.hoop.y - world.world.h * 0.2;
+  const bot = world.hoop.y + world.hoop.inner * 1.55;
+  return world.ball.y > top && world.ball.y < bot;
 }
 
 function aboveRim(world: AiWorld): boolean {
   return world.ball.y + world.ball.r * 0.15 < world.hoop.y;
+}
+
+/** Rubber (ballMul) and long jumpFwd kits (ninja) travel a long way off a bounce. */
+function longTravel(world: AiWorld): boolean {
+  return world.ballMul > 1.2 || Math.abs(world.jumpVx) > world.world.w * 0.8;
+}
+
+function messyContact(world: AiWorld): boolean {
+  return (
+    world.rimHits >= 2 ||
+    (world.hitBoard && world.hitRim) ||
+    (world.shotMissed && (world.hitRim || world.hitBoard || world.rimHits >= 1))
+  );
+}
+
+function lowBounce(world: AiWorld): boolean {
+  const floor = world.world.floorY - world.ball.r;
+  return world.ball.y >= floor - Math.max(56, world.world.h * 0.1);
+}
+
+function bounceOpening(world: AiWorld): boolean {
+  const dx = world.hoop.x - world.ball.x;
+  return world.ball.vx * dx < -24;
 }
 
 /**
@@ -86,6 +125,40 @@ function sameJumpAngle(world: AiWorld): boolean {
   return dot / (sp * sj) > 0.84;
 }
 
+/**
+ * Commit 擦板 only in the glass pocket. Mid-court `predictTap.bank` is how
+ * long-travel balls spam the board; wrap-boost here flies past it.
+ */
+function bankCommit(world: AiWorld, helpers: AiHelpers): AiVote | null {
+  if (!nearBoard(world) || !inBankBand(world) || onFloor(world)) return null;
+  const current = helpers.predictCurrent(world);
+  const next = helpers.predictTap(world);
+  if (current.scores && (current.bank || current.swish)) return hold("flight-scores");
+  if (world.hitBoard && world.ball.vy > 10 && !next.swish) return hold("let-drop");
+  if (next.scores && next.bank && !sameJumpAngle(world)) return tap("predicted-bank");
+  if (pastHoop(world)) return hold("let-drop");
+  return null;
+}
+
+function floorRecover(world: AiWorld, next: { scores: boolean; bank: boolean; swish: boolean }): AiVote {
+  if (clockPanic(world, 1.7)) return tap("floor-launch");
+  if (next.scores && next.swish) return tap("floor-launch");
+  if (next.scores && nearBoard(world) && next.bank) return tap("predicted-bank");
+  const close = Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.4;
+  const speed = Math.hypot(world.ball.vx, world.ball.vy);
+  const recover =
+    messyContact(world) || world.shotMissed || (longTravel(world) && (world.hitBoard || world.hitRim));
+  if (
+    recover &&
+    close &&
+    !clockPanic(world, 2.1) &&
+    (speed > 48 || bounceOpening(world) || lowBounce(world))
+  ) {
+    return hold("floor-bounce");
+  }
+  return tap("floor-launch");
+}
+
 /** Generic tap timing — used for classic / lava / frost / ninja / unknown future balls. */
 export const defaultPolicy: BallAiPolicy = {
   id: "default",
@@ -107,21 +180,15 @@ export const defaultPolicy: BallAiPolicy = {
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
 
+    const bank = bankCommit(world, helpers);
+    if (bank) return bank;
+
     // Full jumpVy from above the rim is an orbit. One tap at/below the rim
     // cannot hang all the way to the far hoop — mash while *below* the rim
     // until the ball is in the pocket, then release / 擦板.
     if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
-      if (pastHoop(world) && world.ball.vy > 8) return tap("wrap-boost");
-      const save = helpers.predictTap(world);
-      if (
-        save.scores &&
-        save.bank &&
-        !save.swish &&
-        world.ball.vy > 18 &&
-        boardSide(world) &&
-        nearRim(world)
-      ) {
-        return tap("predicted-bank");
+      if (pastHoop(world) && world.ball.vy > 8 && !nearBoard(world)) {
+        return tap("wrap-boost");
       }
       return hold("let-drop");
     }
@@ -136,31 +203,49 @@ export const defaultPolicy: BallAiPolicy = {
       pocket &&
       world.ball.y < releaseY;
     if (inRelease) {
-      if (pastHoop(world) && world.ball.vy > 8) return tap("wrap-boost");
-      const save = helpers.predictTap(world);
-      if (save.scores && save.bank && !current.swish) {
-        if (!current.scores || boardSide(world)) return tap("predicted-bank");
+      if (pastHoop(world) && world.ball.vy > 8 && !nearBoard(world)) {
+        return tap("wrap-boost");
       }
-      if (save.scores && !current.scores) {
-        if (world.ball.vy > 12 || save.bank) return tap(scoreTapReason(save));
+      const save = helpers.predictTap(world);
+      if (save.scores && save.swish && !current.scores && world.ball.vy > 12) {
+        return tap("predicted-make");
       }
       return hold("let-drop");
     }
 
+    // Missed glass / rim pinball: don't keep boosting — land, bounce away, re-attack.
+    if (
+      !world.kit.glass &&
+      lowBounce(world) &&
+      messyContact(world) &&
+      !clockPanic(world, 1.7)
+    ) {
+      const nextLow = helpers.predictTap(world);
+      if (!(nextLow.scores && nextLow.swish)) return hold("floor-bounce");
+    }
+
     const next = helpers.predictTap(world);
-    if (next.scores && next.bank && !next.swish && boardSide(world)) {
+    if (next.scores && next.swish) return tap("predicted-make");
+    if (next.scores && next.bank && nearBoard(world) && inBankBand(world)) {
       return tap("predicted-bank");
     }
-    if (next.scores) return tap(scoreTapReason(next));
+    if (next.scores && !next.bank) return tap("predicted-make");
+    if (next.scores && !longTravel(world) && !world.hitBoard) {
+      return tap(scoreTapReason(next));
+    }
 
     if (clockPanic(world, 1.6)) return tap("shot-clock");
 
     if (world.ballHidden && world.onApproachSide) return tap("approach-enter");
-    if (onFloor(world)) return tap("floor-launch");
+    if (onFloor(world) || (lowBounce(world) && (world.shotMissed || messyContact(world)))) {
+      return floorRecover(world, next);
+    }
 
     const launch = onLaunchSide(world) || world.onApproachSide || pastHoop(world);
-    if (belowRim && launch) return tap("apex-boost");
-    if (pastHoop(world) && !world.onApproachSide) return tap("wrap-boost");
+    if (belowRim && launch && !messyContact(world)) return tap("apex-boost");
+    if (pastHoop(world) && !world.onApproachSide && !nearBoard(world)) {
+      return tap("wrap-boost");
+    }
 
     if (world.kit.wrap === "height" && world.onApproachSide) {
       return tap("wrap-approach");
@@ -259,20 +344,24 @@ export const wrapHeightPolicy: BallAiPolicy = {
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
 
+    const bank = bankCommit(world, helpers);
+    if (bank) return bank;
+
     // Height-wrap balls stay airborne — tapping above the rim resets jumpVy
     // and they climb off the top of the screen (the rubber orbit).
     if (aboveRim(world) && !onFloor(world)) {
       if (world.ball.vy > 28) {
         const next = helpers.predictTap(world);
-        if (next.scores && (next.swish || next.bank) && !sameJumpAngle(world)) {
-          return tap(scoreTapReason(next));
+        if (next.scores && next.swish && !sameJumpAngle(world)) {
+          return tap("predicted-make");
         }
       }
       return hold("let-drop");
     }
 
     const next = helpers.predictTap(world);
-    const cleanWindow = next.scores && (next.swish || next.bank) && !sameJumpAngle(world);
+    const cleanWindow =
+      next.scores && (next.swish || (next.bank && nearBoard(world))) && !sameJumpAngle(world);
     const spaced =
       Math.abs(world.ball.y - world.hoop.y) > world.hoop.inner * 2.1 ||
       Math.abs(world.ball.x - world.hoop.x) > world.hoop.inner * 2.8;
@@ -282,16 +371,22 @@ export const wrapHeightPolicy: BallAiPolicy = {
     // height / bank window instead of repeating the miss.
     if (rattled && !clockPanic(world, 1.35)) {
       if (cleanWindow && spaced) return tap(scoreTapReason(next));
-      if (nearRim(world) || !spaced) return hold(world.hitRim && nearRim(world) ? "let-rattle" : "wait-spacing");
+      if (nearRim(world) || !spaced) {
+        return hold(world.hitRim && nearRim(world) ? "let-rattle" : "wait-spacing");
+      }
     }
 
-    if (next.scores && next.bank && !next.swish) return tap("predicted-bank");
-    if (next.scores && !sameJumpAngle(world)) return tap(scoreTapReason(next));
-    if (next.scores && !rattled) return tap(scoreTapReason(next));
+    if (next.scores && next.swish) return tap("predicted-make");
+    if (next.scores && next.bank && nearBoard(world) && inBankBand(world) && !sameJumpAngle(world)) {
+      return tap("predicted-bank");
+    }
+    if (next.scores && !next.bank && !sameJumpAngle(world)) return tap(scoreTapReason(next));
+    if (next.scores && !rattled && !next.bank) return tap(scoreTapReason(next));
 
     if (world.onApproachSide) {
       if (clockPanic(world, 1.45)) return tap("shot-clock");
       if (rattled && !spaced) return hold("wait-spacing");
+      if (world.hitBoard && !spaced) return hold("wait-spacing");
       if (world.ball.vy > 8 && world.ball.y > world.hoop.y + world.ball.r) {
         return tap("wrap-approach");
       }

@@ -66,12 +66,13 @@ Skills live on `effectiveBall()` flags (`heat`, `frost`, `champ`, `anti`,
 The default policy covers plain kinematics for anything that only changes jump / gravity.
 
 - **Chain:** at the make (`shotMade`) it jumps toward the **new** hoop immediately — no floor wait. It only holds `chain-wait` while still *above* the new rim (a full `jumpVy` from there orbits). `tapJump` after a counted make is a new shot and does not break combo.
-- **Banks:** the kinematic guess includes a court-facing backboard bounce. In the release band, a poor direct thread on the glass side becomes `predicted-bank` (擦板) instead of a hold.
-- **Climb / release:** mash while below the basket, release in the band under the rim, let-drop above it so jump resets cannot orbit. The watchdog also refuses to mash from above the rim.
+- **Banks:** 擦板 only in the **glass pocket** (between rim and backboard). Mid-court bank guesses and `wrap-boost` past the board were the “不停打板 / fly past the glass” bugs. If the current flight already banks in, hold.
+- **Floor bounce reset:** after a messy miss (rim/board), **do not mash** on the floor — hold `floor-bounce` so the bounce opens spacing, then `floor-launch`. First shots and clean distant windows still launch immediately.
+- **Climb / release:** mash while below the basket on a clean look, release in the pocket, let-drop above the rim. Watchdog refuses to mash from above the rim.
 
-`glass` (priority 70) still protects a real dropping swish, but **never mashed a fake finish on the tube** (0 restitution sticks and shatters). Below the rim it **abstains so default can climb** (glass gravity cannot reach from the floor in one tap), then `commit-make` / `glass-settle` in the pocket. `wrap-height` (rubber) **lets a rim rattle resolve** (`let-rattle` / `wait-spacing`) instead of repeating the same `jumpVx`/`jumpVy`, and only retakes once a spaced bank/swish window opens.
+`glass` (priority 70) still protects a real dropping swish, climbs via default below the rim, then commits in the pocket. `wrap-height` (rubber) lets rattles resolve and only banks in the glass pocket — not every bounce.
 
-Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, steer in a black hole, or (rubber) refuse a bad rim spam. Glass must not freeze on the rim.
+Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, steer in a black hole, or (rubber) refuse a bad rim spam. Do not abandon floor-bounce recovery for high-travel balls.
 
 ## Formal menu later
 
@@ -98,6 +99,9 @@ options screen cannot drift.
   also drops cooldown on hoop-side change and watchdog-taps if idle too long.
 - Hold `flight-scores` from across the court, or after the make already
   counted. Keep tapping through flight and recover after a miss/bounce.
-- Ignore the backboard. Direct-only guesses miss 擦板 windows humans use.
+- Ignore the backboard. Direct-only guesses miss 擦板 windows humans use — but
+  only commit banks *at* the glass, never as mid-court spam.
 - Spam the same jump after a rubber rim rattle, or float forever on glass
   waiting for a perfect swish.
+- Abandon floor-bounce recovery. After a bad bounce, humans land, ride the
+  bounce away, and shoot again. Hold `floor-bounce` until spacing opens.

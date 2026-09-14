@@ -343,6 +343,75 @@ describe("ball AI registry", () => {
     assert.notEqual(climb.reason, "glass-settle");
   });
 
+  it("commits a bank in the glass pocket and does not wrap-boost past the board", () => {
+    const w = 390;
+    const hoop = {
+      x: w - 28 - w * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    // Already dropping into the glass — hold, don't tap past it.
+    const onGlass = world({
+      hoop,
+      jumpVx: w * 0.76,
+      ball: { x: hoop.x + hoop.inner * 0.85, y: hoop.y - 52, vx: 160, vy: 90, r: 19.5 },
+    });
+    const stay = decideShot(onGlass, helpers);
+    assert.equal(stay.tap, false);
+    assert.ok(stay.reason === "flight-scores" || stay.reason === "let-drop");
+
+    const overfly = world({
+      hoop,
+      jumpVx: w * 0.76,
+      ball: { x: hoop.x + hoop.inner * 2.2, y: hoop.y + 10, vx: 220, vy: 80, r: 19.5 },
+    });
+    const hold = decideShot(overfly, helpers);
+    assert.equal(hold.tap, false);
+    assert.notEqual(hold.reason, "wrap-boost");
+  });
+
+  it("lets a messy miss bounce on the floor to open spacing instead of mashing", () => {
+    const h = 844;
+    const floorY = h * 0.765;
+    const r = 19.5;
+    const hoop = { x: 66, y: 330, inner: 28, side: -1 as const, tube: 4.3, moving: false };
+    const w = world({
+      hoop,
+      shotMissed: true,
+      hitRim: true,
+      hitBoard: true,
+      rimHits: 3,
+      ball: { x: 90, y: floorY - r, vx: 160, vy: 30, r },
+    });
+    const d = decideShot(w, helpers);
+    assert.equal(d.tap, false);
+    assert.equal(d.reason, "floor-bounce");
+  });
+
+  it("does not bank-spam from mid-court just because a board bounce might score", () => {
+    const w = 390;
+    const hoop = {
+      x: w - 28 - w * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const mid = world({
+      hoop,
+      jumpVx: w * 0.76 * 1.2,
+      ballMul: 1,
+      kit: flags({ ninja: true }),
+      ball: { x: w * 0.45, y: 480, vx: 200, vy: -80, r: 19.5 },
+    });
+    const d = decideShot(mid, helpers);
+    assert.notEqual(d.reason, "predicted-bank");
+  });
+
   it("rubber holds a rim rattle instead of repeating the same jump angle", () => {
     const hoop = { x: 66, y: 330, inner: 28, side: -1 as const, tube: 4.3, moving: false };
     const w = world({

@@ -23,6 +23,8 @@ const LEGIT_WAIT = new Set([
   "protect-swish",
   "protect-finish",
   "protect-make",
+  "floor-bounce",
+  "let-bounce",
 ]);
 
 export type AiController = {
