@@ -48,8 +48,9 @@ import {
   devRevokeRogue,
   type RogueRun,
 } from "./rogue";
+import { createAiController, flagsFromKit } from "./ai";
 
-export const GAME_REV = 293;
+export const GAME_REV = 294;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -127,6 +128,8 @@ export type GameHandle = {
   rogueEndRun: () => void;
   /** Dev settle: return to sandbox play without exiting developer mode. */
   devBackFromSettle: () => void;
+  /** Session-only auto-play (demo / AFK). Default off; not persisted. */
+  setAutoPlay: (on: boolean) => void;
   /** Activate inventory item / usable ornament from pause. */
   useRogue: (id: string) => void;
   /** Answer连击保护 prompt. */
@@ -241,6 +244,7 @@ export function createGame(
     x: number;
     y: number;
   };
+  const autoPlay = createAiController();
   let pathHist: PathSample[] = [];
   let pathClock = 0;
   let ninjaGhosts: NinjaGhost[] = [];
@@ -888,6 +892,7 @@ export function createGame(
       playMode,
       prison: prisonHud(),
       rogue: toRogueHud(isRogueMode() ? rogueRun : null),
+      autoPlay: autoPlay.enabled(),
     });
   }
 
@@ -1590,6 +1595,7 @@ export function createGame(
       prisonFreeExtendUsed = false;
       prisonShackleBest = 0;
     }
+    autoPlay.reset();
     persist();
     emitHud();
   }
@@ -1759,6 +1765,72 @@ export function createGame(
 
   function onApproachSide() {
     return hoop.side > 0 ? ball.x < 0 : ball.x > world.w;
+  }
+
+  function snapshotAiWorld(dt: number) {
+    const heroClutch =
+      isRogueMode() && rogueRun && hasHeroMoment(rogueRun) && (buzzer || timeUp);
+    const hidden = ballHidden();
+    const approach = onApproachSide();
+    return {
+      dt,
+      canShoot:
+        phase === "playing" &&
+        !paused &&
+        !((buzzer || timeUp) && !heroClutch) &&
+        !(hidden && !approach),
+      phase,
+      paused,
+      tapLock,
+      scored: ball.scored,
+      shotOpen,
+      shotMade,
+      timer,
+      timerArmed,
+      buzzer,
+      timeUp,
+      combo,
+      streak,
+      world: { w: world.w, h: world.h, floorY: world.floorY },
+      ball: { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy, r: ball.r },
+      hoop: {
+        x: hoop.x,
+        y: hoop.y,
+        inner: hoop.inner,
+        side: hoop.side,
+        tube: hoop.tube,
+        moving: hoop.moving,
+      },
+      other: other
+        ? {
+            x: other.x,
+            y: other.y,
+            inner: other.inner,
+            side: other.side,
+            tube: other.tube,
+            moving: other.moving,
+            frostLeft: other.frostLeft,
+          }
+        : null,
+      ballHidden: hidden,
+      onApproachSide: approach,
+      holeOn,
+      hole: holeOn ? { x: holeX, y: holeY, r: holeR } : null,
+      antiMatter: antiMatter
+        ? { x: antiMatter.x, y: antiMatter.y, r: antiMatter.r }
+        : null,
+      antiCharge,
+      champMode,
+      glassBase,
+      kit: flagsFromKit(kit()),
+      jumpVx: jumpVx(),
+      jumpVy: jumpVy(),
+      gravity: gravity(),
+      air: pMul("air"),
+      buoy: pMul("buoy"),
+      ballMul: pMul("ball"),
+      wrapPad: wrapPad(),
+    };
   }
 
   function predictBuzzerMake() {
@@ -1952,6 +2024,7 @@ export function createGame(
     boardHitLock = 0;
     resetPrisonRun();
     resetNinjaPath();
+    autoPlay.reset();
     if (isPrison()) {
       callouts.push({
         text: "审判",
@@ -2503,6 +2576,7 @@ export function createGame(
     leaveSandbox();
     resetPrisonRun();
     resetNinjaPath();
+    autoPlay.reset();
     emitHud();
   }
 
@@ -3172,6 +3246,11 @@ export function createGame(
         callouts[i] = callouts[callouts.length - 1]!;
         callouts.pop();
       } else i += 1;
+    }
+
+    // Isolated auto-play: no-op when OFF. Taps the real shot path only.
+    if (autoPlay.enabled() && autoPlay.tick(snapshotAiWorld(dt))) {
+      tapJump();
     }
   }
 
@@ -4561,6 +4640,7 @@ export function createGame(
   const handle: GameHandle = {
     destroy() {
       running = false;
+      autoPlay.setEnabled(false);
       cancelAnimationFrame(raf);
       canvas.removeEventListener("pointerdown", onDown);
       window.removeEventListener("keydown", onKey);
@@ -4698,6 +4778,10 @@ export function createGame(
     setRogueFuse(id) {
       applyRogueFuse(id);
     },
+    setAutoPlay(on) {
+      autoPlay.setEnabled(Boolean(on));
+      emitHud();
+    },
     dev(cmd) {
       applyDev(cmd);
     },
@@ -4749,9 +4833,15 @@ export function createGame(
         playMode,
         rogueStage: rogueRun?.stage ?? null,
         rogueEndless: rogueRun?.endless ?? null,
+        autoPlay: autoPlay.enabled(),
+        autoPlayReason: autoPlay.lastDecision()?.reason ?? null,
       };
     },
     tap: () => tapJump(),
+    setAutoPlay: (on: boolean) => {
+      autoPlay.setEnabled(Boolean(on));
+      emitHud();
+    },
     setCombo(n: number) {
       combo = Math.max(0, Math.floor(n));
       streak = combo;

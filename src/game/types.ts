@@ -153,6 +153,8 @@ export type HudState = {
   playMode: PlayMode;
   prison: PrisonHud | null;
   rogue: RogueHud | null;
+  /** Session-only auto-play. Default false; not persisted. */
+  autoPlay: boolean;
 };
 
 export type World = {
