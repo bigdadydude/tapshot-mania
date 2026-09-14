@@ -50,7 +50,7 @@ import {
 } from "./rogue";
 import { createAiController, flagsFromKit } from "./ai";
 
-export const GAME_REV = 300;
+export const GAME_REV = 301;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -1561,8 +1561,8 @@ export function createGame(
     } else {
       resetAntiRun();
     }
-    if (devOn) {
-      applyKitPhys();
+    applyKitPhys();
+    if (devOn || phase === "title") {
       remakeBall(hoop.side < 0 ? 1 : -1);
       prevBallX = ball.x;
       prevBallY = ball.y;
@@ -4814,6 +4814,7 @@ export function createGame(
         buzzer,
         madeCount,
         lastFinish,
+        ballId,
         hoopInner: hoop.inner,
         ballR: ball.r,
         hold: other?.hold ?? 0,

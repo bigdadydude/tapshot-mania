@@ -322,7 +322,7 @@ describe("ball AI registry", () => {
       ballMul: 2,
       jumpVx: -296,
       jumpVy: -900,
-      ball: { x: 70, y: 328, vx: -280, vy: -860, r: 9.75 },
+      ball: { x: 70, y: 360, vx: -280, vy: 220, r: 9.75 },
     });
     const d = decideShot(w, helpers);
     assert.equal(d.tap, false);

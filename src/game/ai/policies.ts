@@ -169,8 +169,14 @@ export const glassPolicy: BallAiPolicy = {
     const next = helpers.predictTap(world);
     if (confidentMake(world, current.scores) && current.swish) return hold("protect-swish");
     if (confidentMake(world, current.scores)) return hold("protect-finish");
+
+    const aboveRim = world.ball.y + world.ball.r * 0.15 < world.hoop.y;
+    if (aboveRim && !onFloor(world)) {
+      if (world.ball.vy > 24 && next.scores && nearRim(world)) return tap("commit-make");
+      return hold("glass-settle");
+    }
+
     if (next.scores && next.swish) return tap("seek-swish");
-    // Commit a make (even rim) rather than float looking for a perfect swish.
     if (next.scores) return tap("commit-make");
     if (onFloor(world)) return tap("glass-launch");
     if (clockPanic(world, 1.35) && next.scores) return tap("shot-clock");
@@ -202,6 +208,17 @@ export const wrapHeightPolicy: BallAiPolicy = {
 
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
+
+    // Height-wrap balls stay airborne — tapping above the rim resets jumpVy
+    // and they climb off the top of the screen (the rubber orbit).
+    const aboveRim = world.ball.y + world.ball.r * 0.15 < world.hoop.y;
+    if (aboveRim && !onFloor(world)) {
+      if (world.ball.vy > 20) {
+        const next = helpers.predictTap(world);
+        if (next.scores && (next.swish || next.bank)) return tap(scoreTapReason(next));
+      }
+      return hold("let-drop");
+    }
 
     const rattling = world.hitRim && nearRim(world) && Math.abs(world.ball.vy) > 70;
     if (rattling && !clockPanic(world, 1.4)) {
