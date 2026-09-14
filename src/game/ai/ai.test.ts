@@ -436,13 +436,36 @@ describe("ball AI registry", () => {
       hoop,
       jumpVx: w * 0.76 * 1.2,
       kit: flags({ ninja: true }),
-      ball: { x: hoop.x - 140, y: hoop.y + 40, vx: 220, vy: -40, r: 19.5 },
+      ball: { x: hoop.x - 140, y: hoop.y + 40, vx: 220, vy: 80, r: 19.5 },
     });
     const ride = decideShot(flying, helpers);
     assert.notEqual(ride.reason, "apex-boost");
     assert.notEqual(ride.reason, "chase-boost");
     assert.notEqual(ride.reason, "shot-clock");
     assert.ok(ride.reason === "ride-flight" || ride.reason === "let-drop");
+  });
+
+  it("ninja apex-boosts a rising mid-court shot so the 1.2 jump still reaches", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const rising = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      shotOpen: true,
+      ball: { x: hoop.x - 200, y: hoop.y + 180, vx: 280, vy: -400, r: 19.5 },
+    });
+    const d = decideShot(rising, helpers);
+    assert.equal(d.tap, true);
+    assert.ok(
+      d.reason === "apex-boost" || d.reason === "keep-air" || d.reason === "predicted-make",
+    );
   });
 
   it("ninja rides a live arc instead of combo-pace poking", () => {
@@ -463,11 +486,13 @@ describe("ball AI registry", () => {
       streak: 8,
       comboClock: 1.7,
       comboCounting: true,
-      ball: { x: hoop.x - 160, y: hoop.y + 80, vx: 280, vy: -30, r: 19.5 },
+      ball: { x: hoop.x - 160, y: hoop.y + 80, vx: 280, vy: 90, r: 19.5 },
     });
     const d = decideShot(w, helpers);
     assert.equal(d.tap, false);
     assert.ok(d.reason === "ride-flight" || d.reason === "let-drop");
+    assert.notEqual(d.reason, "shot-clock");
+    assert.notEqual(d.reason, "apex-boost");
   });
 
   it("ninja taps out of a floor stall under the rim instead of freezing", () => {

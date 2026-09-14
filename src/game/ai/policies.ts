@@ -304,13 +304,15 @@ export const defaultPolicy: BallAiPolicy = {
       return tap(scoreTapReason(next));
     }
 
-    // tapJump writes full jumpVx. Long-travel kits (ninja) must ride a live
-    // arc — a combo-pace poke from mid-court wraps at 44 px/s and the streak dies.
+    // tapJump writes full jumpVx. Long-travel kits (ninja) must ride a
+    // *descending* arc — a combo-pace poke wraps at 44 px/s. Still rising
+    // they need apex-boost or the 1.2 jump peeks early and tunnels under.
     if (
       longTravel(world) &&
       flyingAtHoop(world) &&
       !onFloor(world) &&
-      !world.onApproachSide
+      !world.onApproachSide &&
+      world.ball.vy > 12
     ) {
       return hold("ride-flight");
     }
@@ -330,7 +332,8 @@ export const defaultPolicy: BallAiPolicy = {
       if (
         longTravel(world) &&
         !world.onApproachSide &&
-        (closeToHoop(world) || flyingAtHoop(world))
+        (closeToHoop(world) || flyingAtHoop(world)) &&
+        world.ball.vy > 12
       ) {
         return hold("let-drop");
       }
@@ -529,9 +532,9 @@ export const champPolicy: BallAiPolicy = {
 };
 
 /**
- * Ninja: jumpFwd 1.2 + grav 0.9. tapJump *writes* that vector, so a mid-air
- * poke from in front of the rim wraps and then crawls in at 44 px/s.
- * Launch / keep-air / wrap-in stay on default; ride the live arc otherwise.
+ * Ninja: jumpFwd 1.2 + grav 0.9. tapJump *writes* that vector.
+ * Height pumps and descending ride-flight live on default (`longTravel`).
+ * This policy only owns the under-rim freeze and the past-board wrap.
  */
 export const ninjaPolicy: BallAiPolicy = {
   id: "ninja",
@@ -563,24 +566,23 @@ export const ninjaPolicy: BallAiPolicy = {
     const under = underCylinder(world);
     if (under && !current.scores) {
       if (onFloor(world) || lowBounce(world)) {
+        const spd = Math.hypot(world.ball.vx, world.ball.vy);
         if (
           bounceOpening(world) &&
+          Math.abs(world.ball.vx) > 70 &&
           !clockPanic(world, 1.7) &&
           !comboPressure(world)
         ) {
           return hold("floor-bounce");
         }
-        const spd = Math.hypot(world.ball.vx, world.ball.vy);
-        if (spd < 90 || stalledNearHoop(world)) return tap("reset-boost");
+        if (spd < 140 || Math.abs(world.ball.vx) < 90 || stalledNearHoop(world)) {
+          return tap("reset-boost");
+        }
         return hold("floor-bounce");
       }
       return hold("let-drop");
     }
 
-    // About to settle — default keep-air / floor-launch. Do not ride into a miss-jump.
-    if (onFloor(world) || lowBounce(world)) return abstain("default-shot");
-
-    if (flyingAtHoop(world) || world.shotOpen) return hold("ride-flight");
     return abstain("default-shot");
   },
 };
