@@ -343,7 +343,10 @@ export const glassPolicy: BallAiPolicy = {
     }
 
     if (onFloor(world)) return tap("glass-launch");
-    return abstain("climb");
+    // Default withholds apex-boost after rim/board mess so ground balls can
+    // floor-bounce. Glass cannot land — keep climbing.
+    if (!aboveRim(world)) return tap("glass-launch");
+    return hold("glass-settle");
   },
 };
 
