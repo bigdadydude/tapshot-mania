@@ -561,7 +561,11 @@ export const ninjaPolicy: BallAiPolicy = {
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
 
-    if (world.onApproachSide) return abstain("default-shot");
+    if (world.onApproachSide) {
+      // Offscreen 1.2 jump repeats the miss that just wrapped.
+      if (!comboPressure(world) && !clockPanic(world, 1.5)) return hold("wait-wrap");
+      return abstain("default-shot");
+    }
 
     if (pastBoard(world)) {
       const headingOut = world.hoop.side * world.ball.vx > 12;
@@ -587,6 +591,19 @@ export const ninjaPolicy: BallAiPolicy = {
         return hold("floor-bounce");
       }
       return hold("let-drop");
+    }
+
+    // After a wrap the ball crawls in at 44 px/s from the far edge. A 1.2
+    // jump from there tunnels; wait for the mid-court band the opener uses.
+    if (onFloor(world) || lowBounce(world)) {
+      if (world.shotOpen && !world.shotMissed) return abstain("default-shot");
+      const dx = Math.abs(world.ball.x - world.hoop.x);
+      const band = dx > world.world.w * 0.48 && dx < world.world.w * 0.7;
+      if (!band && !comboPressure(world) && !clockPanic(world, 1.7)) {
+        const spd = Math.hypot(world.ball.vx, world.ball.vy);
+        if (spd < 24) return tap("reset-boost");
+        return hold("wait-spacing");
+      }
     }
 
     return abstain("default-shot");
