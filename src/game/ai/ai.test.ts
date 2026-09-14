@@ -12,7 +12,7 @@ import {
   installBuiltInBallAiPolicies,
   resetBuiltInInstallForTests,
 } from "./policies.ts";
-import { createAiController, AI_TAP_INTERVAL } from "./controller.ts";
+import { createAiController, AI_TAP_INTERVAL, AI_WATCHDOG } from "./controller.ts";
 import { predictCurrent, predictTap } from "./predict.ts";
 import { effectiveBall } from "../balls.ts";
 
@@ -256,5 +256,42 @@ describe("AI controller", () => {
     ai.reset();
     assert.equal(ai.tick(w), true);
     assert.ok(AI_TAP_INTERVAL > 0.05);
+  });
+
+  it("clears cooldown when the hoop switches sides so the next shot can start", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "force",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "tap", reason: "test" }),
+    });
+    ai.setEnabled(true);
+    const left = world({ dt: 1 / 60, hoop: { ...world().hoop, side: -1 } });
+    assert.equal(ai.tick(left), true);
+    assert.equal(ai.tick(left), false);
+    const right = world({
+      dt: 1 / 60,
+      scored: false,
+      shotMade: true,
+      hoop: { x: 320, y: 326, inner: 28, side: 1, tube: 4.3, moving: false },
+      jumpVx: 390 * 0.76,
+    });
+    assert.equal(ai.tick(right), true);
+  });
+
+  it("watchdog taps if a policy holds too long while the ball is playable", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "stuck",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "hold", reason: "wait-window" }),
+    });
+    ai.setEnabled(true);
+    const w = world({ dt: AI_WATCHDOG / 2 });
+    assert.equal(ai.tick(w), false);
+    assert.equal(ai.tick(w), true);
+    assert.equal(ai.lastDecision()?.reason, "watchdog");
   });
 });

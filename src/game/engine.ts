@@ -50,7 +50,7 @@ import {
 } from "./rogue";
 import { createAiController, flagsFromKit } from "./ai";
 
-export const GAME_REV = 294;
+export const GAME_REV = 295;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -1800,6 +1800,7 @@ export function createGame(
         side: hoop.side,
         tube: hoop.tube,
         moving: hoop.moving,
+        active: hoop.active,
       },
       other: other
         ? {
@@ -1810,6 +1811,7 @@ export function createGame(
             tube: other.tube,
             moving: other.moving,
             frostLeft: other.frostLeft,
+            active: other.active,
           }
         : null,
       ballHidden: hidden,

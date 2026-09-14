@@ -43,6 +43,8 @@ export type AiHoop = {
   side: -1 | 1;
   tube: number;
   moving: boolean;
+  /** Live scoring target. Departing post-make stands are inactive. */
+  active?: boolean;
 };
 
 export type AiWorld = {

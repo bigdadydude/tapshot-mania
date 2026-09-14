@@ -6,7 +6,7 @@
  *
  * See `src/game/ai/README.md` for adding a ball policy and wiring a future menu.
  */
-export { createAiController, AI_TAP_INTERVAL } from "./controller.ts";
+export { createAiController, AI_TAP_INTERVAL, AI_WATCHDOG } from "./controller.ts";
 export type { AiController } from "./controller.ts";
 export { flagsFromKit } from "./types.ts";
 export type {

@@ -143,7 +143,6 @@ export function simulateFlight(world: AiWorld, vx0: number, vy0: number): Flight
       if (ad < world.ball.r + world.antiMatter.r) collectedAnti = true;
     }
     if (rimGraze(world.hoop, x, y, world.ball.r)) grazed = true;
-    if (world.other && rimGraze(world.other, x, y, world.ball.r)) grazed = true;
 
     const main = planeScore(world.hoop, prevX, prevY, x, y, vy, world.ball.r, overMain, bothWays);
     overMain = main.overRim;
@@ -157,7 +156,13 @@ export function simulateFlight(world: AiWorld, vx0: number, vy0: number): Flight
         minAntiDist: minAnti,
       };
     }
-    if (world.other) {
+    // Only a still-live other (frost dual stand) counts. The hoop you just
+    // scored on is `other` while it slides off — treating it as a make freezes
+    // the AI on the old side.
+    const liveOther =
+      world.other && (world.other.frostLeft > 0 || world.other.active);
+    if (liveOther && world.other) {
+      if (rimGraze(world.other, x, y, world.ball.r)) grazed = true;
       const alt = planeScore(world.other, prevX, prevY, x, y, vy, world.ball.r, overOther, bothWays);
       overOther = alt.overRim;
       if (alt.scored) {

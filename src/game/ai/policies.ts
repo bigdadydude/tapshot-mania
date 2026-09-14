@@ -46,7 +46,9 @@ export const defaultPolicy: BallAiPolicy = {
     if (world.ballHidden && !world.onApproachSide) return hold("offscreen");
 
     const current = helpers.predictCurrent(world);
-    if (current.scores) return hold("flight-scores");
+    // Floor rolls never thread a rim — a true positive is airborne. Holding
+    // this on the floor after a make (old stand still nearby) stalls the run.
+    if (current.scores && !onFloor(world)) return hold("flight-scores");
 
     const next = helpers.predictTap(world);
     if (next.scores) return tap("predicted-make");
@@ -55,7 +57,8 @@ export const defaultPolicy: BallAiPolicy = {
 
     // One floor/air tap is not enough to reach the rim — chain jumps at the apex
     // (vy near 0 or falling) while still below the basket, same as a human.
-    if (pastHoop(world) && !world.onApproachSide) return hold("overshot");
+    // Overshot: still tap on the floor so wrap/recovery starts; only wait in air.
+    if (pastHoop(world) && !world.onApproachSide && !onFloor(world)) return hold("overshot");
 
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.2;
     const atApex = world.ball.vy > -70;

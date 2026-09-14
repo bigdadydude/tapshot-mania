@@ -8,6 +8,10 @@ const helpers = { predictCurrent, predictTap };
 /** Floor between AI taps so we don't jitter every physics step. */
 export const AI_TAP_INTERVAL = 0.14;
 const PANIC_INTERVAL = 0.09;
+/** If we can shoot but haven't tapped, mash like a stuck human. */
+export const AI_WATCHDOG = 0.42;
+
+const LEGIT_WAIT = new Set(["already-scored", "flight-scores", "hole-flight-scores"]);
 
 export type AiController = {
   enabled: () => boolean;
@@ -27,11 +31,22 @@ export function createAiController(): AiController {
 
   let on = false;
   let cooldown = 0;
+  let idle = 0;
+  let lastSide: -1 | 1 | 0 = 0;
   let last: AiDecision | null = null;
 
   function reset() {
     cooldown = 0;
+    idle = 0;
+    lastSide = 0;
     last = null;
+  }
+
+  function fire(reason: AiDecision, wait: number) {
+    last = reason;
+    cooldown = wait;
+    idle = 0;
+    return true;
   }
 
   return {
@@ -46,19 +61,44 @@ export function createAiController(): AiController {
     tick(world) {
       if (!on) return false;
       cooldown = Math.max(0, cooldown - world.dt);
-      if (!world.canShoot) return false;
+
+      // New target hoop (left/right alternate) — don't sit on the previous cooldown.
+      if (world.hoop.side !== lastSide) {
+        lastSide = world.hoop.side;
+        cooldown = 0;
+        idle = 0;
+      }
+
+      if (!world.canShoot) {
+        idle = 0;
+        return false;
+      }
       if (world.tapLock > 0) return false;
       if (world.paused || world.phase !== "playing") return false;
 
-      const decision = decideShot(world, helpers);
-      last = decision;
-      if (!decision.tap) return false;
-
       const panic = world.timerArmed && world.timer < 1.2 && !world.buzzer;
       const wait = panic ? PANIC_INTERVAL : AI_TAP_INTERVAL;
-      if (cooldown > 0) return false;
-      cooldown = wait;
-      return true;
+
+      const decision = decideShot(world, helpers);
+      last = decision;
+      if (decision.tap) {
+        if (cooldown > 0) return false;
+        return fire(decision, wait);
+      }
+
+      if (world.scored || LEGIT_WAIT.has(decision.reason)) {
+        idle = 0;
+        return false;
+      }
+
+      idle += world.dt;
+      if (idle >= AI_WATCHDOG && cooldown <= 0) {
+        return fire(
+          { tap: true, reason: "watchdog", policyId: decision.policyId },
+          wait,
+        );
+      }
+      return false;
     },
   };
 }

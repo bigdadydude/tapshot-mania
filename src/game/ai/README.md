@@ -84,3 +84,6 @@ options screen cannot drift.
 - Hold on `shotMade`. That combo latch stays true until the next tap, so
   treating it as "don't shoot" stalls forever after the hoop switches sides.
   Hold only while `scored` (the ball is still in this make).
+- Predict a make on the hoop you just scored (`other` sliding off). That
+  looks like "flight-scores" and never aims at the new side. The controller
+  also drops cooldown on hoop-side change and watchdog-taps if idle too long.
