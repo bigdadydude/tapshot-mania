@@ -89,6 +89,10 @@ function closeToHoop(world: AiWorld, frac = 0.32): boolean {
   return Math.abs(world.ball.x - world.hoop.x) < world.world.w * frac;
 }
 
+function underCylinder(world: AiWorld): boolean {
+  return Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 2.4 + world.ball.r;
+}
+
 /** Velocity points at the court-facing glass, not away after a bounce. */
 function movingTowardBoard(world: AiWorld): boolean {
   const face = boardFaceX(world);
@@ -256,14 +260,14 @@ export const defaultPolicy: BallAiPolicy = {
     }
 
     // Live attempt still airborne — boost before a floor settle, which would
-    // make the next tap a miss-jump and kill the combo. Skip when already
-    // under the rim: a full jumpVx from there ruins a dropping finish.
+    // make the next tap a miss-jump and kill the combo. Skip only when already
+    // under the cylinder: a full jumpVx there ruins a dropping finish.
     if (
       world.shotOpen &&
       !world.shotMade &&
       !world.shotMissed &&
       !world.kit.glass &&
-      !closeToHoop(world) &&
+      !underCylinder(world) &&
       (onFloor(world) || lowBounce(world))
     ) {
       return tap("keep-air");
@@ -300,14 +304,14 @@ export const defaultPolicy: BallAiPolicy = {
     const launch = onLaunchSide(world) || world.onApproachSide;
     if (belowRim && launch && !messyContact(world)) {
       if (
-        longTravel(world) &&
         !world.onApproachSide &&
-        (closeToHoop(world) || flyingAtHoop(world))
+        (closeToHoop(world, world.kit.ninja ? 0.42 : 0.28) ||
+          (longTravel(world) && flyingAtHoop(world)))
       ) {
         return hold("let-drop");
       }
       if (
-        closeToHoop(world) &&
+        underCylinder(world) &&
         !world.onApproachSide &&
         (onFloor(world) || lowBounce(world))
       ) {
