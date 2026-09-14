@@ -96,11 +96,7 @@ export function createAiController(): AiController {
 
       const decision = decideShot(world, helpers);
       last = decision;
-      const snappy =
-        decision.reason === "chain-next" ||
-        decision.reason === "chase-boost" ||
-        decision.reason === "approach-enter" ||
-        decision.reason === "wrap-boost";
+      const snappy = decision.reason === "chain-next" || decision.reason === "approach-enter";
       const wait = panic ? PANIC_INTERVAL : snappy ? CHAIN_INTERVAL : AI_TAP_INTERVAL;
       if (decision.tap) {
         if (cooldown > 0) return false;

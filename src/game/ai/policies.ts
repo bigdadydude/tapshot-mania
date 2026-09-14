@@ -89,6 +89,22 @@ function movingTowardBoard(world: AiWorld): boolean {
   return (face - world.ball.x) * world.ball.vx > 12;
 }
 
+/** Velocity already carries the long jump toward the hoop — don't reset it. */
+function flyingAtHoop(world: AiWorld): boolean {
+  const toward = (world.hoop.x - world.ball.x) * world.ball.vx;
+  return toward > 24 && Math.abs(world.ball.vx) > 50;
+}
+
+/** Parked / dying under the rim — the ninja freeze. */
+function stalledNearHoop(world: AiWorld): boolean {
+  if (onFloor(world) || world.onApproachSide) return false;
+  if (world.ball.y <= world.hoop.y + world.ball.r * 0.2) return false;
+  if (!closeToHoop(world)) return false;
+  const spd = Math.hypot(world.ball.vx, world.ball.vy);
+  const toward = (world.hoop.x - world.ball.x) * world.ball.vx;
+  return spd < 90 || toward < 12;
+}
+
 function messyContact(world: AiWorld): boolean {
   return (
     world.rimHits >= 2 ||
@@ -442,7 +458,7 @@ export const champPolicy: BallAiPolicy = {
   },
 };
 
-/** Ninja: long jumpFwd + smaller hoop. Never idle under the rim — wrap / chase. */
+/** Ninja: long jumpFwd + smaller hoop. Ride the flight; chase only if stalled. */
 export const ninjaPolicy: BallAiPolicy = {
   id: "ninja",
   priority: 30,
@@ -462,32 +478,28 @@ export const ninjaPolicy: BallAiPolicy = {
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
 
-    if (nearBoard(world) && inBankBand(world) && !pastBoard(world) && !onFloor(world)) {
+    if (pastBoard(world) && !world.onApproachSide) return tap("wrap-boost");
+
+    if (nearBoard(world) && inBankBand(world) && !onFloor(world)) {
       if (current.scores && (current.bank || current.swish)) return hold("flight-scores");
-      if (current.scores && movingTowardBoard(world) && world.ball.vy > 12) {
+      if (current.scores || (movingTowardBoard(world) && world.ball.vy > 12)) {
         return hold("commit-glass");
       }
-      // Under the glass with no make — jump through and wrap instead of sitting.
-      return tap("wrap-boost");
+      if (stalledNearHoop(world)) return tap("chase-boost");
+      return hold("let-drop");
     }
 
     if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
-      if (pastBoard(world) && world.ball.vy > 4) return tap("wrap-boost");
       return hold("let-drop");
     }
 
     if (world.ballHidden && world.onApproachSide) return tap("approach-enter");
-    if (pastBoard(world) && !world.onApproachSide) return tap("wrap-boost");
 
     const next = helpers.predictTap(world);
     if (next.scores && next.swish) return tap("predicted-make");
     if (next.scores && !next.bank) return tap("predicted-make");
 
-    const underRim = world.ball.y > world.hoop.y + world.ball.r * 0.05;
-    if (underRim && closeToHoop(world) && !world.onApproachSide && !onFloor(world)) {
-      if (current.scores) return hold("flight-scores");
-      return tap("chase-boost");
-    }
+    if (stalledNearHoop(world)) return tap("chase-boost");
 
     if (onFloor(world) || lowBounce(world)) {
       if (
@@ -501,8 +513,11 @@ export const ninjaPolicy: BallAiPolicy = {
       return tap("floor-launch");
     }
 
+    // One long jump is the whole shot — mashing jumpVx resets it into a wrap loop.
+    if (flyingAtHoop(world)) return hold("let-drop");
+
     if (onLaunchSide(world) || world.onApproachSide) return tap("apex-boost");
-    return tap("chase-boost");
+    return hold("wait-window");
   },
 };
 

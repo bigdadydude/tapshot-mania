@@ -423,7 +423,7 @@ describe("ball AI registry", () => {
       jumpVx: w * 0.76 * 1.2,
       ballMul: 1,
       kit: flags({ ninja: true }),
-      ball: { x: hoop.x - 70, y: hoop.y + 90, vx: 40, vy: 80, r: 19.5 },
+      ball: { x: hoop.x - 55, y: hoop.y + 110, vx: 8, vy: 20, r: 19.5 },
     });
     const d = decideShot(close, helpers);
     assert.equal(d.policyId, "ninja");
@@ -431,6 +431,17 @@ describe("ball AI registry", () => {
     assert.ok(d.reason === "chase-boost" || d.reason === "wrap-boost" || d.reason === "apex-boost");
     assert.notEqual(d.reason, "let-drop");
     assert.notEqual(d.reason, "wait-window");
+
+    const flying = world({
+      hoop,
+      jumpVx: w * 0.76 * 1.2,
+      kit: flags({ ninja: true }),
+      ball: { x: hoop.x - 140, y: hoop.y + 40, vx: 220, vy: -40, r: 19.5 },
+    });
+    const ride = decideShot(flying, helpers);
+    assert.equal(ride.policyId, "ninja");
+    assert.notEqual(ride.reason, "apex-boost");
+    assert.notEqual(ride.reason, "chase-boost");
   });
 
   it("lets a messy miss bounce on the floor to open spacing instead of mashing", () => {
