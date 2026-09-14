@@ -50,7 +50,7 @@ import {
 } from "./rogue";
 import { createAiController, flagsFromKit } from "./ai";
 
-export const GAME_REV = 307;
+export const GAME_REV = 308;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -4853,7 +4853,6 @@ export function createGame(
         shotMissed,
         hitRim: ball.hitRim,
         hitBoard: ball.hitBoard,
-        rimHits,
         autoPlay: autoPlay.enabled(),
         autoPlayReason: autoPlay.lastDecision()?.reason ?? null,
         autoPlayPolicy: autoPlay.lastDecision()?.policyId ?? null,
