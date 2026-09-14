@@ -61,7 +61,6 @@ Ball-id / skill-flag votes are only for skills that are not a number:
 | `bank-half` | Contact around half board height, moving into glass | board geom + vy |
 | `bank-steep` | Steeper cut into the board (`\|vy\| > 0.52·\|vx\|`) | velocity vs board |
 | `rim-swirl` | Inner-rim rattle (刷马桶) — hold, don't reset `jumpVx` | `hitRim` + inner side |
-| `tube-up` | Climbing through the net from below, then drop | under cylinder + `vy < 0` |
 | `exit-space` | Under-rim but opening court — let spacing grow, then jump back | under + bounce away |
 | `pop-away` | Elastic pop near the rim — let spacing open, then re-attack | `hotBounce` / `hoopRest` |
 | `wrap-escape` | Stuck under the rim: tap/wrap to the far side (穿屏) | `longJump` or `slipperyGlass` |
@@ -80,7 +79,7 @@ Playbook mapping (PO):
 
 1. Bank → `bank-half` / `bank-steep`
 2. 刷马桶 → `rim-swirl`
-3. Under-rim tube **or** exit to spacing → `tube-up` / `exit-space`
+3. Under-rim: `let-drop` (human starts far; late tube-up dies) **or** `exit-space`
 4. High bounce → `pop-away`
 5. Stuck 穿屏 → `wrap-escape`
 6. Distant 90° taps → `far-climb`

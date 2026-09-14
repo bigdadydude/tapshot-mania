@@ -329,7 +329,14 @@ export const defaultPolicy: BallAiPolicy = {
 
     // tapJump writes full jumpVx. After the first long-jump launch, ride
     // the arc — a second reset wraps. Rubber is longTravel via ballMul.
-    if (longJumpFwd(world) && flyingAtHoop(world) && !onFloor(world) && !world.onApproachSide) {
+    if (
+      longJumpFwd(world) &&
+      flyingAtHoop(world) &&
+      !onFloor(world) &&
+      !world.onApproachSide &&
+      !nearBoard(world) &&
+      !underCylinder(world)
+    ) {
       return hold(world.ball.vy > 12 ? "ride-flight" : "carry-flight");
     }
 
@@ -345,6 +352,14 @@ export const defaultPolicy: BallAiPolicy = {
 
     const launch = onLaunchSide(world) || world.onApproachSide;
     if (belowRim && launch && !messyContact(world)) {
+      if (
+        longJumpFwd(world) &&
+        !world.onApproachSide &&
+        underCylinder(world) &&
+        !onFloor(world)
+      ) {
+        return hold("let-drop");
+      }
       if (
         longJumpFwd(world) &&
         !world.onApproachSide &&
@@ -603,10 +618,15 @@ export const physPolicy: BallAiPolicy = {
           if (away) return hold("exit-space");
           return tap("wrap-escape");
         }
-        if (world.ball.vy < -12 && world.ball.y > world.hoop.y) return hold("tube-up");
+        // Human ninja does not start late under the rim. Climbing or
+        // falling through the cylinder: drop — never tube-up / apex-boost.
         return hold("let-drop");
       }
-      if (flyingAtHoop(world) && !onFloor(world)) {
+      if (
+        flyingAtHoop(world) &&
+        !onFloor(world) &&
+        !nearBoard(world)
+      ) {
         return hold(world.ball.vy > 12 ? "ride-flight" : "carry-flight");
       }
       if (feel.longJump && onFloor(world) && launchFar) {
