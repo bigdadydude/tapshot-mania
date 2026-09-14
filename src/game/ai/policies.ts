@@ -228,15 +228,12 @@ export const glassPolicy: BallAiPolicy = {
     if (aboveRim(world) && !onFloor(world)) return hold("glass-settle");
 
     const pocket =
-      Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 1.7 + world.ball.r;
+      Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 2.55 + world.ball.r;
     if (pocket && !onFloor(world)) {
       // Already falling through the pocket — committing means NOT tapping.
       if (world.ball.vy > 22) return hold("glass-settle");
       if (next.scores && next.swish) return tap("seek-swish");
-      if (next.scores) return tap("commit-make");
-      if (Math.abs(world.ball.vy) < 30 && world.ball.y >= world.hoop.y - world.ball.r) {
-        return tap("commit-make");
-      }
+      if (next.scores && world.ball.y > world.hoop.y) return tap("commit-make");
       return hold("glass-settle");
     }
 
