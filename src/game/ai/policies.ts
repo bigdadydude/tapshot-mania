@@ -45,11 +45,18 @@ function nearRim(world: AiWorld): boolean {
  * after a hoop switch (or a miss bounce) looks like "score once then AFK".
  */
 function confidentMake(world: AiWorld, scores: boolean): boolean {
-  if (!scores || onFloor(world)) return false;
-  // `shotMade` means this attempt already counted. Keep playing the next one.
-  if (world.shotMade) return false;
-  if (!nearRim(world)) return false;
-  return world.ball.vy > 12 || world.ball.y + world.ball.r * 0.15 < world.hoop.y;
+  if (!scores || onFloor(world) || world.shotMade) return false;
+  const aligned = Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 0.92;
+  if (!aligned) return false;
+  // Rim rattles fool the kinematic guess — don't freeze on them.
+  if (world.hitRim && !(world.ball.vy > 100 && world.ball.y > world.hoop.y)) return false;
+  const through =
+    world.ball.vy > 40 &&
+    world.ball.y > world.hoop.y - world.ball.r * 0.4 &&
+    world.ball.y < world.hoop.y + world.hoop.inner * 1.5;
+  const droppingIn =
+    world.ball.vy > 20 && world.ball.y + world.ball.r * 0.2 < world.hoop.y;
+  return through || droppingIn;
 }
 
 function scoreTapReason(next: { scores: boolean; bank: boolean; swish: boolean }): string {
@@ -79,7 +86,7 @@ export const defaultPolicy: BallAiPolicy = {
     // Wait until the ball has dropped *below* the new rim so a full jumpVy
     // climbs instead of orbiting from basket height.
     if (world.shotMade) {
-      const belowNew = world.ball.y > world.hoop.y + world.ball.r;
+      const belowNew = world.ball.y > world.hoop.y + Math.max(world.ball.r * 2, world.hoop.inner);
       if (!belowNew && !onFloor(world) && !world.onApproachSide) {
         return hold("chain-wait");
       }
