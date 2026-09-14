@@ -55,7 +55,7 @@ Ball-id / skill-flag votes are only for skills that are not a number:
 | `tube-up` | Climbing through the net from below, then drop | under cylinder + `vy < 0` |
 | `pop-away` | Elastic pop near the rim — let spacing open, then re-attack | `hotBounce` / `hoopRest` |
 | `wrap-escape` | Stuck under the rim: tap/wrap to the far side (穿屏) | `longJump` or `slipperyGlass` |
-| `early-jump` | Far + rising + long jumpFwd — jump **early** for a steep fall. Normal tap interval (not snappy) so a live 1.2 climb is not rewritten every 45ms. | `longJump` + dx + hangTime |
+| `early-jump` | Far + rising + long jumpFwd — jump **early** (snappy) for a steep fall | `longJump` + dx + hangTime |
 | `far-climb` | Distant rapid taps so the ball falls near **90°** | far + rising, not `longJump` |
 | `ride-flight` | Descending live arc on a long jump — don't poke | `longJump` + `vy > 0` |
 | `hole-spam` | Black hole open — tap; gravity pulls it in | `kit.anti` / `holeOn` |

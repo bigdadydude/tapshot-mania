@@ -571,6 +571,49 @@ export const physPolicy: BallAiPolicy = {
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
 
+    const under = underCylinder(world);
+    const longOrSlip = feel.longJump || feel.slipperyGlass;
+    const dx = Math.abs(world.ball.x - world.hoop.x);
+    const hangScale = 1 - Math.max(-0.06, Math.min(0.08, (feel.hangTime - 0.7) * 0.25));
+    const far = dx > world.world.w * 0.38 * hangScale;
+    const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
+
+    // Long jumpFwd / slippery glass: same order as the old ninja skill
+    // policy (past glass → under rim → ride / early jump). Playbook banks
+    // and swirls run after this so they cannot freeze a 1.2 first shot.
+    if (longOrSlip && !world.onApproachSide) {
+      if (!current.scores && pastBoard(world)) {
+        const headingOut = world.hoop.side * world.ball.vx > 12;
+        if (headingOut) return hold("let-drop");
+        return tap("wrap-escape");
+      }
+      if (under && !current.scores) {
+        if (onFloor(world) || lowBounce(world)) {
+          if (
+            bounceOpening(world) &&
+            Math.abs(world.ball.vx) > 70 &&
+            !clockPanic(world, 1.7) &&
+            !comboPressure(world)
+          ) {
+            return hold("pop-away");
+          }
+          const spd = Math.hypot(world.ball.vx, world.ball.vy);
+          if (spd < 140 || Math.abs(world.ball.vx) < 90 || stalledNearHoop(world)) {
+            return tap("wrap-escape");
+          }
+          return hold("pop-away");
+        }
+        if (world.ball.vy < -12 && world.ball.y > world.hoop.y) return hold("tube-up");
+        return hold("let-drop");
+      }
+      if (flyingAtHoop(world) && world.ball.vy > 12 && !onFloor(world)) {
+        return hold("ride-flight");
+      }
+      if (far && belowRim && world.ball.vy < -20 && !onFloor(world) && !under) {
+        return tap("early-jump");
+      }
+    }
+
     // 2. Rim toilet swirl — inner rim, let it rattle in.
     if (
       world.hitRim &&
@@ -592,7 +635,7 @@ export const physPolicy: BallAiPolicy = {
     // 4. High bounce near rim — let the pop open space.
     if (
       (feel.hotBounce || feel.hoopRest > 1.05) &&
-      (nearRim(world) || underCylinder(world)) &&
+      (nearRim(world) || under) &&
       (onFloor(world) || lowBounce(world)) &&
       bounceOpening(world) &&
       !clockPanic(world, 1.6)
@@ -600,58 +643,9 @@ export const physPolicy: BallAiPolicy = {
       return hold("pop-away");
     }
 
-    const under = underCylinder(world);
-    const longOrSlip = feel.longJump || feel.slipperyGlass;
-
-    // 5. Stuck: wrap out (穿屏). Same order as the old ninja skill policy —
-    // past the glass first, then the cylinder. Driven by jumpFwd / grip.
-    if (longOrSlip && !current.scores && !world.onApproachSide && pastBoard(world)) {
-      const headingOut = world.hoop.side * world.ball.vx > 12;
-      if (headingOut) return hold("let-drop");
-      return tap("wrap-escape");
-    }
-
-    // 3 + 5. Under-rim tube / wrap-escape. Long jumpFwd or slippery glass
-    // slams the board if you tapJump from here — drop, pop, or wrap out.
-    if (longOrSlip && under && !current.scores && !world.onApproachSide) {
-      if (onFloor(world) || lowBounce(world)) {
-        if (
-          bounceOpening(world) &&
-          Math.abs(world.ball.vx) > 70 &&
-          !clockPanic(world, 1.7) &&
-          !comboPressure(world)
-        ) {
-          return hold("pop-away");
-        }
-        const spd = Math.hypot(world.ball.vx, world.ball.vy);
-        if (spd < 140 || Math.abs(world.ball.vx) < 90 || stalledNearHoop(world)) {
-          return tap("wrap-escape");
-        }
-        return hold("pop-away");
-      }
-      // Through the net from below, then drop in.
-      if (world.ball.vy < -12 && world.ball.y > world.hoop.y) return hold("tube-up");
-      return hold("let-drop");
-    }
-
     if (world.onApproachSide) return abstain("default-shot");
 
-    // 6 + 7. Distant climb for a steep (~90°) fall. Long hang / long jumpFwd
-    // must leave the ground earlier — a late tap writes full jumpVx and wraps.
-    const dx = Math.abs(world.ball.x - world.hoop.x);
-    const hangScale = 1 - Math.max(-0.06, Math.min(0.08, (feel.hangTime - 0.7) * 0.25));
-    const far = dx > world.world.w * (feel.longJump ? 0.34 : 0.38) * hangScale;
-    const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
-    if (
-      feel.longJump &&
-      far &&
-      belowRim &&
-      world.ball.vy < -20 &&
-      !onFloor(world) &&
-      !under
-    ) {
-      return tap("early-jump");
-    }
+    // 6. Distant climb for a steep (~90°) fall. Long jumpFwd already jumped.
     if (
       far &&
       belowRim &&
@@ -661,14 +655,6 @@ export const physPolicy: BallAiPolicy = {
       world.ball.vy < 28
     ) {
       return tap("far-climb");
-    }
-    if (
-      feel.longJump &&
-      flyingAtHoop(world) &&
-      world.ball.vy > 12 &&
-      !onFloor(world)
-    ) {
-      return hold("ride-flight");
     }
 
     // Slightly long jumpFwd (heat 1.0): last apex in a wider pocket wraps.

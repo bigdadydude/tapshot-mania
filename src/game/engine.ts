@@ -50,7 +50,7 @@ import {
 } from "./rogue";
 import { createAiController, flagsFromKit } from "./ai";
 
-export const GAME_REV = 334;
+export const GAME_REV = 335;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
