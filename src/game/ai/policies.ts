@@ -34,6 +34,24 @@ function pastHoop(world: AiWorld): boolean {
     : world.ball.x > world.hoop.x + pad;
 }
 
+function nearRim(world: AiWorld): boolean {
+  const reach = world.hoop.inner * 3.4 + world.ball.r;
+  return Math.hypot(world.ball.x - world.hoop.x, world.ball.y - world.hoop.y) < reach;
+}
+
+/**
+ * Only freeze when the ball is actually dropping through this hoop.
+ * Long-range `predictCurrent.scores` is a common false positive — holding it
+ * after a hoop switch (or a miss bounce) looks like "score once then AFK".
+ */
+function confidentMake(world: AiWorld, scores: boolean): boolean {
+  if (!scores || onFloor(world)) return false;
+  // `shotMade` means this attempt already counted. Keep playing the next one.
+  if (world.shotMade) return false;
+  if (!nearRim(world)) return false;
+  return world.ball.vy > 12 || world.ball.y + world.ball.r * 0.15 < world.hoop.y;
+}
+
 /** Generic tap timing — used for classic / lava / frost / ninja / unknown future balls. */
 export const defaultPolicy: BallAiPolicy = {
   id: "default",
@@ -46,26 +64,28 @@ export const defaultPolicy: BallAiPolicy = {
     if (world.ballHidden && !world.onApproachSide) return hold("offscreen");
 
     const current = helpers.predictCurrent(world);
-    // Floor rolls never thread a rim — a true positive is airborne. Holding
-    // this on the floor after a make (old stand still nearby) stalls the run.
-    if (current.scores && !onFloor(world)) return hold("flight-scores");
+    if (confidentMake(world, current.scores)) return hold("flight-scores");
 
     const next = helpers.predictTap(world);
     if (next.scores) return tap("predicted-make");
 
-    if (clockPanic(world, 1.2)) return tap("shot-clock");
+    // Make already counted (`shotMade`) but this ball is still live — start
+    // the next possession immediately instead of waiting for a floor settle.
+    if (world.shotMade) return tap("next-shot");
 
-    // One floor/air tap is not enough to reach the rim — chain jumps at the apex
-    // (vy near 0 or falling) while still below the basket, same as a human.
-    // Overshot: still tap on the floor so wrap/recovery starts; only wait in air.
-    if (pastHoop(world) && !world.onApproachSide && !onFloor(world)) return hold("overshot");
+    if (clockPanic(world, 1.6)) return tap("shot-clock");
 
-    const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.2;
-    const atApex = world.ball.vy > -70;
-    const launch = onLaunchSide(world) || world.onApproachSide || onFloor(world);
-    if (belowRim && atApex && launch) return tap("apex-boost");
+    if (world.ballHidden && world.onApproachSide) return tap("approach-enter");
+    if (onFloor(world)) return tap("floor-launch");
 
-    if (world.kit.wrap === "height" && world.onApproachSide && atApex) {
+    // One tap cannot reach the rim. Mash like a human while below the basket;
+    // each tapJump resets jump velocity. Past the hoop: boost into wrap.
+    const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
+    const launch = onLaunchSide(world) || world.onApproachSide || pastHoop(world);
+    if (belowRim && launch) return tap("apex-boost");
+    if (pastHoop(world) && !world.onApproachSide) return tap("wrap-boost");
+
+    if (world.kit.wrap === "height" && world.onApproachSide) {
       return tap("wrap-approach");
     }
 
@@ -80,6 +100,7 @@ export const antiPolicy: BallAiPolicy = {
   match: (kit) => kit.anti,
   vote(world, helpers): AiVote {
     if (world.scored) return hold("already-scored");
+    if (world.shotMade) return abstain("next-shot");
     if (world.ballHidden && !world.onApproachSide) return abstain();
 
     if (world.holeOn) {
@@ -110,6 +131,7 @@ export const glassPolicy: BallAiPolicy = {
   match: (kit) => kit.glass,
   vote(world, helpers): AiVote {
     if (world.scored) return hold("already-scored");
+    if (world.shotMade) return abstain("next-shot");
     const current = helpers.predictCurrent(world);
     const next = helpers.predictTap(world);
     if (current.scores && current.swish) return hold("protect-swish");
@@ -130,6 +152,7 @@ export const wrapHeightPolicy: BallAiPolicy = {
   vote(world, helpers): AiVote {
     if (world.kit.glass) return abstain("glass-owns");
     if (world.scored) return hold("already-scored");
+    if (world.shotMade) return abstain("next-shot");
     if (!world.onApproachSide && world.ballHidden) return hold("wait-wrap");
     const next = helpers.predictTap(world);
     if (world.onApproachSide && next.scores) return tap("wrap-window");

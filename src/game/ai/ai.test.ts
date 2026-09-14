@@ -134,7 +134,11 @@ describe("ball AI registry", () => {
     const d = decideShot(w, helpers);
     assert.equal(d.policyId, "default");
     assert.equal(d.tap, true);
-    assert.ok(d.reason === "apex-boost" || d.reason === "predicted-make");
+    assert.ok(
+      d.reason === "floor-launch" ||
+        d.reason === "apex-boost" ||
+        d.reason === "predicted-make",
+    );
   });
 
   it("default holds when the current flight already scores", () => {
@@ -183,6 +187,35 @@ describe("ball AI registry", () => {
     const d = decideShot(incoming, helpers);
     assert.equal(d.tap, true);
     assert.notEqual(d.reason, "already-scored");
+    assert.notEqual(d.reason, "flight-scores");
+  });
+
+  it("does not freeze on a leftover make prediction after the hoop already counted", () => {
+    const hoop = { x: 200, y: 300, inner: 28, side: -1 as const, tube: 4, moving: false };
+    const w = world({
+      hoop,
+      scored: false,
+      shotMade: true,
+      shotOpen: true,
+      ball: { x: 200, y: 240, vx: 0, vy: 220, r: 19.5 },
+    });
+    const current = predictCurrent(w);
+    assert.equal(current.scores, true);
+    const d = decideShot(w, helpers);
+    assert.equal(d.tap, true);
+    assert.notEqual(d.reason, "flight-scores");
+  });
+
+  it("keeps boosting a rising far shot instead of trusting a long-range make guess", () => {
+    const w = world({
+      hoop: { x: 323, y: 330, inner: 28, side: 1, tube: 4.3, moving: false },
+      jumpVx: 390 * 0.76,
+      ball: { x: 29, y: 434, vx: 280, vy: -705, r: 19.5 },
+    });
+    const d = decideShot(w, helpers);
+    assert.equal(d.tap, true);
+    assert.notEqual(d.reason, "flight-scores");
+    assert.notEqual(d.reason, "wait-window");
   });
 
   it("glass protects a swish instead of re-tapping", () => {
