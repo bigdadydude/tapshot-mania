@@ -40,8 +40,11 @@ those numbers (and elasticity), not `ballId`. `shotFeel(world)` derives:
 | `pMul("floor")` | `floorMul` | Floor pop energy |
 | `kit.wrap` | `groundWrap` | 44 px/s crawl after an overshoot |
 
-**Combo pace** (window is 4s): `1.85 + max(0, jumpFwd−0.95)·2.4`, +0.12 if
-slippery glass, −0.08 if hot bounce. Classic ~1.85, heat/frost ~1.97, ninja ~2.5.
+**Combo pace** (window is 4s): classic ~1.72; heat slightly longer. **Long
+jumpFwd (ninja)** is **tighter** (~1.52s) — a human ninja demo (classic 360,
+combo 21) had a median make gap of ~1.35s and only 2–3 taps in the 1.6s
+before a make. The old 2.6s ninja wait sat under the rim. `carry-flight` /
+`ride-flight` still block combo-clock mash on a live arc.
 
 **Release pocket:** slightly wide `jumpFwd` (1.0, lava/frost) holds let-drop
 sooner so the last apex does not wrap. `longJump` (ninja 1.2) does **not**
@@ -62,9 +65,10 @@ Ball-id / skill-flag votes are only for skills that are not a number:
 | `exit-space` | Under-rim but opening court — let spacing grow, then jump back | under + bounce away |
 | `pop-away` | Elastic pop near the rim — let spacing open, then re-attack | `hotBounce` / `hoopRest` |
 | `wrap-escape` | Stuck under the rim: tap/wrap to the far side (穿屏) | `longJump` or `slipperyGlass` |
-| `early-jump` | Far + rising + long jumpFwd — jump **early** (snappy) for a steep fall | `longJump` + dx + hangTime |
+| `early-jump` | First launch from far (human |dx| ~200–310) or rising not yet flying in | `longJump` + dx |
 | `far-climb` | Distant rapid taps so the ball falls near **90°** | far + rising, not `longJump` |
 | `ride-flight` | Descending live arc on a long jump — don't poke | `longJump` + `vy > 0` |
+| `carry-flight` | Already flying at the hoop while still rising — don't reset `jumpVx` | `longJump` + `flyingAtHoop` |
 | `hole-spam` | Black hole open — tap; gravity pulls it in | `kit.anti` / `holeOn` |
 | `gather-tap` | Antimatter pickup, but shot clock beats farming | `kit.anti` |
 
@@ -80,7 +84,9 @@ Playbook mapping (PO):
 4. High bounce → `pop-away`
 5. Stuck 穿屏 → `wrap-escape`
 6. Distant 90° taps → `far-climb`
-7. Long jumpFwd early + inner rim → `early-jump` then `ride-flight` / `rim-swirl`
+7. Long jumpFwd: floor/far `early-jump` → `carry-flight` / `ride-flight` / `rim-swirl` / upper `bank-half`. Wrap past glass is `wrap-escape` (demo: 9/12 wraps scored in 2.5s). Do not start a shot late under the rim.
+
+Human ninja classic 360 (101.9s, 3.5 pts/s): bank ~58% / rim ~33% / swish ~9%. Summarize more demos with `node --experimental-strip-types scripts/summarize-recording.mjs <file.json>`.
 8. Black hole → `gather-tap` while scoring; `hole-spam` once open
 
 ## Adding a new ball policy

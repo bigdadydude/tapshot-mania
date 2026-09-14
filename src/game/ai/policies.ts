@@ -153,10 +153,13 @@ function onInnerRim(world: AiWorld): boolean {
   return world.ball.x < h.x + inner && world.ball.x > h.x - h.inner * 0.55;
 }
 
-/** Around half the visible backboard — bank-half window. */
+/**
+ * Mid/upper glass — human ninja banks cluster near board-Y ratio ~0.89
+ * from the bottom (`(by+bh−y)/bh`). Board top is ~`hoop.y − 0.182·h`.
+ */
 function atHalfBoard(world: AiWorld): boolean {
-  const top = world.hoop.y - world.world.h * 0.11;
-  const bot = world.hoop.y - world.hoop.inner * 0.15;
+  const top = world.hoop.y - world.world.h * 0.178;
+  const bot = world.hoop.y - world.hoop.inner * 0.12;
   return world.ball.y > top && world.ball.y < bot;
 }
 
@@ -324,18 +327,10 @@ export const defaultPolicy: BallAiPolicy = {
       return tap(scoreTapReason(next));
     }
 
-    // tapJump writes full jumpVx. Long jumpFwd kits (ninja) must ride a
-    // *descending* arc — a combo-pace poke wraps at 44 px/s. Still rising
-    // they need apex-boost or the 1.2 jump peeks early and tunnels under.
-    // Rubber is longTravel via ballMul, not this path.
-    if (
-      longJumpFwd(world) &&
-      flyingAtHoop(world) &&
-      !onFloor(world) &&
-      !world.onApproachSide &&
-      world.ball.vy > 12
-    ) {
-      return hold("ride-flight");
+    // tapJump writes full jumpVx. After the first long-jump launch, ride
+    // the arc — a second reset wraps. Rubber is longTravel via ballMul.
+    if (longJumpFwd(world) && flyingAtHoop(world) && !onFloor(world) && !world.onApproachSide) {
+      return hold(world.ball.vy > 12 ? "ride-flight" : "carry-flight");
     }
 
     if (clockPanic(world, 1.6) || comboPressure(world)) return tap("shot-clock");
@@ -576,16 +571,18 @@ export const physPolicy: BallAiPolicy = {
     const longOrSlip = feel.longJump || feel.slipperyGlass;
     const dx = Math.abs(world.ball.x - world.hoop.x);
     const hangScale = 1 - Math.max(-0.06, Math.min(0.08, (feel.hangTime - 0.7) * 0.25));
-    const far = dx > world.world.w * 0.38 * hangScale;
+    // Human first tap before a make: median |dx| ≈ 224 (often 200–310).
+    const far = feel.longJump
+      ? dx > world.world.w * 0.42
+      : dx > world.world.w * 0.38 * hangScale;
+    const launchFar = dx > world.world.w * 0.48;
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
 
-    // Long jumpFwd / slippery glass: same order as the old ninja skill
-    // policy (past glass → under rim → ride / early jump). Playbook banks
-    // and swirls run after this so they cannot freeze a 1.2 first shot.
+    // Long jumpFwd / slippery glass. Demo: launch early, 2–3 taps, wrap
+    // is a real next-shot (9/12 wraps scored in 2.5s). Late under-rim
+    // starts lose. Banks/swirls run after so they cannot freeze the launch.
     if (longOrSlip && !world.onApproachSide) {
       if (!current.scores && pastBoard(world)) {
-        const headingOut = world.hoop.side * world.ball.vx > 12;
-        if (headingOut) return hold("let-drop");
         return tap("wrap-escape");
       }
       if (under && !current.scores) {
@@ -609,8 +606,11 @@ export const physPolicy: BallAiPolicy = {
         if (world.ball.vy < -12 && world.ball.y > world.hoop.y) return hold("tube-up");
         return hold("let-drop");
       }
-      if (flyingAtHoop(world) && world.ball.vy > 12 && !onFloor(world)) {
-        return hold("ride-flight");
+      if (flyingAtHoop(world) && !onFloor(world)) {
+        return hold(world.ball.vy > 12 ? "ride-flight" : "carry-flight");
+      }
+      if (feel.longJump && onFloor(world) && launchFar) {
+        return tap("early-jump");
       }
       if (far && belowRim && world.ball.vy < -20 && !onFloor(world) && !under) {
         return tap("early-jump");

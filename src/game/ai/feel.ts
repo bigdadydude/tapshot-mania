@@ -70,16 +70,18 @@ export function shotFeel(world: Pick<AiWorld, "world" | "jumpVx" | "jumpVy" | "g
 }
 
 /**
- * Combo window is 4s. Resetting a long jumpFwd dumps the streak into the
- * 44 px/s ground crawl. Hot-bounce kits can poke a bit sooner.
+ * Combo window is 4s. Human ninja (classic 360): median make gap ~1.35s,
+ * 2–3 taps in the 1.6s before a make. Stretching pace with jumpFwd made
+ * the bot sit under the rim; ride/carry holds still block live-arc mash.
  */
 export function comboPaceLimit(world: Parameters<typeof shotFeel>[0]): number {
   const f = shotFeel(world);
-  let pace = 1.85;
-  pace += Math.max(0, f.jumpFwd - 0.95) * 2.4;
+  if (f.longJump) return clamp(1.52, 1.35, 2.2);
+  let pace = 1.72;
+  pace += Math.max(0, f.jumpFwd - 0.95) * 1.1;
   if (f.slipperyGlass) pace += 0.12;
   if (f.hotBounce) pace -= 0.08;
-  return clamp(pace, 1.5, 2.6);
+  return clamp(pace, 1.35, 2.2);
 }
 
 /** Rim-pocket half-width. Slightly wide jumpFwd (heat 1.0) holds a bit sooner. */

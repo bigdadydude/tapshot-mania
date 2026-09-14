@@ -51,7 +51,7 @@ import {
 import { createAiController, flagsFromKit } from "./ai";
 import { createPlayRecorder } from "./record";
 
-export const GAME_REV = 338;
+export const GAME_REV = 339;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -5049,6 +5049,7 @@ export function createGame(
     exportRecording: () => recorder.exportLive() ?? recorder.lastFile(),
     downloadRecording: () => recorder.downloadLast(),
     setBall: (id: BallId) => applyBall(id),
+    setPlayMode: (mode: PlayMode) => handle.setPlayMode(mode),
     goTitle: () => goTitle(),
     setCombo(n: number) {
       combo = Math.max(0, Math.floor(n));

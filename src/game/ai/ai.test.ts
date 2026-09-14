@@ -455,7 +455,31 @@ describe("ball AI registry", () => {
     assert.ok(ride.reason === "ride-flight" || ride.reason === "let-drop");
   });
 
-  it("ninja apex-boosts a rising mid-court shot so the 1.2 jump still reaches", () => {
+  it("ninja launches from far on the floor (human first-tap |dx| ~224)", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const floorY = 844 * 0.765;
+    const r = 19.5;
+    const parked = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      ball: { x: hoop.x - 224, y: floorY - r, vx: 8, vy: 10, r },
+    });
+    const d = decideShot(parked, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "early-jump");
+  });
+
+  it("ninja does not spam early-jump after the launch is already flying", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
       y: 330,
@@ -468,17 +492,59 @@ describe("ball AI registry", () => {
       hoop,
       kit: flags({ ninja: true }),
       jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
       shotOpen: true,
-      ball: { x: hoop.x - 200, y: hoop.y + 180, vx: 280, vy: -400, r: 19.5 },
+      ball: { x: hoop.x - 224, y: hoop.y + 180, vx: 280, vy: -400, r: 19.5 },
+    });
+    const d = decideShot(rising, helpers);
+    assert.equal(d.tap, false);
+    assert.ok(d.reason === "carry-flight" || d.reason === "ride-flight");
+  });
+
+  it("ninja early-jumps a rising far shot that is not yet flying at the hoop", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const rising = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 224, y: hoop.y + 180, vx: 36, vy: -280, r: 19.5 },
     });
     const d = decideShot(rising, helpers);
     assert.equal(d.tap, true);
-    assert.ok(
-      d.reason === "apex-boost" ||
-        d.reason === "keep-air" ||
-        d.reason === "predicted-make" ||
-        d.reason === "early-jump",
-    );
+    assert.ok(d.reason === "early-jump" || d.reason === "apex-boost");
+  });
+
+  it("ninja commits wrap past the glass instead of hovering", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const past = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      ball: { x: 430, y: hoop.y + 40, vx: 90, vy: 40, r: 19.5 },
+    });
+    const d = decideShot(past, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "wrap-escape");
   });
 
   it("ninja rides a live arc instead of combo-pace poking", () => {
@@ -619,13 +685,14 @@ describe("ball AI registry", () => {
     assert.equal(d.reason, "let-drop");
   });
 
-  it("combo pace stretches with jumpFwd, not ball name", () => {
+  it("long jumpFwd uses a tighter human-like combo pace", () => {
     const ninja = world({ jumpVx: 390 * 0.76 * 1.2, hoopMul: 0.8, boardFric: 0.7 });
     const heat = world({ jumpVx: 390 * 0.76 * 1.0 });
     const plain = world({ jumpVx: 390 * 0.76 * 0.95 });
-    assert.ok(comboPaceLimit(ninja) > comboPaceLimit(heat));
+    assert.ok(comboPaceLimit(ninja) < comboPaceLimit(plain));
     assert.ok(comboPaceLimit(heat) >= comboPaceLimit(plain) - 0.01);
-    assert.ok(comboPaceLimit(ninja) >= 2.3);
+    assert.ok(comboPaceLimit(ninja) <= 1.65);
+    assert.ok(comboPaceLimit(ninja) >= 1.4);
   });
 
   it("frost does not chain-next into a freeze that kept the same hoop", () => {
