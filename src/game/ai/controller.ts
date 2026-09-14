@@ -11,7 +11,12 @@ const PANIC_INTERVAL = 0.09;
 /** If we can shoot but haven't tapped, mash like a stuck human. */
 export const AI_WATCHDOG = 0.22;
 
-const LEGIT_WAIT = new Set(["already-scored", "flight-scores", "hole-flight-scores"]);
+const LEGIT_WAIT = new Set([
+  "already-scored",
+  "flight-scores",
+  "hole-flight-scores",
+  "let-drop",
+]);
 
 export type AiController = {
   enabled: () => boolean;

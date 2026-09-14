@@ -63,7 +63,7 @@ Skills live on `effectiveBall()` flags (`heat`, `frost`, `champ`, `anti`,
 | heat         | 15       | `kit.heat` (abstain) |
 | default      | 0        | always               |
 
-The default policy covers plain kinematics for anything that only changes jump / gravity. A single floor tap cannot reach the rim, so it **mashes** like a human: floor launch, then tap-jump resets while the ball is still below the basket, plus wrap-boost if it overshoots. It only holds `flight-scores` when the ball is **near the live rim and dropping through** — long-range predictions and leftover `shotMade` flights must not freeze the next possession. Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, or steer in a black hole.
+The default policy covers plain kinematics for anything that only changes jump / gravity. A single floor tap cannot reach the rim, so it **mashes** like a human while **below** the basket, then **lets the ball drop** once it is above the rim (tapping up there resets jump and orbits until the shot clock dies). It only holds `flight-scores` when the ball is **near the live rim and dropping through**. After a counted make it starts the next shot as soon as the ball is back below the rim. Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, or steer in a black hole.
 
 ## Formal menu later
 

@@ -197,13 +197,24 @@ describe("ball AI registry", () => {
       scored: false,
       shotMade: true,
       shotOpen: true,
-      ball: { x: 200, y: 240, vx: 0, vy: 220, r: 19.5 },
+      world: { w: 390, h: 844, floorY: 844 * 0.765 },
+      ball: { x: 280, y: 480, vx: -40, vy: 80, r: 19.5 },
     });
-    const current = predictCurrent(w);
-    assert.equal(current.scores, true);
     const d = decideShot(w, helpers);
     assert.equal(d.tap, true);
     assert.notEqual(d.reason, "flight-scores");
+    assert.notEqual(d.reason, "already-scored");
+  });
+
+  it("lets the ball drop once it is above the rim instead of orbiting", () => {
+    const hoop = { x: 200, y: 300, inner: 28, side: -1 as const, tube: 4, moving: false };
+    const w = world({
+      hoop,
+      ball: { x: 200, y: 80, vx: 40, vy: -400, r: 19.5 },
+    });
+    const d = decideShot(w, helpers);
+    assert.equal(d.tap, false);
+    assert.equal(d.reason, "let-drop");
   });
 
   it("keeps boosting a rising far shot instead of trusting a long-range make guess", () => {

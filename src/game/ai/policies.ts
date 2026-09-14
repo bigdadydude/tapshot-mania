@@ -66,6 +66,14 @@ export const defaultPolicy: BallAiPolicy = {
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
 
+    const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
+    const aboveRim = world.ball.y + world.ball.r * 0.2 < world.hoop.y;
+    // Tapping resets jump velocity. Doing that above the rim launches into
+    // orbit and the shot clock dies — let it fall, then boost below.
+    if (aboveRim && !world.onApproachSide && !onFloor(world)) {
+      return hold("let-drop");
+    }
+
     const next = helpers.predictTap(world);
     if (next.scores) return tap("predicted-make");
 
@@ -78,9 +86,7 @@ export const defaultPolicy: BallAiPolicy = {
     if (world.ballHidden && world.onApproachSide) return tap("approach-enter");
     if (onFloor(world)) return tap("floor-launch");
 
-    // One tap cannot reach the rim. Mash like a human while below the basket;
-    // each tapJump resets jump velocity. Past the hoop: boost into wrap.
-    const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
+    // Mash like a human while still below the basket; stop once above (let-drop).
     const launch = onLaunchSide(world) || world.onApproachSide || pastHoop(world);
     if (belowRim && launch) return tap("apex-boost");
     if (pastHoop(world) && !world.onApproachSide) return tap("wrap-boost");
