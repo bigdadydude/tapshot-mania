@@ -187,6 +187,16 @@ describe("ball AI registry", () => {
     assert.equal(chain.tap, true);
     assert.equal(chain.reason, "chain-next");
 
+    const tooHigh = world({
+      scored: true,
+      shotMade: true,
+      hoop: { x: 320, y: 330, inner: 28, side: 1, tube: 4.3, moving: false },
+      ball: { x: 80, y: 200, vx: 40, vy: 200, r: 19.5 },
+    });
+    const wait = decideShot(tooHigh, helpers);
+    assert.equal(wait.tap, false);
+    assert.equal(wait.reason, "chain-wait");
+
     // Post-make wrap: hoop flipped to the right, ball incoming from the left.
     const w = 390;
     const h = 844;

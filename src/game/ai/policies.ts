@@ -76,8 +76,15 @@ export const defaultPolicy: BallAiPolicy = {
     if (world.ballHidden && !world.onApproachSide) return hold("offscreen");
 
     // Humans jump toward the next hoop at the make — don't wait to land.
-    // `tapJump` after `shotMade` is a new shot toward the flipped side.
-    if (world.shotMade) return tap("chain-next");
+    // Wait until the ball has dropped *below* the new rim so a full jumpVy
+    // climbs instead of orbiting from basket height.
+    if (world.shotMade) {
+      const belowNew = world.ball.y > world.hoop.y + world.ball.r;
+      if (!belowNew && !onFloor(world) && !world.onApproachSide) {
+        return hold("chain-wait");
+      }
+      return tap("chain-next");
+    }
     if (world.scored) return hold("already-scored");
 
     const current = helpers.predictCurrent(world);

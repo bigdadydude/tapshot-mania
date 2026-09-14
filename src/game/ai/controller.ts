@@ -16,6 +16,7 @@ const LEGIT_WAIT = new Set([
   "flight-scores",
   "hole-flight-scores",
   "let-drop",
+  "chain-wait",
   "let-rattle",
   "wait-spacing",
   "glass-settle",
