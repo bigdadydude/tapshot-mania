@@ -408,7 +408,7 @@ describe("ball AI registry", () => {
     assert.notEqual(drop.reason, "apex-boost");
   });
 
-  it("ninja chases instead of freezing under the rim", () => {
+  it("ninja lets a miss under the rim fall instead of jumping over", () => {
     const w = 390;
     const hoop = {
       x: w - 28 - w * 0.1,
@@ -427,10 +427,8 @@ describe("ball AI registry", () => {
     });
     const d = decideShot(close, helpers);
     assert.equal(d.policyId, "ninja");
-    assert.equal(d.tap, true);
-    assert.ok(d.reason === "chase-boost" || d.reason === "wrap-boost" || d.reason === "apex-boost");
-    assert.notEqual(d.reason, "let-drop");
-    assert.notEqual(d.reason, "wait-window");
+    assert.equal(d.tap, false);
+    assert.equal(d.reason, "let-drop");
 
     const flying = world({
       hoop,

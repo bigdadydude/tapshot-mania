@@ -465,41 +465,46 @@ export const champPolicy: BallAiPolicy = {
   },
 };
 
-/** Ninja: default kinematics, but never idle under the rim. */
+/** Ninja: default arc from space; miss → land/bounce out, never idle-mash under the rim. */
 export const ninjaPolicy: BallAiPolicy = {
   id: "ninja",
   priority: 30,
   match: (kit) => kit.ninja,
   vote(world, helpers): AiVote {
     if (world.kit.glass) return abstain("glass-owns");
-    if (world.shotMade) return abstain("chain");
-    if (world.scored) return hold("already-scored");
     if (world.ballHidden && !world.onApproachSide) return abstain();
+
+    if (world.shotMade) {
+      if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
+        return hold("chain-wait");
+      }
+      return abstain("chain");
+    }
+    if (world.scored) return hold("already-scored");
 
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return abstain("flight");
 
     if (pastBoard(world) && !world.onApproachSide) return tap("wrap-boost");
 
-    // Default holds let-drop / commit-glass here — that's the under-rim freeze.
+    // Under the cylinder with no make: let it fall. A full jumpFwd here orbits.
     const underNet =
-      world.ball.y > world.hoop.y + world.hoop.inner * 0.45 &&
-      !onFloor(world) &&
+      world.ball.y > world.hoop.y + world.hoop.inner * 0.35 &&
       !world.onApproachSide &&
       closeToHoop(world);
-    if (underNet && !current.scores) {
-      if (
-        stalledNearHoop(world) ||
-        world.hitRim ||
-        world.hitBoard ||
-        world.shotMissed ||
-        world.ball.vy > 28
-      ) {
-        return tap("chase-boost");
+    if (underNet && !current.scores && !onFloor(world) && !lowBounce(world)) {
+      return hold("let-drop");
+    }
+
+    if ((onFloor(world) || lowBounce(world)) && closeToHoop(world) && !clockPanic(world, 1.6)) {
+      if (bounceOpening(world) || Math.abs(world.ball.vx) > 28) {
+        return hold("floor-bounce");
       }
     }
 
-    if (stalledNearHoop(world) && !current.scores) return tap("chase-boost");
+    if (stalledNearHoop(world) && !current.scores && !onFloor(world)) {
+      return hold("let-drop");
+    }
 
     return abstain("default-shot");
   },
