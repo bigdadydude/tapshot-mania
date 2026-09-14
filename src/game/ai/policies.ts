@@ -523,9 +523,7 @@ export const ninjaPolicy: BallAiPolicy = {
     }
 
     if ((onFloor(world) || lowBounce(world)) && closeToHoop(world) && !clockPanic(world, 1.6)) {
-      if (bounceOpening(world) || Math.abs(world.ball.vx) > 28) {
-        return hold("floor-bounce");
-      }
+      return hold("floor-bounce");
     }
 
     if (stalledNearHoop(world) && !current.scores && !onFloor(world)) {
