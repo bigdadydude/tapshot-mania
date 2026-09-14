@@ -94,7 +94,7 @@ export function createAiController(): AiController {
 
       const panic =
         (world.timerArmed && world.timer < 1.2 && !world.buzzer) ||
-        (world.comboCounting && world.streak > 0 && world.comboClock > 3.05);
+        (world.comboCounting && world.streak > 0 && world.comboClock > 2.35);
 
       const decision = decideShot(world, helpers);
       last = decision;

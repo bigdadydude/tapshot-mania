@@ -467,7 +467,7 @@ describe("ball AI registry", () => {
       hoop,
       combo: 5,
       streak: 5,
-      comboClock: 3.2,
+      comboClock: 2.6,
       comboCounting: true,
       timer: 40,
       timerArmed: true,
@@ -476,6 +476,24 @@ describe("ball AI registry", () => {
     const d = decideShot(w, helpers);
     assert.equal(d.tap, true);
     assert.ok(d.reason === "shot-clock" || d.reason === "pace-boost" || d.reason === "apex-boost");
+  });
+
+  it("boosts a live shot before it settles so combo does not break on the next tap", () => {
+    const h = 844;
+    const floorY = h * 0.765;
+    const r = 19.5;
+    const w = world({
+      shotOpen: true,
+      shotMade: false,
+      shotMissed: false,
+      combo: 6,
+      streak: 6,
+      comboCounting: true,
+      ball: { x: 200, y: floorY - r - 20, vx: 80, vy: 120, r },
+    });
+    const d = decideShot(w, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "keep-air");
   });
 
   it("does not bank-spam from mid-court just because a board bounce might score", () => {

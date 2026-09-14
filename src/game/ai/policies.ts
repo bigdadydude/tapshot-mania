@@ -24,7 +24,7 @@ function clockPanic(world: AiWorld, limit: number): boolean {
 /** Keep combo alive — minute mode has no decaying shot clock to force taps. */
 function comboPressure(world: AiWorld): boolean {
   if (!world.comboCounting || world.streak < 1) return false;
-  return world.comboClock > 3.05;
+  return world.comboClock > 2.35;
 }
 
 function onLaunchSide(world: AiWorld): boolean {
@@ -253,6 +253,18 @@ export const defaultPolicy: BallAiPolicy = {
         return tap("pace-boost");
       }
       return hold("let-drop");
+    }
+
+    // Live attempt still airborne — boost before a floor settle, which would
+    // make the next tap a miss-jump and kill the combo.
+    if (
+      world.shotOpen &&
+      !world.shotMade &&
+      !world.shotMissed &&
+      !world.kit.glass &&
+      (onFloor(world) || lowBounce(world))
+    ) {
+      return tap("keep-air");
     }
 
     // Missed glass / rim pinball: don't mash — bounce away, then re-attack.
