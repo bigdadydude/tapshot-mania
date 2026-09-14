@@ -396,8 +396,7 @@ export const wrapHeightPolicy: BallAiPolicy = {
     }
 
     const next = helpers.predictTap(world);
-    const cleanWindow =
-      next.scores && (next.swish || (next.bank && nearBoard(world))) && !sameJumpAngle(world);
+    const cleanWindow = next.scores && next.swish && !sameJumpAngle(world);
     const spaced =
       Math.abs(world.ball.y - world.hoop.y) > world.hoop.inner * 2.1 ||
       Math.abs(world.ball.x - world.hoop.x) > world.hoop.inner * 2.8;
