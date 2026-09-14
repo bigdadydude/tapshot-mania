@@ -1,10 +1,11 @@
 /**
  * 1-minute auto-play benchmark (measurement only).
  *
- * Usage: node scripts/bench-minute-autoplay.mjs [url] [runs=3]
+ * Usage: node scripts/bench-minute-autoplay.mjs [url] [runs=3] [ballIds]
  *
  * Skips glass (owner-requested) and prison (playable: false).
  * Champion ball cannot enter 1-minute; one probe records that.
+ * Optional ballIds: comma list (plain,ninja,rubber,lava,frost,anti,champ).
  */
 import { chromium } from "playwright";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -13,7 +14,7 @@ const url = process.argv[2] || "http://127.0.0.1:8080/";
 const minRuns = Math.max(3, Number(process.argv[3] || 3));
 const concurrency = Math.max(1, Number(process.env.BENCH_CONCURRENCY || 3));
 
-const BALLS = [
+const ALL_BALLS = [
   { id: "plain", name: "经典球" },
   { id: "ninja", name: "忍者球" },
   { id: "rubber", name: "弹力球" },
@@ -22,6 +23,11 @@ const BALLS = [
   { id: "anti", name: "反重力球" },
   { id: "champ", name: "冠军球", minuteBlocked: true },
 ];
+const only = (process.argv[4] || process.env.BENCH_BALLS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const BALLS = only.length ? ALL_BALLS.filter((b) => only.includes(b.id)) : ALL_BALLS;
 
 mkdirSync("/workspace/screenshots", { recursive: true });
 

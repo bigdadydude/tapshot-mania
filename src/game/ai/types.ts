@@ -45,6 +45,8 @@ export type AiHoop = {
   moving: boolean;
   /** Live scoring target. Departing post-make stands are inactive. */
   active?: boolean;
+  /** Ice-ball freeze remaining on this stand (seconds). */
+  frostLeft?: number;
 };
 
 export type AiWorld = {

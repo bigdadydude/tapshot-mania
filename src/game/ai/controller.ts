@@ -1,6 +1,6 @@
 import { predictCurrent, predictTap } from "./predict.ts";
 import { decideShot } from "./registry.ts";
-import { installBuiltInBallAiPolicies } from "./policies.ts";
+import { comboPaceLimit, installBuiltInBallAiPolicies } from "./policies.ts";
 import type { AiDecision, AiWorld } from "./types.ts";
 
 const helpers = { predictCurrent, predictTap };
@@ -19,6 +19,7 @@ const SNAPPY = new Set([
   "reset-boost",
   "keep-air",
   "floor-launch",
+  "pace-boost",
 ]);
 
 const LEGIT_WAIT = new Set([
@@ -103,7 +104,7 @@ export function createAiController(): AiController {
 
       const panic =
         (world.timerArmed && world.timer < 1.2 && !world.buzzer) ||
-        (world.comboCounting && world.streak > 0 && world.comboClock > 1.85);
+        (world.comboCounting && world.streak > 0 && world.comboClock > comboPaceLimit(world));
 
       const decision = decideShot(world, helpers);
       last = decision;
@@ -119,10 +120,11 @@ export function createAiController(): AiController {
         Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36;
       const below = world.ball.y + world.ball.r * 0.15 >= world.hoop.y;
       const sitting = spd < 78 && close && below;
+      const dropLimit = comboPaceLimit(world) + 0.25;
       const staleDrop =
         decision.reason === "let-drop" &&
         below &&
-        ((world.comboCounting && world.streak > 0 && world.comboClock > 2.15) ||
+        ((world.comboCounting && world.streak > 0 && world.comboClock > dropLimit) ||
           sitting);
       const staleBounce = decision.reason === "floor-bounce" && sitting;
       if (world.scored || (LEGIT_WAIT.has(decision.reason) && !staleDrop && !staleBounce)) {

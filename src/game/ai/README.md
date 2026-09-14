@@ -59,8 +59,8 @@ Skills live on `effectiveBall()` flags (`heat`, `frost`, `champ`, `anti`,
 | chain        | 50       | `kit.chain` (placeholder) |
 | champ        | 40       | `kit.champ`          |
 | ninja        | 30       | `kit.ninja`          |
-| frost        | 20       | `kit.frost` (abstain)|
-| heat         | 15       | `kit.heat` (abstain) |
+| frost        | 20       | `kit.frost`          |
+| heat         | 15       | `kit.heat`           |
 | default      | 0        | always               |
 
 The default policy covers plain kinematics for anything that only changes jump / gravity.
@@ -69,8 +69,10 @@ The default policy covers plain kinematics for anything that only changes jump /
 - **Banks:** 擦板 only in the **glass pocket** (between rim and backboard). Once there, **hold** `commit-glass` / `let-drop` — a tap resets to full `jumpVx` and is how long-travel kits bank-spam or fly past. Mid-court bank guesses and `wrap-boost` *near* the board are refused; wrap only after the ball is actually past the glass.
 - **Floor bounce reset:** after a messy miss, hold `floor-bounce` only while the bounce is **opening spacing** (velocity away from the hoop). Sitting idle under the rim is not a recovery. First shots and clean windows still launch immediately.
 - **Climb / release:** mash while below the basket on a clean look, release in the pocket, let-drop above the rim. Watchdog refuses to mash from above the rim.
-- **Ninja:** owns its vote. Long `jumpFwd` 1.2 + `grav` 0.9 — a tap under the rim hits the glass and orbits. Climb from space, **let-drop** once close, **wrap** only once past the board. Parked on the floor under the hoop **reset-boosts** once, then holds so the bounce can open spacing. Ground wrap inbound uses the snappy `approach-enter` interval (the 44 px/s roll is otherwise a long stall).
-- **Combo pace:** keep-air a live shot before it settles (not when already under the rim). Combo-pressure taps from ~1.85s so minute mode can chain without a decaying shot clock.
+- **Ninja:** owns its vote only **under the cylinder** and on a floor stall. Long `jumpFwd` 1.2 + `grav` 0.9 — a tap under the rim hits the glass and orbits, but a 42% court hold was landing live shots and killing combo. Climb / keep-air / chain stay on default. Wrap after the glass; inbound uses snappy `approach-enter`.
+- **Frost:** freeze can keep the scored stand as the live hoop (`nextHoop` does not always flip). After a make still next to that stand, **let-drop** instead of `chain-next` into the glass. Frozen +2 is in-engine.
+- **Heat:** default `jumpFwd` 1.0 (classic 0.95). Release once flying at the hoop inside ~30% width so the last apex does not wrap. Fire extras are combo-driven in-engine.
+- **Combo pace:** classic / rubber still pressure at ~1.85s. Ninja / heat / frost leave the pocket from ~1.45s.
 
 `glass` (priority 70) still protects a real dropping swish, climbs below the rim, then commits in the pocket. `wrap-height` (rubber) lets rattles resolve and only banks in the glass pocket — not every bounce.
 

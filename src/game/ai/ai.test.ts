@@ -481,6 +481,61 @@ describe("ball AI registry", () => {
     assert.equal(bounce.reason, "floor-bounce");
   });
 
+  it("ninja keep-airs a live mid-court shot instead of a wide no-tap zone", () => {
+    const h = 844;
+    const floorY = h * 0.765;
+    const r = 19.5;
+    const w = world({
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      shotOpen: true,
+      shotMade: false,
+      shotMissed: false,
+      combo: 6,
+      streak: 6,
+      comboCounting: true,
+      ball: { x: 200, y: floorY - r - 20, vx: 80, vy: 120, r },
+    });
+    const d = decideShot(w, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "keep-air");
+  });
+
+  it("frost does not chain-next into a freeze that kept the same hoop", () => {
+    const hoop = { x: 66, y: 330, inner: 28, side: -1 as const, tube: 4.3, moving: false, frostLeft: 3 };
+    const w = world({
+      hoop,
+      kit: flags({ frost: true }),
+      shotMade: true,
+      shotOpen: true,
+      ball: { x: 80, y: 400, vx: 20, vy: 80, r: 19.5 },
+    });
+    const d = decideShot(w, helpers);
+    assert.equal(d.policyId, "frost");
+    assert.equal(d.tap, false);
+    assert.ok(d.reason === "let-drop" || d.reason === "chain-wait");
+  });
+
+  it("heat lets a close flying shot drop instead of apex-wrapping", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const w = world({
+      hoop,
+      kit: flags({ heat: true }),
+      jumpVx: 390 * 0.76,
+      ball: { x: hoop.x - 70, y: hoop.y + 50, vx: 240, vy: -40, r: 19.5 },
+    });
+    const d = decideShot(w, helpers);
+    assert.notEqual(d.reason, "apex-boost");
+    assert.ok(d.reason === "let-drop" || d.reason === "flight-scores" || d.reason === "commit-glass");
+  });
+
   it("does not keep-air a live shot that is already under the hoop", () => {
     const h = 844;
     const floorY = h * 0.765;

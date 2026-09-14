@@ -21,10 +21,19 @@ function clockPanic(world: AiWorld, limit: number): boolean {
   return world.timer < limit;
 }
 
+/**
+ * Combo window is 4s. Ninja / heat / frost miss more if they sit in the
+ * pocket — leave earlier. Classic / rubber keep the calmer 1.85s.
+ */
+export function comboPaceLimit(world: Pick<AiWorld, "kit">): number {
+  if (world.kit.ninja || world.kit.heat || world.kit.frost) return 1.45;
+  return 1.85;
+}
+
 /** Keep combo alive — minute mode has no decaying shot clock to force taps. */
 function comboPressure(world: AiWorld): boolean {
   if (!world.comboCounting || world.streak < 1) return false;
-  return world.comboClock > 1.85;
+  return world.comboClock > comboPaceLimit(world);
 }
 
 function onLaunchSide(world: AiWorld): boolean {
@@ -505,9 +514,9 @@ export const champPolicy: BallAiPolicy = {
 };
 
 /**
- * Ninja: jumpFwd 1.2 + grav 0.9. A tap under the rim slams the glass and
- * orbits. Climb from space, release early, wrap when past the board, and
- * never sit idle under the hoop.
+ * Ninja: jumpFwd 1.2 + grav 0.9. Only intercept under the cylinder / a
+ * floor stall — a 42% court no-tap zone was landing live shots and
+ * breaking combo. Climb, keep-air, and chain stay on default.
  */
 export const ninjaPolicy: BallAiPolicy = {
   id: "ninja",
@@ -528,7 +537,6 @@ export const ninjaPolicy: BallAiPolicy = {
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return abstain("flight");
 
-    // Inbound after ground-wrap (44 px/s roll) — default approach-enter / climb.
     if (world.onApproachSide) return abstain("default-shot");
 
     if (pastBoard(world)) {
@@ -537,9 +545,8 @@ export const ninjaPolicy: BallAiPolicy = {
       return tap("wrap-boost");
     }
 
-    // Wider than classic: ninja covers ~125% the horizontal jump per tap.
-    const close = closeToHoop(world, 0.42);
-    if (close && !current.scores) {
+    const under = underCylinder(world);
+    if (under && !current.scores) {
       if (onFloor(world) || lowBounce(world)) {
         if (
           bounceOpening(world) &&
@@ -549,7 +556,6 @@ export const ninjaPolicy: BallAiPolicy = {
           return hold("floor-bounce");
         }
         const spd = Math.hypot(world.ball.vx, world.ball.vy);
-        // Parked under the rim — one escape tap, then airborne let-drop holds.
         if (spd < 90 || stalledNearHoop(world)) return tap("reset-boost");
         return hold("floor-bounce");
       }
@@ -560,20 +566,55 @@ export const ninjaPolicy: BallAiPolicy = {
   },
 };
 
-/** Frost freeze is combo-driven in-engine. Keep shooting via default. */
+/**
+ * Frost: freeze can keep the scored stand as the live hoop. chain-next
+ * from inside that cylinder is a glass slam. Drop out, then default
+ * launches at the same (or the other frozen) stand. +2 per frozen make
+ * is in-engine — just don't break the streak getting there.
+ */
 export const frostPolicy: BallAiPolicy = {
   id: "frost",
   priority: 20,
   match: (kit) => kit.frost,
-  vote: () => abstain("combo-driven"),
+  vote(world): AiVote {
+    if (world.kit.glass) return abstain("glass-owns");
+    if (world.shotMade) {
+      if (closeToHoop(world, 0.4) && !world.onApproachSide) {
+        if (aboveRim(world) && !onFloor(world)) return hold("chain-wait");
+        return hold("let-drop");
+      }
+      return abstain("chain");
+    }
+    if (world.scored) return hold("already-scored");
+    return abstain("combo-driven");
+  },
 };
 
-/** Lava heat is combo-driven in-engine. Keep shooting via default. */
+/**
+ * Heat: default jumpFwd 1.0 (classic is 0.95). A last apex in the
+ * pocket wraps. Release once we're flying at the hoop inside ~30% width.
+ * Fire extras are combo-driven in-engine.
+ */
 export const heatPolicy: BallAiPolicy = {
   id: "heat",
   priority: 15,
   match: (kit) => kit.heat,
-  vote: () => abstain("combo-driven"),
+  vote(world, helpers): AiVote {
+    if (world.kit.glass) return abstain("glass-owns");
+    if (world.shotMade) return abstain("chain");
+    if (world.scored) return hold("already-scored");
+    if (world.onApproachSide || onFloor(world)) return abstain("default-shot");
+    if (
+      closeToHoop(world, 0.3) &&
+      world.ball.y > world.hoop.y + world.ball.r * 0.12 &&
+      (flyingAtHoop(world) || underCylinder(world))
+    ) {
+      const current = helpers.predictCurrent(world);
+      if (confidentMake(world, current.scores)) return abstain("flight");
+      return hold("let-drop");
+    }
+    return abstain("combo-driven");
+  },
 };
 
 /** Prison chain (unplayable today) — placeholder so a future release only fills `vote`. */
