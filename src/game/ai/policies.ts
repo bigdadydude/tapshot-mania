@@ -50,11 +50,18 @@ function boardFaceX(world: AiWorld): number {
 function nearBoard(world: AiWorld): boolean {
   const h = world.hoop;
   const face = boardFaceX(world);
-  const visW = Math.max(10, world.world.w * 0.052 * (2 / 3));
-  const pad = visW + world.ball.r * 1.8;
   const rim = h.side < 0 ? h.x - h.inner * 0.22 : h.x + h.inner * 0.22;
-  if (h.side < 0) return world.ball.x <= rim && world.ball.x >= face - pad;
-  return world.ball.x >= rim && world.ball.x <= face + pad;
+  const slop = world.ball.r * 0.6;
+  if (h.side < 0) return world.ball.x <= rim && world.ball.x >= face - slop;
+  return world.ball.x >= rim && world.ball.x <= face + slop;
+}
+
+/** Already beyond the glass — wrap, don't keep flying into the wall. */
+function pastBoard(world: AiWorld): boolean {
+  const face = boardFaceX(world);
+  const visW = Math.max(10, world.world.w * 0.052 * (2 / 3));
+  if (world.hoop.side < 0) return world.ball.x < face - visW - world.ball.r;
+  return world.ball.x > face + visW + world.ball.r;
 }
 
 function inBankBand(world: AiWorld): boolean {
@@ -187,6 +194,7 @@ export const defaultPolicy: BallAiPolicy = {
     // cannot hang all the way to the far hoop — mash while *below* the rim
     // until the ball is in the pocket, then release / 擦板.
     if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
+      if (pastBoard(world) && world.ball.vy > 8) return tap("wrap-boost");
       if (pastHoop(world) && world.ball.vy > 8 && !nearBoard(world)) {
         return tap("wrap-boost");
       }
@@ -203,6 +211,7 @@ export const defaultPolicy: BallAiPolicy = {
       pocket &&
       world.ball.y < releaseY;
     if (inRelease) {
+      if (pastBoard(world) && world.ball.vy > 8) return tap("wrap-boost");
       if (pastHoop(world) && world.ball.vy > 8 && !nearBoard(world)) {
         return tap("wrap-boost");
       }
@@ -241,11 +250,13 @@ export const defaultPolicy: BallAiPolicy = {
       return floorRecover(world, next);
     }
 
-    const launch = onLaunchSide(world) || world.onApproachSide || pastHoop(world);
-    if (belowRim && launch && !messyContact(world)) return tap("apex-boost");
+    if (pastBoard(world) && !world.onApproachSide) return tap("wrap-boost");
     if (pastHoop(world) && !world.onApproachSide && !nearBoard(world)) {
       return tap("wrap-boost");
     }
+
+    const launch = onLaunchSide(world) || world.onApproachSide || pastHoop(world);
+    if (belowRim && launch && !messyContact(world)) return tap("apex-boost");
 
     if (world.kit.wrap === "height" && world.onApproachSide) {
       return tap("wrap-approach");

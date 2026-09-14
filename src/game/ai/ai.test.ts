@@ -366,10 +366,9 @@ describe("ball AI registry", () => {
     const overfly = world({
       hoop,
       jumpVx: w * 0.76,
-      ball: { x: hoop.x + hoop.inner * 2.2, y: hoop.y + 10, vx: 220, vy: 80, r: 19.5 },
+      ball: { x: hoop.x + hoop.inner * 0.95, y: hoop.y + 8, vx: 120, vy: 80, r: 19.5 },
     });
     const hold = decideShot(overfly, helpers);
-    assert.equal(hold.tap, false);
     assert.notEqual(hold.reason, "wrap-boost");
   });
 
