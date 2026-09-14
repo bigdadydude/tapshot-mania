@@ -24,7 +24,7 @@ function clockPanic(world: AiWorld, limit: number): boolean {
 /** Keep combo alive — minute mode has no decaying shot clock to force taps. */
 function comboPressure(world: AiWorld): boolean {
   if (!world.comboCounting || world.streak < 1) return false;
-  return world.comboClock > 2.35;
+  return world.comboClock > 3.05;
 }
 
 function onLaunchSide(world: AiWorld): boolean {
@@ -175,7 +175,6 @@ function bankCommit(world: AiWorld, helpers: AiHelpers): AiVote | null {
 
   const current = helpers.predictCurrent(world);
   if (current.scores && (current.bank || current.swish)) return hold("flight-scores");
-  if (comboPressure(world) && !current.scores) return null;
   if (world.hitBoard && world.ball.vy > 8) return hold("let-drop");
   if (movingTowardBoard(world) || world.ball.vy > 12) return hold("commit-glass");
   return hold("let-drop");
@@ -246,7 +245,13 @@ export const defaultPolicy: BallAiPolicy = {
       if (save.scores && save.swish && !current.scores && world.ball.vy > 12) {
         return tap("predicted-make");
       }
-      if (comboPressure(world) && !current.scores) return tap("pace-boost");
+      if (
+        comboPressure(world) &&
+        !current.scores &&
+        world.ball.y > world.hoop.y + world.hoop.inner
+      ) {
+        return tap("pace-boost");
+      }
       return hold("let-drop");
     }
 
@@ -283,7 +288,6 @@ export const defaultPolicy: BallAiPolicy = {
       if (
         longTravel(world) &&
         !world.onApproachSide &&
-        !comboPressure(world) &&
         (closeToHoop(world) || flyingAtHoop(world))
       ) {
         return hold("let-drop");
@@ -502,7 +506,7 @@ export const ninjaPolicy: BallAiPolicy = {
       world.ball.y > world.hoop.y + world.hoop.inner * 0.35 &&
       !world.onApproachSide &&
       closeToHoop(world);
-    if (underNet && !current.scores && !onFloor(world) && !lowBounce(world) && !comboPressure(world)) {
+    if (underNet && !current.scores && !onFloor(world) && !lowBounce(world)) {
       return hold("let-drop");
     }
 

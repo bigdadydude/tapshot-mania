@@ -467,7 +467,7 @@ describe("ball AI registry", () => {
       hoop,
       combo: 5,
       streak: 5,
-      comboClock: 2.6,
+      comboClock: 3.2,
       comboCounting: true,
       timer: 40,
       timerArmed: true,
