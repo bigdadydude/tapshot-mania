@@ -98,6 +98,12 @@ export type AiWorld = {
   buoy: number;
   /** `pMul("ball")` — high-bounce kits skip fallBoost. */
   ballMul: number;
+  /** `pMul("hoop")` — rim/board restitution scale. */
+  hoopMul: number;
+  /** `pMul("boardFric")`. */
+  boardFric: number;
+  /** `pMul("floor")`. */
+  floorMul: number;
   wrapPad: number;
 };
 

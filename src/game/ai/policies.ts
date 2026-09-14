@@ -1,5 +1,8 @@
 import { registerBallAiPolicy } from "./registry.ts";
+import { comboPaceLimit, releasePocket, shotFeel } from "./feel.ts";
 import type { AiHelpers, AiVote, AiWorld, BallAiPolicy } from "./types.ts";
+
+export { comboPaceLimit, shotFeel } from "./feel.ts";
 
 function tap(reason: string): AiVote {
   return { action: "tap", reason };
@@ -19,18 +22,6 @@ function onFloor(world: AiWorld): boolean {
 function clockPanic(world: AiWorld, limit: number): boolean {
   if (!world.timerArmed || world.buzzer || world.timeUp) return false;
   return world.timer < limit;
-}
-
-/**
- * Combo window is 4s. Ground-wrap kits crawl back in at 44 px/s after an
- * overshoot — panic-tapping a live arc dumps combo. Ninja's tapJump writes
- * jumpFwd 1.2, so it waits longest; heat/frost (jumpFwd 1.0) a bit longer
- * than classic. Rubber / classic keep the calmer 1.85s poke.
- */
-export function comboPaceLimit(world: Pick<AiWorld, "kit">): number {
-  if (world.kit.ninja) return 2.45;
-  if (world.kit.heat || world.kit.frost) return 2.15;
-  return 1.85;
 }
 
 /** Keep combo alive — minute mode has no decaying shot clock to force taps. */
@@ -92,14 +83,14 @@ function aboveRim(world: AiWorld): boolean {
   return world.ball.y + world.ball.r * 0.15 < world.hoop.y;
 }
 
-/** Rubber (ballMul) and long jumpFwd kits (ninja) travel a long way off a bounce. */
+/** Rubber (ballMul) and long jumpFwd kits travel a long way off a bounce. */
 function longTravel(world: AiWorld): boolean {
-  return world.ballMul > 1.2 || Math.abs(world.jumpVx) > world.world.w * 0.8;
+  return world.ballMul > 1.2 || shotFeel(world).longJump;
 }
 
-/** Ninja-style jumpFwd — not rubber's ballMul. A tap writes this vx. */
+/** High jumpFwd — a tap writes this vx. Rubber's ballMul is not this path. */
 function longJumpFwd(world: AiWorld): boolean {
-  return Math.abs(world.jumpVx) > world.world.w * 0.8;
+  return shotFeel(world).longJump;
 }
 
 function closeToHoop(world: AiWorld, frac = 0.32): boolean {
@@ -148,6 +139,29 @@ function lowBounce(world: AiWorld): boolean {
 function bounceOpening(world: AiWorld): boolean {
   const dx = world.hoop.x - world.ball.x;
   return world.ball.vx * dx < -24;
+}
+
+/** Court-facing inner rim — toilet-swirl (刷马桶) contact. */
+function onInnerRim(world: AiWorld): boolean {
+  const h = world.hoop;
+  const inner = h.inner * 0.42;
+  const nearY = Math.abs(world.ball.y - h.y) < h.inner * 1.25 + world.ball.r;
+  if (!nearY) return false;
+  if (h.side < 0) {
+    return world.ball.x > h.x - inner && world.ball.x < h.x + h.inner * 0.55;
+  }
+  return world.ball.x < h.x + inner && world.ball.x > h.x - h.inner * 0.55;
+}
+
+/** Around half the visible backboard — bank-half window. */
+function atHalfBoard(world: AiWorld): boolean {
+  const top = world.hoop.y - world.world.h * 0.11;
+  const bot = world.hoop.y - world.hoop.inner * 0.15;
+  return world.ball.y > top && world.ball.y < bot;
+}
+
+function steepIntoBoard(world: AiWorld): boolean {
+  return Math.abs(world.ball.vy) > Math.abs(world.ball.vx) * 0.52 && movingTowardBoard(world);
 }
 
 /**
@@ -253,8 +267,9 @@ export const defaultPolicy: BallAiPolicy = {
 
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
     const releaseY = world.hoop.y + world.hoop.inner * 2.2;
+    const feel = shotFeel(world);
     const pocket =
-      Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 1.55 + world.ball.r * 0.35;
+      Math.abs(world.ball.x - world.hoop.x) < releasePocket(world, feel);
     const inRelease =
       !onFloor(world) &&
       !world.onApproachSide &&
@@ -269,7 +284,7 @@ export const defaultPolicy: BallAiPolicy = {
       if (
         comboPressure(world) &&
         !current.scores &&
-        !longJumpFwd(world) &&
+        !shotFeel(world).longJump &&
         world.ball.y > world.hoop.y + world.hoop.inner
       ) {
         return tap("pace-boost");
@@ -374,8 +389,8 @@ export const antiPolicy: BallAiPolicy = {
 
     if (world.holeOn) {
       const current = helpers.predictCurrent(world);
-      if (current.scores) return hold("hole-flight-scores");
-      return tap("hole-steer");
+      if (confidentMake(world, current.scores)) return hold("hole-flight-scores");
+      return tap("hole-spam");
     }
 
     if (world.antiMatter) {
@@ -538,65 +553,141 @@ export const champPolicy: BallAiPolicy = {
 };
 
 /**
- * Ninja: jumpFwd 1.2 + grav 0.9. tapJump *writes* that vector.
- * Height pumps and descending ride-flight live on default (`longJumpFwd`).
- * This policy only owns the under-rim freeze and the past-board wrap.
+ * Param-driven tactics (jumpFwd / bounce / hang / glass grip). Matches every
+ * kit; abstains when the numbers don't apply. Frost freeze and anti/glass
+ * still own their skills below / above.
  */
-export const ninjaPolicy: BallAiPolicy = {
-  id: "ninja",
-  priority: 30,
-  match: (kit) => kit.ninja,
+export const physPolicy: BallAiPolicy = {
+  id: "phys",
+  priority: 28,
+  match: () => true,
   vote(world, helpers): AiVote {
     if (world.kit.glass) return abstain("glass-owns");
     if (world.ballHidden && !world.onApproachSide) return abstain();
-
-    if (world.shotMade) {
-      if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
-        return hold("chain-wait");
-      }
-      return abstain("chain");
-    }
+    if (world.shotMade) return abstain("chain");
     if (world.scored) return hold("already-scored");
 
+    const feel = shotFeel(world);
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
 
-    if (world.onApproachSide) return abstain("default-shot");
+    // 2. Rim toilet swirl — inner rim, let it rattle in.
+    if (
+      world.hitRim &&
+      onInnerRim(world) &&
+      !onFloor(world) &&
+      (current.scores || world.ball.vy > 18)
+    ) {
+      return hold("rim-swirl");
+    }
 
-    if (pastBoard(world)) {
-      const headingOut = world.hoop.side * world.ball.vx > 12;
-      if (headingOut) return hold("let-drop");
-      return tap("wrap-boost");
+    // 1. Bank: half-board or steep cut into the glass.
+    if (nearBoard(world) && inBankBand(world) && !pastBoard(world) && !onFloor(world)) {
+      if (current.scores && (current.bank || current.swish)) return hold("flight-scores");
+      if (steepIntoBoard(world) || (atHalfBoard(world) && movingTowardBoard(world))) {
+        return hold(steepIntoBoard(world) ? "bank-steep" : "bank-half");
+      }
+    }
+
+    // 4. High bounce near rim — let the pop open space.
+    if (
+      (feel.hotBounce || feel.hoopRest > 1.05) &&
+      (nearRim(world) || underCylinder(world)) &&
+      (onFloor(world) || lowBounce(world)) &&
+      bounceOpening(world) &&
+      !clockPanic(world, 1.6)
+    ) {
+      return hold("pop-away");
     }
 
     const under = underCylinder(world);
-    if (under && !current.scores) {
+    const longOrSlip = feel.longJump || feel.slipperyGlass;
+
+    // 3 + 5. Under-rim tube / wrap-escape. Long jumpFwd or slippery glass
+    // slams the board if you tapJump from here — drop, pop, or wrap out.
+    if (longOrSlip && under && !current.scores && !world.onApproachSide) {
+      if (pastBoard(world)) {
+        const headingOut = world.hoop.side * world.ball.vx > 12;
+        if (headingOut) return hold("let-drop");
+        return tap("wrap-escape");
+      }
       if (onFloor(world) || lowBounce(world)) {
-        const spd = Math.hypot(world.ball.vx, world.ball.vy);
         if (
           bounceOpening(world) &&
           Math.abs(world.ball.vx) > 70 &&
           !clockPanic(world, 1.7) &&
           !comboPressure(world)
         ) {
-          return hold("floor-bounce");
+          return hold("pop-away");
         }
+        const spd = Math.hypot(world.ball.vx, world.ball.vy);
         if (spd < 140 || Math.abs(world.ball.vx) < 90 || stalledNearHoop(world)) {
-          return tap("reset-boost");
+          return tap("wrap-escape");
         }
-        return hold("floor-bounce");
+        return hold("pop-away");
       }
+      // Through the net from below, then drop in.
+      if (world.ball.vy < -12 && world.ball.y > world.hoop.y) return hold("tube-up");
       return hold("let-drop");
     }
 
-    return abstain("default-shot");
+    if (world.onApproachSide) return abstain("default-shot");
+
+    // 6 + 7. Distant climb for a steep (~90°) fall. Long hang / long jumpFwd
+    // must leave the ground earlier — a late tap writes full jumpVx and wraps.
+    const dx = Math.abs(world.ball.x - world.hoop.x);
+    const hangScale = 1 - Math.max(-0.06, Math.min(0.08, (feel.hangTime - 0.7) * 0.25));
+    const far = dx > world.world.w * (feel.longJump ? 0.34 : 0.38) * hangScale;
+    const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
+    if (
+      feel.longJump &&
+      far &&
+      belowRim &&
+      world.ball.vy < -20 &&
+      !onFloor(world) &&
+      !under
+    ) {
+      return tap("early-jump");
+    }
+    if (
+      far &&
+      belowRim &&
+      !feel.longJump &&
+      !onFloor(world) &&
+      !under &&
+      world.ball.vy < 28
+    ) {
+      return tap("far-climb");
+    }
+    if (
+      feel.longJump &&
+      flyingAtHoop(world) &&
+      world.ball.vy > 12 &&
+      !onFloor(world)
+    ) {
+      return hold("ride-flight");
+    }
+
+    // Slightly long jumpFwd (heat 1.0): last apex in a wider pocket wraps.
+    if (
+      feel.jumpFwd >= 0.98 &&
+      !feel.longJump &&
+      !onFloor(world) &&
+      !world.onApproachSide &&
+      belowRim &&
+      dx < releasePocket(world, feel) &&
+      (flyingAtHoop(world) || under || world.ball.vy > 18)
+    ) {
+      return hold("let-drop");
+    }
+
+    return abstain("feel-idle");
   },
 };
 
 /**
- * Frost: freeze can keep the scored stand as the live hoop. chain-next
- * from inside that cylinder is a glass slam. Drop / bounce to spacing,
- * then default launches. Frozen-make +2 is in-engine.
+ * Frost: freeze can keep the scored stand as the live hoop. That is a skill
+ * flag, not a phys number — chain-next into that cylinder slams glass.
  */
 export const frostPolicy: BallAiPolicy = {
   id: "frost",
@@ -626,37 +717,6 @@ export const frostPolicy: BallAiPolicy = {
   },
 };
 
-/**
- * Heat: default jumpFwd 1.0 (classic is 0.95). A last apex *in the rim
- * pocket* wraps; a 30% court hold was falling short of first makes.
- * Fire extras are combo-driven in-engine — protect the streak, don't poke.
- */
-export const heatPolicy: BallAiPolicy = {
-  id: "heat",
-  priority: 15,
-  match: (kit) => kit.heat,
-  vote(world, helpers): AiVote {
-    if (world.kit.glass) return abstain("glass-owns");
-    if (world.shotMade) return abstain("chain");
-    if (world.scored) return hold("already-scored");
-    if (world.onApproachSide || onFloor(world) || lowBounce(world)) {
-      return abstain("default-shot");
-    }
-    const pocket =
-      Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 2.05 + world.ball.r;
-    if (
-      pocket &&
-      world.ball.y > world.hoop.y + world.ball.r * 0.12 &&
-      (flyingAtHoop(world) || underCylinder(world) || world.ball.vy > 18)
-    ) {
-      const current = helpers.predictCurrent(world);
-      if (confidentMake(world, current.scores)) return hold("flight-scores");
-      return hold("let-drop");
-    }
-    return abstain("combo-driven");
-  },
-};
-
 /** Prison chain (unplayable today) — placeholder so a future release only fills `vote`. */
 export const chainPolicy: BallAiPolicy = {
   id: "chain",
@@ -671,9 +731,8 @@ const BUILTINS: BallAiPolicy[] = [
   glassPolicy,
   wrapHeightPolicy,
   champPolicy,
-  ninjaPolicy,
+  physPolicy,
   frostPolicy,
-  heatPolicy,
   chainPolicy,
 ];
 

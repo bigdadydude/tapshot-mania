@@ -2,9 +2,8 @@
  * Isolated auto-play module. Default OFF.
  *
  * Engine hook: `controller.tick(snapshot)` → if true, call existing `tapJump()`.
- * Policies register on skill flags (fusion OR), not a ball-id if-else swamp.
- *
- * See `src/game/ai/README.md` for adding a ball policy and wiring a future menu.
+ * Policies register on skill flags (fusion OR) plus a param-driven `phys`
+ * layer (`shotFeel`: jumpFwd / bounce / hang / glass grip). See README.
  */
 export { createAiController, AI_TAP_INTERVAL, AI_WATCHDOG } from "./controller.ts";
 export type { AiController } from "./controller.ts";
@@ -18,4 +17,4 @@ export type {
   AiHelpers,
 } from "./types.ts";
 export { registerBallAiPolicy, listBallAiPolicies, policiesForKit } from "./registry.ts";
-export { installBuiltInBallAiPolicies } from "./policies.ts";
+export { installBuiltInBallAiPolicies, comboPaceLimit, shotFeel } from "./policies.ts";

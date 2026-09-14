@@ -11,6 +11,8 @@ import {
 import {
   installBuiltInBallAiPolicies,
   resetBuiltInInstallForTests,
+  comboPaceLimit,
+  shotFeel,
 } from "./policies.ts";
 import { createAiController, AI_TAP_INTERVAL, AI_WATCHDOG } from "./controller.ts";
 import { predictCurrent, predictTap } from "./predict.ts";
@@ -40,7 +42,7 @@ function world(over: Partial<AiWorld> = {}): AiWorld {
   const r = 19.5;
   const hoopX = 28 + w * 0.1;
   const hoopY = 326;
-  const jumpVx = -1 * w * 0.76;
+  const jumpVx = -1 * w * 0.76 * 0.95;
   const jumpVy = -Math.sqrt(2 * (h * 3.1) * h * 0.185);
   const base: AiWorld = {
     dt: 1 / 60,
@@ -82,6 +84,9 @@ function world(over: Partial<AiWorld> = {}): AiWorld {
     air: 1,
     buoy: 0,
     ballMul: 1,
+    hoopMul: 1,
+    boardFric: 1,
+    floorMul: 1,
     wrapPad: Math.max(52, w * 0.15),
   };
   return {
@@ -106,7 +111,7 @@ describe("ball AI registry", () => {
     assert.ok(ids.includes("default"));
     assert.ok(ids.includes("anti"));
     assert.ok(ids.includes("glass"));
-    assert.ok(ids.includes("ninja"));
+    assert.ok(ids.includes("phys"));
     installBuiltInBallAiPolicies();
     assert.equal(listBallAiPolicies().filter((p) => p.id === "default").length, 1);
   });
@@ -180,7 +185,8 @@ describe("ball AI registry", () => {
     assert.equal(current.scores, true);
     const d = decideShot(w, helpers);
     assert.equal(d.tap, false);
-    assert.equal(d.policyId, "default");
+    assert.ok(d.policyId === "default" || d.policyId === "phys");
+    assert.equal(d.reason, "flight-scores");
   });
 
   it("chains the next hoop mid-air at the instant of a make", () => {
@@ -381,7 +387,9 @@ describe("ball AI registry", () => {
     assert.ok(
       stay.reason === "flight-scores" ||
         stay.reason === "let-drop" ||
-        stay.reason === "commit-glass",
+        stay.reason === "commit-glass" ||
+        stay.reason === "bank-steep" ||
+        stay.reason === "bank-half",
     );
 
     const overfly = world({
@@ -395,7 +403,9 @@ describe("ball AI registry", () => {
     assert.ok(
       hold.reason === "flight-scores" ||
         hold.reason === "let-drop" ||
-        hold.reason === "commit-glass",
+        hold.reason === "commit-glass" ||
+        hold.reason === "bank-steep" ||
+        hold.reason === "bank-half",
     );
 
     // Over the rim / glass, still on court — fall into the bank window.
@@ -428,7 +438,7 @@ describe("ball AI registry", () => {
       ball: { x: hoop.x - 55, y: hoop.y + 110, vx: 8, vy: 20, r: 19.5 },
     });
     const d = decideShot(close, helpers);
-    assert.equal(d.policyId, "ninja");
+    assert.equal(d.policyId, "phys");
     assert.equal(d.tap, false);
     assert.equal(d.reason, "let-drop");
 
@@ -464,7 +474,10 @@ describe("ball AI registry", () => {
     const d = decideShot(rising, helpers);
     assert.equal(d.tap, true);
     assert.ok(
-      d.reason === "apex-boost" || d.reason === "keep-air" || d.reason === "predicted-make",
+      d.reason === "apex-boost" ||
+        d.reason === "keep-air" ||
+        d.reason === "predicted-make" ||
+        d.reason === "early-jump",
     );
   });
 
@@ -516,9 +529,9 @@ describe("ball AI registry", () => {
       ball: { x: hoop.x - 40, y: floorY - r, vx: 4, vy: 12, r },
     });
     const d = decideShot(stuck, helpers);
-    assert.equal(d.policyId, "ninja");
+    assert.equal(d.policyId, "phys");
     assert.equal(d.tap, true);
-    assert.equal(d.reason, "reset-boost");
+    assert.ok(d.reason === "wrap-escape" || d.reason === "reset-boost");
 
     const opening = world({
       hoop,
@@ -530,7 +543,7 @@ describe("ball AI registry", () => {
     });
     const bounce = decideShot(opening, helpers);
     assert.equal(bounce.tap, false);
-    assert.equal(bounce.reason, "floor-bounce");
+    assert.ok(bounce.reason === "floor-bounce" || bounce.reason === "pop-away");
   });
 
   it("ninja keep-airs a live mid-court shot instead of a wide no-tap zone", () => {
@@ -553,6 +566,39 @@ describe("ball AI registry", () => {
     assert.equal(d.reason, "keep-air");
   });
 
+  it("uses jumpFwd, not the ninja flag, for under-rim let-drop", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const w = world({
+      hoop,
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      kit: flags(),
+      ball: { x: hoop.x - 55, y: hoop.y + 110, vx: 8, vy: 20, r: 19.5 },
+    });
+    assert.equal(shotFeel(w).longJump, true);
+    const d = decideShot(w, helpers);
+    assert.equal(d.policyId, "phys");
+    assert.equal(d.tap, false);
+    assert.equal(d.reason, "let-drop");
+  });
+
+  it("combo pace stretches with jumpFwd, not ball name", () => {
+    const ninja = world({ jumpVx: 390 * 0.76 * 1.2, hoopMul: 0.8, boardFric: 0.7 });
+    const heat = world({ jumpVx: 390 * 0.76 * 1.0 });
+    const plain = world({ jumpVx: 390 * 0.76 * 0.95 });
+    assert.ok(comboPaceLimit(ninja) > comboPaceLimit(heat));
+    assert.ok(comboPaceLimit(heat) >= comboPaceLimit(plain) - 0.01);
+    assert.ok(comboPaceLimit(ninja) >= 2.3);
+  });
+
   it("frost does not chain-next into a freeze that kept the same hoop", () => {
     const hoop = { x: 66, y: 330, inner: 28, side: -1 as const, tube: 4.3, moving: false, frostLeft: 3 };
     const w = world({
@@ -566,6 +612,85 @@ describe("ball AI registry", () => {
     assert.equal(d.policyId, "frost");
     assert.equal(d.tap, false);
     assert.ok(d.reason === "let-drop" || d.reason === "chain-wait");
+  });
+
+  it("holds an inner-rim swirl instead of resetting jumpVx", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const w = world({
+      hoop,
+      hitRim: true,
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      ball: { x: hoop.x - 8, y: hoop.y + 10, vx: 40, vy: 90, r: 19.5 },
+    });
+    const d = decideShot(w, helpers);
+    assert.equal(d.tap, false);
+    assert.ok(d.reason === "rim-swirl" || d.reason === "flight-scores" || d.reason === "let-drop");
+  });
+
+  it("tap-climbs from far away so the drop is steep", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const w = world({
+      hoop,
+      jumpVx: 390 * 0.76,
+      ball: { x: 40, y: 520, vx: 90, vy: -220, r: 19.5 },
+    });
+    const d = decideShot(w, helpers);
+    assert.equal(d.tap, true);
+    assert.ok(d.reason === "far-climb" || d.reason === "apex-boost" || d.reason === "early-jump");
+  });
+
+  it("rubber bounce does not take the longJump ride-flight path", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const w = world({
+      hoop,
+      kit: flags({ wrap: "height", rScale: 0.5 }),
+      ballMul: 2,
+      jumpVx: 390 * 0.76 * 0.8,
+      shotOpen: true,
+      ball: { x: hoop.x - 160, y: hoop.y + 80, vx: 280, vy: 90, r: 9.75 },
+    });
+    assert.equal(shotFeel(w).longJump, false);
+    assert.equal(shotFeel(w).hotBounce, true);
+    const d = decideShot(w, helpers);
+    assert.notEqual(d.reason, "ride-flight");
+  });
+
+  it("anti spams taps once the black hole is open", () => {
+    const d = decideShot(
+      world({
+        kit: flags({ anti: true }),
+        holeOn: true,
+        hole: { x: 200, y: 300, r: 80 },
+        ball: { x: 180, y: 520, vx: 10, vy: 20, r: 19.5 },
+      }),
+      helpers,
+    );
+    assert.equal(d.policyId, "anti");
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "hole-spam");
   });
 
   it("heat lets a close flying shot drop instead of apex-wrapping", () => {

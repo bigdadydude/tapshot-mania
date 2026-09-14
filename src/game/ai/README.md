@@ -17,6 +17,53 @@ its cooldown / last decision are cleared — manual play is unchanged.
 
 The toggle does not start a match. Title still needs a real start tap.
 
+## Physics feel → decisions (`feel.ts`)
+
+`tapJump()` **writes** `jumpVx` / `jumpVy` every tap. Policies should key off
+those numbers (and elasticity), not `ballId`. `shotFeel(world)` derives:
+
+| Param (live) | Feel field | What it changes |
+|--------------|------------|-----------------|
+| `\|jumpVx\| / (w·0.76)` | `jumpFwd` | Combo pace; pocket width; `longJump` if > 1.08 |
+| `2·\|jumpVy\| / g` | `hangTime` | Far-climb distance (longer hang → jump earlier) |
+| `jumpVy` vs `g·h` | `jumpUp` | Climb vs hang |
+| `pMul("ball")` | `bounce` / `hotBounce` | `pop-away` instead of mashing a rim pop |
+| `pMul("hoop")` × bounce | `hoopRest` | Rim swirl vs slam |
+| `pMul("boardFric")` | `boardGrip` / `slipperyGlass` | Ninja-like glass: don't tap under the cylinder |
+| `pMul("grav")` | `grav` | Hang time (via `gravity`) |
+| `pMul("floor")` | `floorMul` | Floor pop energy |
+| `kit.wrap` | `groundWrap` | 44 px/s crawl after an overshoot |
+
+**Combo pace** (window is 4s): `1.85 + max(0, jumpFwd−0.95)·2.4`, +0.12 if
+slippery glass, −0.08 if hot bounce. Classic ~1.85, heat/frost ~1.97, ninja ~2.5.
+
+**Release pocket:** slightly wide `jumpFwd` (1.0, lava/frost) holds let-drop
+sooner so the last apex does not wrap. `longJump` (ninja 1.2) does **not**
+widen the pocket — it rides the descent instead.
+
+Ball-id / skill-flag votes are only for skills that are not a number:
+**frost** (freeze can keep the same stand), **anti** (pickups / hole),
+**glass** (restitution 0), **wrap-height** (rubber orbit), **champ**.
+
+## Named tactics (human playbook)
+
+| Reason | When | Driven by |
+|--------|------|-----------|
+| `bank-half` | Contact around half board height, moving into glass | board geom + vy |
+| `bank-steep` | Steeper cut into the board (`\|vy\| > 0.52·\|vx\|`) | velocity vs board |
+| `rim-swirl` | Inner-rim rattle (刷马桶) — hold, don't reset `jumpVx` | `hitRim` + inner side |
+| `tube-up` | Climbing through the net from below, then drop | under cylinder + `vy < 0` |
+| `pop-away` | Elastic pop near the rim — let spacing open, then re-attack | `hotBounce` / `hoopRest` |
+| `wrap-escape` | Stuck under the rim: tap/wrap to the far side (穿屏) | `longJump` or `slipperyGlass` |
+| `early-jump` | Far + rising + long jumpFwd — jump **early** for a steep fall | `longJump` + dx + hangTime |
+| `far-climb` | Distant rapid taps so the ball falls near **90°** | far + rising, not `longJump` |
+| `ride-flight` | Descending live arc on a long jump — don't poke | `longJump` + `vy > 0` |
+| `hole-spam` | Black hole open — tap; gravity pulls it in | `kit.anti` / `holeOn` |
+| `gather-tap` | Antimatter pickup, but shot clock beats farming | `kit.anti` |
+
+Antimatter later: keep gathering **while scoring**; `clock-over-pickup` already
+drops the farm when the clock is short. Once `holeOn`, `hole-spam` is snappy.
+
 ## Adding a new ball policy
 
 Skills live on `effectiveBall()` flags (`heat`, `frost`, `champ`, `anti`,
@@ -24,10 +71,10 @@ Skills live on `effectiveBall()` flags (`heat`, `frost`, `champ`, `anti`,
 `经典+反重力` loadout already receives the antimatter policy without extra work.
 
 1. **Do not invent a skill.** Read `src/game/balls.ts` (and fusion) for what
-   the ball actually does. If the skill is purely combo / timer driven in the
-   engine (lava, frost, ninja clones), you usually **abstain** and let
-   `default` shoot.
-2. Add a `BallAiPolicy` in `src/game/ai/policies.ts` (or a sibling file):
+   the ball actually does. If the difference is jump / bounce / gravity, extend
+   `shotFeel` / `physPolicy` — do **not** add `kit.whatever` branches.
+2. Add a `BallAiPolicy` only when the skill is not a phys number (freeze, hole,
+   glass 0-rest, height wrap):
 
    ```ts
    export const myPolicy: BallAiPolicy = {
@@ -35,13 +82,12 @@ Skills live on `effectiveBall()` flags (`heat`, `frost`, `champ`, `anti`,
      priority: 55,            // higher than default (0); see table below
      match: (kit) => kit.anti && kit.glass, // flags, not ball id
      vote(world, helpers) {
-       // return tap / hold / abstain
        return { action: "abstain", reason: "defer" };
      },
    };
    ```
 
-3. Append it to `BUILTINS` in the same file. `installBuiltInBallAiPolicies()`
+3. Append it to `BUILTINS` in `policies.ts`. `installBuiltInBallAiPolicies()`
    registers them once.
 4. First non-`abstain` vote wins (highest priority). Use `abstain` when the
    generic launcher should decide; `hold` to block a tap; `tap` to shoot.
@@ -58,25 +104,21 @@ Skills live on `effectiveBall()` flags (`heat`, `frost`, `champ`, `anti`,
 | wrap-height  | 60       | `kit.wrap === "height"` |
 | chain        | 50       | `kit.chain` (placeholder) |
 | champ        | 40       | `kit.champ`          |
-| ninja        | 30       | `kit.ninja`          |
+| phys         | 28       | always (feel tactics) |
 | frost        | 20       | `kit.frost`          |
-| heat         | 15       | `kit.heat`           |
 | default      | 0        | always               |
 
-The default policy covers plain kinematics for anything that only changes jump / gravity.
+The default policy covers plain kinematics. `phys` only votes when jumpFwd /
+bounce / glass grip make a tap dangerous or a playbook tactic applies.
 
 - **Chain:** at the make (`shotMade`) it jumps toward the **new** hoop immediately — no floor wait. It only holds `chain-wait` while still *above* the new rim (a full `jumpVy` from there orbits). `tapJump` after a counted make is a new shot and does not break combo.
-- **Banks:** 擦板 only in the **glass pocket** (between rim and backboard). Once there, **hold** `commit-glass` / `let-drop` — a tap resets to full `jumpVx` and is how long-travel kits bank-spam or fly past. Mid-court bank guesses and `wrap-boost` *near* the board are refused; wrap only after the ball is actually past the glass.
-- **Floor bounce reset:** after a messy miss, hold `floor-bounce` only while the bounce is **opening spacing** (velocity away from the hoop). Sitting idle under the rim is not a recovery. First shots and clean windows still launch immediately.
-- **Climb / release:** mash while below the basket on a clean look, release in the pocket, let-drop above the rim. Watchdog refuses to mash from above the rim.
-- **Ninja:** owns its vote only **under the cylinder** and on a floor stall. Long `jumpFwd` 1.2 + `grav` 0.9 — a tap under the rim hits the glass and orbits, but a 42% court hold was landing live shots and killing combo. Climb / keep-air / chain stay on default. Wrap after the glass; inbound uses snappy `approach-enter`.
-- **Frost:** freeze can keep the scored stand as the live hoop (`nextHoop` does not always flip). After a make still next to that stand, **let-drop** instead of `chain-next` into the glass. Frozen +2 is in-engine.
-- **Heat:** default `jumpFwd` 1.0 (classic 0.95). Release once flying at the hoop inside ~30% width so the last apex does not wrap. Fire extras are combo-driven in-engine.
-- **Combo pace:** classic / rubber still pressure at ~1.85s. Ninja / heat / frost leave the pocket from ~1.45s.
+- **Banks:** 擦板 only in the **glass pocket**. Prefer **half-board** and **steep** cuts (`bank-half` / `bank-steep`). A tap resets to full `jumpVx`.
+- **Floor bounce / pop-away:** after a messy miss or a hot bounce, hold while velocity is **opening spacing**. Sitting idle under the rim is `wrap-escape`, not a hover.
+- **Climb / release:** far + rising → tap-climb for a near-vertical drop; release in the pocket; let-drop above the rim. Long jumpFwd **jumps early** then **rides** the descent.
+- **Frost:** freeze can keep the scored stand (`nextHoop` does not always flip). After a make still next to that stand, **let-drop** instead of `chain-next` into the glass. Frozen +2 is in-engine.
+- **Heat / ninja clones / fire extras:** combo-driven in-engine. AI only sees their phys (jumpFwd 1.0 / 1.2, hoop 0.8, boardFric 0.7).
 
-`glass` (priority 70) still protects a real dropping swish, climbs below the rim, then commits in the pocket. `wrap-height` (rubber) lets rattles resolve and only banks in the glass pocket — not every bounce.
-
-Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, steer in a black hole, or (rubber) refuse a bad rim spam. Do not abandon floor-bounce recovery for high-travel balls.
+`glass` (priority 70) still protects a real dropping swish. `wrap-height` (rubber) lets rattles resolve and only banks in the glass pocket.
 
 ## Formal menu later
 
@@ -107,5 +149,5 @@ options screen cannot drift.
   only commit banks *at* the glass, never as mid-court spam.
 - Spam the same jump after a rubber rim rattle, or float forever on glass
   waiting for a perfect swish.
-- Abandon floor-bounce recovery. After a bad bounce, humans land, ride the
-  bounce away, and shoot again. Hold `floor-bounce` until spacing opens.
+- Abandon floor-bounce / pop-away recovery. After a bad bounce, humans land,
+  ride the bounce away, and shoot again.

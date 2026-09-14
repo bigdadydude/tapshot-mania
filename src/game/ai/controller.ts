@@ -16,10 +16,14 @@ const SNAPPY = new Set([
   "chain-next",
   "approach-enter",
   "wrap-boost",
+  "wrap-escape",
   "reset-boost",
   "keep-air",
   "floor-launch",
   "pace-boost",
+  "early-jump",
+  "far-climb",
+  "hole-spam",
 ]);
 
 const LEGIT_WAIT = new Set([
@@ -38,6 +42,11 @@ const LEGIT_WAIT = new Set([
   "floor-bounce",
   "let-bounce",
   "commit-glass",
+  "rim-swirl",
+  "pop-away",
+  "tube-up",
+  "bank-steep",
+  "bank-half",
 ]);
 
 export type AiController = {

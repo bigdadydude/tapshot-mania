@@ -50,7 +50,7 @@ import {
 } from "./rogue";
 import { createAiController, flagsFromKit } from "./ai";
 
-export const GAME_REV = 331;
+export const GAME_REV = 332;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -1840,6 +1840,9 @@ export function createGame(
       air: pMul("air"),
       buoy: pMul("buoy"),
       ballMul: pMul("ball"),
+      hoopMul: pMul("hoop"),
+      boardFric: pMul("boardFric"),
+      floorMul: pMul("floor"),
       wrapPad: wrapPad(),
     };
   }
