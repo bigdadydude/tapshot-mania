@@ -349,16 +349,30 @@ export const glassPolicy: BallAiPolicy = {
       Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 2.55 + world.ball.r;
     if (pocket && !onFloor(world)) {
       // Already falling through the pocket — committing means NOT tapping.
-      if (world.ball.vy > 22) return hold("glass-settle");
+      if (world.ball.vy > 22 && world.ball.y < world.hoop.y + world.hoop.inner * 1.15) {
+        return hold("glass-settle");
+      }
       if (next.scores && next.swish) return tap("seek-swish");
       if (next.scores && world.ball.y > world.hoop.y) return tap("commit-make");
+      // Missed below the net — climb; do not fall to the floor.
+      if (world.ball.y > world.hoop.y + world.hoop.inner * 1.6) return tap("glass-launch");
       return hold("glass-settle");
     }
 
     if (onFloor(world)) return tap("glass-launch");
     // Default withholds apex-boost after rim/board mess so ground balls can
-    // floor-bounce. Glass cannot land — keep climbing.
-    if (!aboveRim(world)) return tap("glass-launch");
+    // floor-bounce. Glass cannot land — keep climbing *until* we're close,
+    // then fall into the pocket instead of jumping over the glass.
+    if (!aboveRim(world)) {
+      const floor = world.world.floorY - world.ball.r;
+      const nearFloor = world.ball.y >= floor - Math.max(80, world.world.h * 0.14);
+      if (next.scores && next.swish) return tap("seek-swish");
+      if (next.scores && world.ball.y > world.hoop.y) return tap("commit-make");
+      if (nearFloor || world.onApproachSide || !closeToHoop(world)) {
+        return tap("glass-launch");
+      }
+      return hold("glass-settle");
+    }
     return hold("glass-settle");
   },
 };

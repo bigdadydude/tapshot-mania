@@ -341,6 +341,21 @@ describe("ball AI registry", () => {
     );
     assert.equal(climb.tap, true);
     assert.notEqual(climb.reason, "glass-settle");
+
+    // Close under the rim but not yet on the floor — don't jump over the glass.
+    const under = decideShot(
+      world({
+        hoop,
+        ball: { x: 310, y: 380, vx: 90, vy: 40, r: 16 },
+        jumpVx: -80,
+        jumpVy: -900,
+        kit: flags({ glass: true, wrap: "height" }),
+      }),
+      helpers,
+    );
+    assert.equal(under.policyId, "glass");
+    assert.equal(under.tap, false);
+    assert.equal(under.reason, "glass-settle");
   });
 
   it("commits a bank in the glass pocket and does not wrap-boost past the board", () => {
