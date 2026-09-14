@@ -603,14 +603,17 @@ export const physPolicy: BallAiPolicy = {
     const under = underCylinder(world);
     const longOrSlip = feel.longJump || feel.slipperyGlass;
 
+    // 5. Stuck: wrap out (穿屏). Same order as the old ninja skill policy —
+    // past the glass first, then the cylinder. Driven by jumpFwd / grip.
+    if (longOrSlip && !current.scores && !world.onApproachSide && pastBoard(world)) {
+      const headingOut = world.hoop.side * world.ball.vx > 12;
+      if (headingOut) return hold("let-drop");
+      return tap("wrap-escape");
+    }
+
     // 3 + 5. Under-rim tube / wrap-escape. Long jumpFwd or slippery glass
     // slams the board if you tapJump from here — drop, pop, or wrap out.
     if (longOrSlip && under && !current.scores && !world.onApproachSide) {
-      if (pastBoard(world)) {
-        const headingOut = world.hoop.side * world.ball.vx > 12;
-        if (headingOut) return hold("let-drop");
-        return tap("wrap-escape");
-      }
       if (onFloor(world) || lowBounce(world)) {
         if (
           bounceOpening(world) &&
