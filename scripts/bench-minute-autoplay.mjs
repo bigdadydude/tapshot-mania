@@ -285,7 +285,9 @@ const browser = await chromium.launch({
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
 });
 
-const champ = await probeChamp(browser);
+const champ = BALLS.some((b) => b.id === "champ")
+  ? await probeChamp(browser)
+  : { skipped: true, note: "冠军球本轮未测" };
 
 const jobs = [];
 for (const b of BALLS) {
