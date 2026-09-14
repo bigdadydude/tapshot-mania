@@ -81,3 +81,6 @@ options screen cannot drift.
 - Fork `tapJump`, gravity, or scoring.
 - Read or write rogue gold / shop / fuse UI (those pause the sim).
 - Stay armed after disable (`setEnabled(false)` clears cooldown).
+- Hold on `shotMade`. That combo latch stays true until the next tap, so
+  treating it as "don't shoot" stalls forever after the hoop switches sides.
+  Hold only while `scored` (the ball is still in this make).

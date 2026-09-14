@@ -40,7 +40,9 @@ export const defaultPolicy: BallAiPolicy = {
   priority: 0,
   match: () => true,
   vote(world: AiWorld, helpers: AiHelpers): AiVote {
-    if (world.scored || world.shotMade) return hold("already-scored");
+    // Only `scored` (ball still in this make). `shotMade` stays true until the
+    // *next* tapJump — holding on it deadlocks after hoop side-switch.
+    if (world.scored) return hold("already-scored");
     if (world.ballHidden && !world.onApproachSide) return hold("offscreen");
 
     const current = helpers.predictCurrent(world);
@@ -74,7 +76,7 @@ export const antiPolicy: BallAiPolicy = {
   priority: 80,
   match: (kit) => kit.anti,
   vote(world, helpers): AiVote {
-    if (world.scored || world.shotMade) return hold("already-scored");
+    if (world.scored) return hold("already-scored");
     if (world.ballHidden && !world.onApproachSide) return abstain();
 
     if (world.holeOn) {
@@ -104,7 +106,7 @@ export const glassPolicy: BallAiPolicy = {
   priority: 70,
   match: (kit) => kit.glass,
   vote(world, helpers): AiVote {
-    if (world.scored || world.shotMade) return hold("already-scored");
+    if (world.scored) return hold("already-scored");
     const current = helpers.predictCurrent(world);
     const next = helpers.predictTap(world);
     if (current.scores && current.swish) return hold("protect-swish");
@@ -124,7 +126,7 @@ export const wrapHeightPolicy: BallAiPolicy = {
   match: (kit) => kit.wrap === "height",
   vote(world, helpers): AiVote {
     if (world.kit.glass) return abstain("glass-owns");
-    if (world.scored || world.shotMade) return hold("already-scored");
+    if (world.scored) return hold("already-scored");
     if (!world.onApproachSide && world.ballHidden) return hold("wait-wrap");
     const next = helpers.predictTap(world);
     if (world.onApproachSide && next.scores) return tap("wrap-window");
@@ -139,7 +141,7 @@ export const champPolicy: BallAiPolicy = {
   match: (kit) => kit.champ,
   vote(world, helpers): AiVote {
     if (!world.champMode) return abstain();
-    if (world.scored || world.shotMade) return hold("already-scored");
+    if (world.scored) return hold("already-scored");
     const next = helpers.predictTap(world);
     if (next.scores) return tap("champ-window");
     if (onFloor(world) || clockPanic(world, 2.2)) return tap("champ-keep-alive");

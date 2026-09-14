@@ -52,8 +52,13 @@ export type AiWorld = {
   phase: Phase;
   paused: boolean;
   tapLock: number;
+  /** True only while this make is still resolving (`ball.scored`). */
   scored: boolean;
   shotOpen: boolean;
+  /**
+   * Combo latch: this attempt already counted. Stays true until the next *new*
+   * `tapJump` — do not use as "don't shoot"; that deadlocks after hoop switch.
+   */
   shotMade: boolean;
   timer: number;
   timerArmed: boolean;

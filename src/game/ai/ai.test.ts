@@ -151,6 +151,40 @@ describe("ball AI registry", () => {
     assert.equal(d.policyId, "default");
   });
 
+  it("default holds the resolving make but keeps shooting after hoop switch", () => {
+    const resolving = world({ scored: true, shotMade: true });
+    const hold = decideShot(resolving, helpers);
+    assert.equal(hold.tap, false);
+    assert.equal(hold.reason, "already-scored");
+
+    // Post-make wrap: hoop flipped to the right, ball incoming from the left.
+    // shotMade is still true until the next tapJump — must not deadlock.
+    const w = 390;
+    const h = 844;
+    const r = 19.5;
+    const incoming = world({
+      scored: false,
+      shotMade: true,
+      shotOpen: true,
+      ballHidden: true,
+      onApproachSide: true,
+      jumpVx: w * 0.76,
+      jumpVy: -Math.sqrt(2 * (h * 3.1) * h * 0.185),
+      hoop: {
+        x: w - 28 - w * 0.1,
+        y: 365,
+        inner: 28,
+        side: 1,
+        tube: 4.3,
+        moving: false,
+      },
+      ball: { x: -r - 40, y: h * 0.765 - r, vx: 44, vy: 0, r },
+    });
+    const d = decideShot(incoming, helpers);
+    assert.equal(d.tap, true);
+    assert.notEqual(d.reason, "already-scored");
+  });
+
   it("glass protects a swish instead of re-tapping", () => {
     const hoop = { x: 200, y: 300, inner: 32, side: -1 as const, tube: 4, moving: false };
     const w = world({
