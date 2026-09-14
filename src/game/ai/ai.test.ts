@@ -187,6 +187,17 @@ describe("ball AI registry", () => {
     assert.equal(chain.tap, true);
     assert.equal(chain.reason, "chain-next");
 
+    // At the rim plane of the new hoop, falling through — jump now, don't wait to land.
+    const atMake = world({
+      scored: true,
+      shotMade: true,
+      hoop: { x: 320, y: 330, inner: 28, side: 1, tube: 4.3, moving: false },
+      ball: { x: 80, y: 330, vx: 40, vy: 180, r: 19.5 },
+    });
+    const now = decideShot(atMake, helpers);
+    assert.equal(now.tap, true);
+    assert.equal(now.reason, "chain-next");
+
     const tooHigh = world({
       scored: true,
       shotMade: true,
@@ -304,13 +315,18 @@ describe("ball AI registry", () => {
         commit.reason === "seek-swish" ||
         commit.reason === "glass-launch",
     );
-    assert.equal(commit.policyId, "glass");
-    assert.equal(commit.tap, true);
-    assert.ok(
-      commit.reason === "commit-make" ||
-        commit.reason === "seek-swish" ||
-        commit.reason === "glass-launch",
+
+    const hover = decideShot(
+      world({
+        hoop,
+        ball: { x: 140, y: 80, vx: 40, vy: -280, r: 16 },
+        kit: flags({ glass: true, wrap: "height" }),
+      }),
+      helpers,
     );
+    assert.equal(hover.policyId, "glass");
+    assert.equal(hover.tap, false);
+    assert.equal(hover.reason, "glass-settle");
   });
 
   it("rubber holds a rim rattle instead of repeating the same jump angle", () => {
@@ -318,6 +334,7 @@ describe("ball AI registry", () => {
     const w = world({
       hoop,
       hitRim: true,
+      rimHits: 2,
       kit: flags({ wrap: "height", rScale: 0.5 }),
       ballMul: 2,
       jumpVx: -296,
@@ -326,7 +343,21 @@ describe("ball AI registry", () => {
     });
     const d = decideShot(w, helpers);
     assert.equal(d.tap, false);
-    assert.ok(d.reason === "let-rattle" || d.reason === "flight-scores");
+    assert.ok(d.reason === "let-rattle" || d.reason === "wait-spacing" || d.reason === "flight-scores");
+
+    const sky = world({
+      hoop,
+      kit: flags({ wrap: "height", rScale: 0.5 }),
+      ballMul: 2,
+      onApproachSide: true,
+      ballHidden: true,
+      jumpVx: -296,
+      jumpVy: -900,
+      ball: { x: -40, y: -400, vx: 220, vy: -100, r: 9.75 },
+    });
+    const drop = decideShot(sky, helpers);
+    assert.equal(drop.tap, false);
+    assert.equal(drop.reason, "let-drop");
   });
 
   it("anti votes tap to collect a pickup the current path misses", () => {
@@ -425,5 +456,23 @@ describe("AI controller", () => {
     assert.equal(ai.tick(w), false);
     assert.equal(ai.tick(w), true);
     assert.equal(ai.lastDecision()?.reason, "watchdog");
+  });
+
+  it("watchdog does not mash jumpVy from above the rim", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "stuck",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "hold", reason: "wait-window" }),
+    });
+    ai.setEnabled(true);
+    const sky = world({
+      dt: AI_WATCHDOG,
+      ball: { x: 200, y: 40, vx: 20, vy: -80, r: 19.5 },
+      hoop: { x: 200, y: 300, inner: 28, side: -1, tube: 4, moving: false },
+    });
+    assert.equal(ai.tick(sky), false);
+    assert.notEqual(ai.lastDecision()?.reason, "watchdog");
   });
 });

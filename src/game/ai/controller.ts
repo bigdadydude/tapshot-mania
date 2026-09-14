@@ -105,6 +105,14 @@ export function createAiController(): AiController {
 
       idle += world.dt;
       if (idle >= AI_WATCHDOG && cooldown <= 0) {
+        const floor = world.world.floorY - world.ball.r;
+        const grounded = world.ball.y >= floor - 10 && world.ball.vy > -50;
+        const sky = world.ball.y + world.ball.r * 0.15 < world.hoop.y;
+        // jumpVy from above the rim is how rubber/glass/classic sail into orbit.
+        if (sky && !grounded) {
+          idle = 0;
+          return false;
+        }
         return fire(
           { tap: true, reason: "watchdog", policyId: decision.policyId },
           wait,

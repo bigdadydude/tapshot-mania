@@ -65,13 +65,13 @@ Skills live on `effectiveBall()` flags (`heat`, `frost`, `champ`, `anti`,
 
 The default policy covers plain kinematics for anything that only changes jump / gravity.
 
-- **Chain:** at the make (`shotMade`) it jumps toward the **new** hoop immediately — no floor wait. `tapJump` after a counted make is a new shot and does not break combo.
-- **Banks:** the kinematic guess includes a court-facing backboard bounce, so a tap that would 擦板 is a `predicted-bank` instead of a miss.
-- **Climb / release:** mash while below the basket, release in the band under the rim, let-drop above it so jump resets cannot orbit.
+- **Chain:** at the make (`shotMade`) it jumps toward the **new** hoop immediately — no floor wait. It only holds `chain-wait` while still *above* the new rim (a full `jumpVy` from there orbits). `tapJump` after a counted make is a new shot and does not break combo.
+- **Banks:** the kinematic guess includes a court-facing backboard bounce. In the release band, a poor direct thread on the glass side becomes `predicted-bank` (擦板) instead of a hold.
+- **Climb / release:** mash while below the basket, release in the band under the rim, let-drop above it so jump resets cannot orbit. The watchdog also refuses to mash from above the rim.
 
-`glass` (priority 70) still protects a real dropping swish, but **commits** `commit-make` / `glass-launch` instead of hovering for a perfect thread. `wrap-height` (rubber) **lets a rim rattle resolve** (`let-rattle` / `wait-spacing`) instead of repeating the same jump angle, and prefers a bank/swish window when one opens.
+`glass` (priority 70) still protects a real dropping swish, but **never abstains airborne** — it `commit-make` / `glass-launch` / `glass-settle` instead of deferring to wrap-height (which would float it). `wrap-height` (rubber) **lets a rim rattle resolve** (`let-rattle` / `wait-spacing`) instead of repeating the same `jumpVx`/`jumpVy`, and only retakes once a spaced bank/swish window opens.
 
-Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, steer in a black hole, or (rubber) refuse a bad rim spam.
+Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, steer in a black hole, or (rubber) refuse a bad rim spam. Glass must not abstain in the air.
 
 ## Formal menu later
 

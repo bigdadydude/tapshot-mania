@@ -39,6 +39,18 @@ function nearRim(world: AiWorld): boolean {
   return Math.hypot(world.ball.x - world.hoop.x, world.ball.y - world.hoop.y) < reach;
 }
 
+/** Court-outside of the rim, toward the backboard — classic 擦板 window. */
+function boardSide(world: AiWorld): boolean {
+  const h = world.hoop;
+  return h.side < 0
+    ? world.ball.x <= h.x - h.inner * 0.12
+    : world.ball.x >= h.x + h.inner * 0.12;
+}
+
+function aboveRim(world: AiWorld): boolean {
+  return world.ball.y + world.ball.r * 0.15 < world.hoop.y;
+}
+
 /**
  * Only freeze when the ball is actually dropping through this hoop.
  * Long-range `predictCurrent.scores` is a common false positive — holding it
@@ -83,11 +95,9 @@ export const defaultPolicy: BallAiPolicy = {
     if (world.ballHidden && !world.onApproachSide) return hold("offscreen");
 
     // Humans jump toward the next hoop at the make — don't wait to land.
-    // Wait until the ball has dropped *below* the new rim so a full jumpVy
-    // climbs instead of orbiting from basket height.
+    // Only hold if we're still *above* the new rim (a full jumpVy would orbit).
     if (world.shotMade) {
-      const belowNew = world.ball.y > world.hoop.y + Math.max(world.ball.r * 2, world.hoop.inner);
-      if (!belowNew && !onFloor(world) && !world.onApproachSide) {
+      if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
         return hold("chain-wait");
       }
       return tap("chain-next");
@@ -104,6 +114,10 @@ export const defaultPolicy: BallAiPolicy = {
     if (inRelease) {
       if (pastHoop(world) && world.ball.vy > 8) return tap("wrap-boost");
       const save = helpers.predictTap(world);
+      // 擦板: if the direct thread is poor, bank off the glass instead of holding.
+      if (save.scores && save.bank && !current.swish) {
+        if (!current.scores || boardSide(world)) return tap("predicted-bank");
+      }
       if (save.scores && !current.scores) {
         if (world.ball.vy > 12 || save.bank) return tap(scoreTapReason(save));
       }
@@ -111,6 +125,9 @@ export const defaultPolicy: BallAiPolicy = {
     }
 
     const next = helpers.predictTap(world);
+    if (next.scores && next.bank && !next.swish && boardSide(world)) {
+      return tap("predicted-bank");
+    }
     if (next.scores) return tap(scoreTapReason(next));
 
     if (clockPanic(world, 1.6)) return tap("shot-clock");
@@ -177,25 +194,34 @@ export const glassPolicy: BallAiPolicy = {
     if (confidentMake(world, current.scores) && current.swish) return hold("protect-swish");
     if (confidentMake(world, current.scores)) return hold("protect-finish");
 
-    const aboveRim = world.ball.y + world.ball.r * 0.15 < world.hoop.y;
-    if (aboveRim && !onFloor(world)) {
-      if (world.ball.vy > 24 && next.scores && nearRim(world)) return tap("commit-make");
+    // Restitution is 0 — never abstain airborne or wrap-height/default will
+    // mash jumpVy and the ball hangs in the sky.
+    if (aboveRim(world) && !onFloor(world)) {
+      const dumping =
+        world.ball.vy > 36 &&
+        nearRim(world) &&
+        (next.scores || next.minHoopDist < world.hoop.inner * 1.35);
+      if (dumping) return tap("commit-make");
       return hold("glass-settle");
     }
 
     if (next.scores && next.swish) return tap("seek-swish");
     if (next.scores) return tap("commit-make");
     if (onFloor(world)) return tap("glass-launch");
-    if (clockPanic(world, 1.35) && next.scores) return tap("shot-clock");
 
-    const settleBand = world.ball.y < world.hoop.y + world.hoop.inner * 3.6;
-    if (!onFloor(world) && settleBand) {
-      if (world.ball.vy > 24 && next.minHoopDist + 12 < current.minHoopDist) {
-        return tap("commit-closer");
-      }
-      return hold("glass-settle");
+    const falling = world.ball.vy > 18;
+    const atRimHeight =
+      Math.abs(world.ball.y - world.hoop.y) < world.hoop.inner * 1.8;
+    if (falling && nearRim(world) && atRimHeight) return tap("commit-make");
+    if (falling && next.minHoopDist + 10 < current.minHoopDist) {
+      return tap("commit-closer");
     }
-    return abstain();
+    if (clockPanic(world, 1.2) && (next.scores || falling)) return tap("shot-clock");
+
+    if (!onFloor(world) && world.ball.y > world.hoop.y + world.hoop.inner * 2.4) {
+      return tap("glass-launch");
+    }
+    return hold("glass-settle");
   },
 };
 
@@ -218,34 +244,41 @@ export const wrapHeightPolicy: BallAiPolicy = {
 
     // Height-wrap balls stay airborne — tapping above the rim resets jumpVy
     // and they climb off the top of the screen (the rubber orbit).
-    const aboveRim = world.ball.y + world.ball.r * 0.15 < world.hoop.y;
-    if (aboveRim && !onFloor(world)) {
-      if (world.ball.vy > 20) {
+    if (aboveRim(world) && !onFloor(world)) {
+      if (world.ball.vy > 28) {
         const next = helpers.predictTap(world);
-        if (next.scores && (next.swish || next.bank)) return tap(scoreTapReason(next));
+        if (next.scores && (next.swish || next.bank) && !sameJumpAngle(world)) {
+          return tap(scoreTapReason(next));
+        }
       }
       return hold("let-drop");
     }
 
-    const rattling = world.hitRim && nearRim(world) && Math.abs(world.ball.vy) > 70;
-    if (rattling && !clockPanic(world, 1.4)) {
-      const next = helpers.predictTap(world);
-      if (next.scores && (next.swish || next.bank) && !sameJumpAngle(world)) {
-        return tap(scoreTapReason(next));
-      }
-      return hold("let-rattle");
+    const next = helpers.predictTap(world);
+    const cleanWindow = next.scores && (next.swish || next.bank) && !sameJumpAngle(world);
+    const spaced =
+      Math.abs(world.ball.y - world.hoop.y) > world.hoop.inner * 2.1 ||
+      Math.abs(world.ball.x - world.hoop.x) > world.hoop.inner * 2.8;
+    const rattled = world.hitRim || world.rimHits >= 1;
+
+    // After a rim hit, jumpVx/jumpVy is the same vector — wait for a new
+    // height / bank window instead of repeating the miss.
+    if (rattled && !clockPanic(world, 1.35)) {
+      if (cleanWindow && spaced) return tap(scoreTapReason(next));
+      if (nearRim(world) || !spaced) return hold(world.hitRim && nearRim(world) ? "let-rattle" : "wait-spacing");
     }
 
-    const next = helpers.predictTap(world);
-    if (world.hitRim && sameJumpAngle(world) && !next.bank && !clockPanic(world, 1.4)) {
-      return hold("let-rattle");
-    }
-    if (next.scores) return tap(scoreTapReason(next));
+    if (next.scores && next.bank && !next.swish) return tap("predicted-bank");
+    if (next.scores && !sameJumpAngle(world)) return tap(scoreTapReason(next));
+    if (next.scores && !rattled) return tap(scoreTapReason(next));
 
     if (world.onApproachSide) {
-      if (clockPanic(world, 1.5)) return tap("shot-clock");
-      const spaced = Math.abs(world.ball.y - world.hoop.y) > world.hoop.inner * 1.8;
-      if (world.hitRim && !spaced) return hold("wait-spacing");
+      if (clockPanic(world, 1.45)) return tap("shot-clock");
+      if (rattled && !spaced) return hold("wait-spacing");
+      if (world.ball.vy > 8 && world.ball.y > world.hoop.y + world.ball.r) {
+        return tap("wrap-approach");
+      }
+      if (rattled) return hold("wait-spacing");
       return tap("wrap-approach");
     }
 
