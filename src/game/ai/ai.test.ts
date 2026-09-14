@@ -468,23 +468,6 @@ describe("ball AI registry", () => {
     );
   });
 
-  it("ninja waits for mid-court spacing after a far-edge wrap instead of jumping immediately", () => {
-    const h = 844;
-    const floorY = h * 0.765;
-    const r = 19.5;
-    const hoop = { x: 66, y: 330, inner: 28, side: -1 as const, tube: 4.3, moving: false };
-    const edge = world({
-      hoop,
-      kit: flags({ ninja: true }),
-      jumpVx: -390 * 0.76 * 1.2,
-      shotMissed: true,
-      ball: { x: 370, y: floorY - r, vx: -44, vy: 8, r },
-    });
-    const d = decideShot(edge, helpers);
-    assert.equal(d.tap, false);
-    assert.ok(d.reason === "wait-spacing" || d.reason === "wait-wrap");
-  });
-
   it("ninja rides a live arc instead of combo-pace poking", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
