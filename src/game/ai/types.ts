@@ -62,6 +62,11 @@ export type AiWorld = {
    * `tapJump` — do not use as "don't shoot"; that deadlocks after hoop switch.
    */
   shotMade: boolean;
+  shotMissed: boolean;
+  /** Live rim contact this attempt — rubber uses this to stop angle-spam. */
+  hitRim: boolean;
+  hitBoard: boolean;
+  rimHits: number;
   timer: number;
   timerArmed: boolean;
   buzzer: boolean;
@@ -100,6 +105,8 @@ export type AiVote = {
 export type FlightGuess = {
   scores: boolean;
   swish: boolean;
+  /** Scored after a backboard bounce in the kinematic guess. */
+  bank: boolean;
   hitFloor: boolean;
   minHoopDist: number;
   collectedAnti: boolean;

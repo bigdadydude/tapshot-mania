@@ -50,7 +50,7 @@ import {
 } from "./rogue";
 import { createAiController, flagsFromKit } from "./ai";
 
-export const GAME_REV = 298;
+export const GAME_REV = 299;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -710,6 +710,8 @@ export function createGame(
   let shotMade = false;
   /** Previous attempt finished without a make (floor settle) — next new jump breaks streak. */
   let shotMissed = false;
+  /** Last body finish: swish / bank (擦板) / rim. QA + AI read this. */
+  let lastFinish: "swish" | "bank" | "rim" | null = null;
   /** Left the floor during this attempt — avoids marking miss on takeoff overlap. */
   let shotAirborne = false;
   let opener = 0;
@@ -1785,6 +1787,10 @@ export function createGame(
       scored: ball.scored,
       shotOpen,
       shotMade,
+      shotMissed,
+      hitRim: ball.hitRim,
+      hitBoard: ball.hitBoard,
+      rimHits,
       timer,
       timerArmed,
       buzzer,
@@ -1986,6 +1992,7 @@ export function createGame(
     shotOpen = false;
     shotMade = false;
     shotMissed = false;
+    lastFinish = null;
     shotAirborne = false;
     opener = 0;
     bgmOn = false;
@@ -2293,6 +2300,7 @@ export function createGame(
     shotOpen = false;
     shotMade = false;
     shotMissed = false;
+    lastFinish = null;
     shotAirborne = false;
     opener = 0;
     overRim = false;
@@ -2563,6 +2571,7 @@ export function createGame(
     shotOpen = false;
     shotMade = false;
     shotMissed = false;
+    lastFinish = null;
     shotAirborne = false;
     other = null;
     hoop = makeHoop(world, -1, true);
@@ -3924,6 +3933,9 @@ export function createGame(
     const lucky = ghost ? false : hitBoardTop;
     const depth = ghost ? false : wentOffTop && swish;
     const needle = ghost ? false : fromBelow;
+    if (!ghost) {
+      lastFinish = swish ? "swish" : bank ? "bank" : "rim";
+    }
     const prevStage = fireStage(heatN());
     const shackled = isPrison() && prisonMode === "shackle";
     const freed = isPrison() && prisonMode === "free";
@@ -4801,6 +4813,7 @@ export function createGame(
         timerArmed,
         buzzer,
         madeCount,
+        lastFinish,
         hoopInner: hoop.inner,
         ballR: ball.r,
         hold: other?.hold ?? 0,

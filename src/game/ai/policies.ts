@@ -52,48 +52,58 @@ function confidentMake(world: AiWorld, scores: boolean): boolean {
   return world.ball.vy > 12 || world.ball.y + world.ball.r * 0.15 < world.hoop.y;
 }
 
+function scoreTapReason(next: { scores: boolean; bank: boolean; swish: boolean }): string {
+  if (!next.scores) return "predicted-make";
+  if (next.bank && !next.swish) return "predicted-bank";
+  return "predicted-make";
+}
+
+/** Same jump reset as the last tap — rubber spam after a rim rattle. */
+function sameJumpAngle(world: AiWorld): boolean {
+  const sp = Math.hypot(world.ball.vx, world.ball.vy);
+  const sj = Math.hypot(world.jumpVx, world.jumpVy);
+  if (sp < 40 || sj < 40) return false;
+  const dot = world.ball.vx * world.jumpVx + world.ball.vy * world.jumpVy;
+  return dot / (sp * sj) > 0.84;
+}
+
 /** Generic tap timing — used for classic / lava / frost / ninja / unknown future balls. */
 export const defaultPolicy: BallAiPolicy = {
   id: "default",
   priority: 0,
   match: () => true,
   vote(world: AiWorld, helpers: AiHelpers): AiVote {
-    // Only `scored` (ball still in this make). `shotMade` stays true until the
-    // *next* tapJump — holding on it deadlocks after hoop side-switch.
-    if (world.scored) return hold("already-scored");
     if (world.ballHidden && !world.onApproachSide) return hold("offscreen");
+
+    // Humans jump toward the next hoop at the make — don't wait to land.
+    // `tapJump` after `shotMade` is a new shot toward the flipped side.
+    if (world.shotMade) return tap("chain-next");
+    if (world.scored) return hold("already-scored");
 
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
 
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
     const releaseY = world.hoop.y + world.hoop.inner * 2.2;
-    // Stop mashing in a band below the rim (and anything above it). A last
-    // tap here resets jump at basket height and sails past the hoop.
     const inRelease =
       !onFloor(world) && !world.onApproachSide && world.ball.y < releaseY;
     if (inRelease) {
       if (pastHoop(world) && world.ball.vy > 8) return tap("wrap-boost");
-      if (world.ball.vy > 20) {
-        const save = helpers.predictTap(world);
-        if (save.scores && !current.scores) return tap("save-drop");
+      const save = helpers.predictTap(world);
+      if (save.scores && !current.scores) {
+        if (world.ball.vy > 12 || save.bank) return tap(scoreTapReason(save));
       }
       return hold("let-drop");
     }
 
     const next = helpers.predictTap(world);
-    if (next.scores) return tap("predicted-make");
-
-    // Make already counted (`shotMade`) but this ball is still live — start
-    // the next possession immediately instead of waiting for a floor settle.
-    if (world.shotMade) return tap("next-shot");
+    if (next.scores) return tap(scoreTapReason(next));
 
     if (clockPanic(world, 1.6)) return tap("shot-clock");
 
     if (world.ballHidden && world.onApproachSide) return tap("approach-enter");
     if (onFloor(world)) return tap("floor-launch");
 
-    // Mash like a human while still below the basket; stop once above (let-drop).
     const launch = onLaunchSide(world) || world.onApproachSide || pastHoop(world);
     if (belowRim && launch) return tap("apex-boost");
     if (pastHoop(world) && !world.onApproachSide) return tap("wrap-boost");
@@ -112,8 +122,8 @@ export const antiPolicy: BallAiPolicy = {
   priority: 80,
   match: (kit) => kit.anti,
   vote(world, helpers): AiVote {
+    if (world.shotMade) return abstain("chain");
     if (world.scored) return hold("already-scored");
-    if (world.shotMade) return abstain("next-shot");
     if (world.ballHidden && !world.onApproachSide) return abstain();
 
     if (world.holeOn) {
@@ -137,38 +147,77 @@ export const antiPolicy: BallAiPolicy = {
   },
 };
 
-/** Glass: don't recorrect a make; prefer a swish tap over a rim make when both exist. */
+/**
+ * Glass: protect a real dropping swish, but COMMIT a finish instead of hovering.
+ * Restitution is 0 — extra taps in the sky float forever.
+ */
 export const glassPolicy: BallAiPolicy = {
   id: "glass",
   priority: 70,
   match: (kit) => kit.glass,
   vote(world, helpers): AiVote {
+    if (world.shotMade) return abstain("chain");
     if (world.scored) return hold("already-scored");
-    if (world.shotMade) return abstain("next-shot");
     const current = helpers.predictCurrent(world);
     const next = helpers.predictTap(world);
-    if (current.scores && current.swish) return hold("protect-swish");
-    if (current.scores && !next.swish) return hold("protect-make");
-    if (!current.scores && next.scores && next.swish) return tap("seek-swish");
-    if (clockPanic(world, 1.35)) return abstain("clock");
-    // Landing hurts glass — if a tap scores at all, take it before floor contact.
-    if (!current.scores && next.scores && world.ball.vy > 40) return tap("save-from-land");
+    if (confidentMake(world, current.scores) && current.swish) return hold("protect-swish");
+    if (confidentMake(world, current.scores)) return hold("protect-finish");
+    if (next.scores && next.swish) return tap("seek-swish");
+    // Commit a make (even rim) rather than float looking for a perfect swish.
+    if (next.scores) return tap("commit-make");
+    if (onFloor(world)) return tap("glass-launch");
+    if (clockPanic(world, 1.35) && next.scores) return tap("shot-clock");
+
+    const settleBand = world.ball.y < world.hoop.y + world.hoop.inner * 3.6;
+    if (!onFloor(world) && settleBand) {
+      if (world.ball.vy > 24 && next.minHoopDist + 12 < current.minHoopDist) {
+        return tap("commit-closer");
+      }
+      return hold("glass-settle");
+    }
     return abstain();
   },
 };
 
-/** Rubber / height-wrap: shoot on the incoming side; don't wait for a floor settle. */
+/**
+ * Rubber / height-wrap: stay airborne, but after a rim rattle do NOT spam the
+ * same jump angle — wait for spacing or a cleaner (often bank) window.
+ */
 export const wrapHeightPolicy: BallAiPolicy = {
   id: "wrap-height",
   priority: 60,
   match: (kit) => kit.wrap === "height",
   vote(world, helpers): AiVote {
     if (world.kit.glass) return abstain("glass-owns");
+    if (world.shotMade) return abstain("chain");
     if (world.scored) return hold("already-scored");
-    if (world.shotMade) return abstain("next-shot");
     if (!world.onApproachSide && world.ballHidden) return hold("wait-wrap");
+
+    const current = helpers.predictCurrent(world);
+    if (confidentMake(world, current.scores)) return hold("flight-scores");
+
+    const rattling = world.hitRim && nearRim(world) && Math.abs(world.ball.vy) > 70;
+    if (rattling && !clockPanic(world, 1.4)) {
+      const next = helpers.predictTap(world);
+      if (next.scores && (next.swish || next.bank) && !sameJumpAngle(world)) {
+        return tap(scoreTapReason(next));
+      }
+      return hold("let-rattle");
+    }
+
     const next = helpers.predictTap(world);
-    if (world.onApproachSide && next.scores) return tap("wrap-window");
+    if (world.hitRim && sameJumpAngle(world) && !next.bank && !clockPanic(world, 1.4)) {
+      return hold("let-rattle");
+    }
+    if (next.scores) return tap(scoreTapReason(next));
+
+    if (world.onApproachSide) {
+      if (clockPanic(world, 1.5)) return tap("shot-clock");
+      const spaced = Math.abs(world.ball.y - world.hoop.y) > world.hoop.inner * 1.8;
+      if (world.hitRim && !spaced) return hold("wait-spacing");
+      return tap("wrap-approach");
+    }
+
     return abstain();
   },
 };
@@ -180,6 +229,7 @@ export const champPolicy: BallAiPolicy = {
   match: (kit) => kit.champ,
   vote(world, helpers): AiVote {
     if (!world.champMode) return abstain();
+    if (world.shotMade) return abstain("chain");
     if (world.scored) return hold("already-scored");
     const next = helpers.predictTap(world);
     if (next.scores) return tap("champ-window");

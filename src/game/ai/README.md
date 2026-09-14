@@ -63,7 +63,15 @@ Skills live on `effectiveBall()` flags (`heat`, `frost`, `champ`, `anti`,
 | heat         | 15       | `kit.heat` (abstain) |
 | default      | 0        | always               |
 
-The default policy covers plain kinematics for anything that only changes jump / gravity. A single floor tap cannot reach the rim, so it **mashes** like a human while **below** the basket, then **lets the ball drop** once it is above the rim (tapping up there resets jump and orbits until the shot clock dies). It only holds `flight-scores` when the ball is **near the live rim and dropping through**. After a counted make it starts the next shot as soon as the ball is back below the rim. Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, or steer in a black hole.
+The default policy covers plain kinematics for anything that only changes jump / gravity.
+
+- **Chain:** at the make (`shotMade`) it jumps toward the **new** hoop immediately — no floor wait. `tapJump` after a counted make is a new shot and does not break combo.
+- **Banks:** the kinematic guess includes a court-facing backboard bounce, so a tap that would 擦板 is a `predicted-bank` instead of a miss.
+- **Climb / release:** mash while below the basket, release in the band under the rim, let-drop above it so jump resets cannot orbit.
+
+`glass` (priority 70) still protects a real dropping swish, but **commits** `commit-make` / `glass-launch` instead of hovering for a perfect thread. `wrap-height` (rubber) **lets a rim rattle resolve** (`let-rattle` / `wait-spacing`) instead of repeating the same jump angle, and prefers a bank/swish window when one opens.
+
+Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, steer in a black hole, or (rubber) refuse a bad rim spam.
 
 ## Formal menu later
 
@@ -83,9 +91,13 @@ options screen cannot drift.
 - Stay armed after disable (`setEnabled(false)` clears cooldown).
 - Hold on `shotMade`. That combo latch stays true until the next tap, so
   treating it as "don't shoot" stalls forever after the hoop switches sides.
-  Hold only while `scored` (the ball is still in this make).
+  After a make, **chain** toward the new hoop immediately (humans rarely land
+  between baskets). Hold `scored` only when the make has not been counted yet.
 - Predict a make on the hoop you just scored (`other` sliding off). That
   looks like "flight-scores" and never aims at the new side. The controller
   also drops cooldown on hoop-side change and watchdog-taps if idle too long.
 - Hold `flight-scores` from across the court, or after the make already
   counted. Keep tapping through flight and recover after a miss/bounce.
+- Ignore the backboard. Direct-only guesses miss 擦板 windows humans use.
+- Spam the same jump after a rubber rim rattle, or float forever on glass
+  waiting for a perfect swish.

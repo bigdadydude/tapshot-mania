@@ -51,6 +51,10 @@ function world(over: Partial<AiWorld> = {}): AiWorld {
     scored: false,
     shotOpen: false,
     shotMade: false,
+    shotMissed: false,
+    hitRim: false,
+    hitBoard: false,
+    rimHits: 0,
     timer: 12,
     timerArmed: true,
     buzzer: false,
@@ -141,6 +145,28 @@ describe("ball AI registry", () => {
     );
   });
 
+  it("predicts a backboard bank when a direct thread would miss", () => {
+    const w = 390;
+    const hoop = {
+      x: w - 28 - w * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const flight = world({
+      hoop,
+      jumpVx: w * 0.76,
+      // Between rim and backboard, dropping into the glass — a bank, not a swish.
+      ball: { x: hoop.x + hoop.inner * 0.85, y: hoop.y - 52, vx: 160, vy: 90, r: 19.5 },
+    });
+    const current = predictCurrent(flight);
+    assert.equal(current.scores, true);
+    assert.equal(current.bank, true);
+    assert.equal(current.swish, false);
+  });
+
   it("default holds when the current flight already scores", () => {
     const hoop = { x: 200, y: 300, inner: 28, side: -1 as const, tube: 4, moving: false };
     const w = world({
@@ -155,14 +181,13 @@ describe("ball AI registry", () => {
     assert.equal(d.policyId, "default");
   });
 
-  it("default holds the resolving make but keeps shooting after hoop switch", () => {
+  it("chains the next hoop mid-air at the instant of a make", () => {
     const resolving = world({ scored: true, shotMade: true });
-    const hold = decideShot(resolving, helpers);
-    assert.equal(hold.tap, false);
-    assert.equal(hold.reason, "already-scored");
+    const chain = decideShot(resolving, helpers);
+    assert.equal(chain.tap, true);
+    assert.equal(chain.reason, "chain-next");
 
     // Post-make wrap: hoop flipped to the right, ball incoming from the left.
-    // shotMade is still true until the next tapJump — must not deadlock.
     const w = 390;
     const h = 844;
     const r = 19.5;
@@ -186,8 +211,7 @@ describe("ball AI registry", () => {
     });
     const d = decideShot(incoming, helpers);
     assert.equal(d.tap, true);
-    assert.notEqual(d.reason, "already-scored");
-    assert.notEqual(d.reason, "flight-scores");
+    assert.equal(d.reason, "chain-next");
   });
 
   it("does not freeze on a leftover make prediction after the hoop already counted", () => {
@@ -240,16 +264,59 @@ describe("ball AI registry", () => {
     assert.notEqual(d.reason, "wait-window");
   });
 
-  it("glass protects a swish instead of re-tapping", () => {
+  it("glass protects a dropping swish but commits when a tap would score", () => {
     const hoop = { x: 200, y: 300, inner: 32, side: -1 as const, tube: 4, moving: false };
+    const protect = decideShot(
+      world({
+        hoop,
+        ball: { x: 200, y: 240, vx: 0, vy: 220, r: 16 },
+        kit: flags({ glass: true, wrap: "height" }),
+      }),
+      helpers,
+    );
+    assert.equal(protect.tap, false);
+    assert.ok(protect.policyId === "glass" || protect.policyId === "default");
+
+    const commit = decideShot(
+      world({
+        hoop,
+        ball: { x: 80, y: 844 * 0.765 - 16, vx: 0, vy: 0, r: 16 },
+        jumpVx: -80,
+        jumpVy: -900,
+        kit: flags({ glass: true, wrap: "height" }),
+      }),
+      helpers,
+    );
+    assert.equal(commit.policyId, "glass");
+    assert.equal(commit.tap, true);
+    assert.ok(
+      commit.reason === "commit-make" ||
+        commit.reason === "seek-swish" ||
+        commit.reason === "glass-launch",
+    );
+    assert.equal(commit.policyId, "glass");
+    assert.equal(commit.tap, true);
+    assert.ok(
+      commit.reason === "commit-make" ||
+        commit.reason === "seek-swish" ||
+        commit.reason === "glass-launch",
+    );
+  });
+
+  it("rubber holds a rim rattle instead of repeating the same jump angle", () => {
+    const hoop = { x: 66, y: 330, inner: 28, side: -1 as const, tube: 4.3, moving: false };
     const w = world({
       hoop,
-      ball: { x: 200, y: 240, vx: 0, vy: 220, r: 16 },
-      kit: flags({ glass: true, wrap: "height" }),
+      hitRim: true,
+      kit: flags({ wrap: "height", rScale: 0.5 }),
+      ballMul: 2,
+      jumpVx: -296,
+      jumpVy: -900,
+      ball: { x: 70, y: 328, vx: -280, vy: -860, r: 9.75 },
     });
     const d = decideShot(w, helpers);
     assert.equal(d.tap, false);
-    assert.ok(d.policyId === "glass" || d.policyId === "default");
+    assert.ok(d.reason === "let-rattle" || d.reason === "flight-scores");
   });
 
   it("anti votes tap to collect a pickup the current path misses", () => {

@@ -74,6 +74,54 @@ function wrapFlight(world: AiWorld, x: number, vx: number): { x: number; vx: num
   return { x, vx, grounded: true };
 }
 
+function guess(over: Partial<FlightGuess> & Pick<FlightGuess, "minHoopDist" | "collectedAnti" | "minAntiDist">): FlightGuess {
+  return {
+    scores: false,
+    swish: false,
+    bank: false,
+    hitFloor: false,
+    ...over,
+  };
+}
+
+/**
+ * Court-facing backboard plane — same visW / gap / topLen ratios as `boardGeom`.
+ * Cheap bounce so policies can choose 擦板 when a direct thread is a miss.
+ */
+function boardFace(h: AiHoop, worldW: number, worldH: number) {
+  const visW = Math.max(10, worldW * 0.052 * (2 / 3));
+  const gap = Math.max(10, h.inner * 0.48);
+  const innerEdge = h.side < 0 ? h.x - h.inner - gap : h.x + h.inner + gap;
+  const visX = h.side < 0 ? innerEdge - visW : innerEdge;
+  const visY = h.y - worldH * 0.182;
+  const bh = worldH * 0.22;
+  const faceX = h.side < 0 ? visX + visW : visX;
+  const nx = h.side < 0 ? 1 : -1;
+  return { faceX, visY, visBottom: visY + bh, nx };
+}
+
+function bounceBoard(
+  h: AiHoop,
+  world: AiWorld,
+  prevX: number,
+  x: number,
+  y: number,
+  vx: number,
+  r: number,
+): { x: number; vx: number } | null {
+  const b = boardFace(h, world.world.w, world.world.h);
+  if (y + r < b.visY || y - r > b.visBottom) return null;
+  const crossed = (prevX - b.faceX) * (x - b.faceX) <= 0;
+  const overlapping = Math.abs(x - b.faceX) < r;
+  if (!crossed && !overlapping) return null;
+  const vn = vx * b.nx;
+  if (vn >= 0) return null;
+  const rest = Math.min(0.95, Math.max(0, 0.76 * world.ballMul));
+  vx -= (1 + rest) * vn * b.nx;
+  x = b.faceX + b.nx * (r + 0.5);
+  return { x, vx };
+}
+
 /**
  * Cheap kinematic guess using the same jump / air / fallBoost terms as the engine.
  * Not a full physics fork — rim/net/board are approximated so policies can vote.
@@ -89,6 +137,8 @@ export function simulateFlight(world: AiWorld, vx0: number, vy0: number): Flight
   let overMain = inHole(world.hoop, x, y, world.ball.r);
   let overOther = world.other ? inHole(world.other, x, y, world.ball.r) : false;
   let grazed = false;
+  let banked = false;
+  let boardHits = 0;
   let minHoop = Math.hypot(x - world.hoop.x, y - world.hoop.y);
   let minAnti = world.antiMatter
     ? Math.hypot(x - world.antiMatter.x, y - world.antiMatter.y)
@@ -96,6 +146,7 @@ export function simulateFlight(world: AiWorld, vx0: number, vy0: number): Flight
   let collectedAnti = false;
   const bothWays = world.holeOn;
   const skipFallBoost = world.ballMul > 1.15 || world.holeOn;
+  const stats = { minHoopDist: minHoop, collectedAnti, minAntiDist: minAnti };
 
   for (let i = 0; i < SIM_STEPS; i++) {
     const fallBoost = skipFallBoost ? 1 : vy > 20 ? 1.28 : 1;
@@ -121,17 +172,20 @@ export function simulateFlight(world: AiWorld, vx0: number, vy0: number): Flight
 
     const wrapped = wrapFlight(world, x, vx);
     if (wrapped.grounded) {
-      return {
-        scores: false,
-        swish: false,
-        hitFloor: true,
-        minHoopDist: minHoop,
-        collectedAnti,
-        minAntiDist: minAnti,
-      };
+      return guess({ ...stats, minHoopDist: minHoop, collectedAnti, minAntiDist: minAnti, hitFloor: true });
     }
     x = wrapped.x;
     vx = wrapped.vx;
+
+    if (boardHits < 3) {
+      const hit = bounceBoard(world.hoop, world, prevX, x, y, vx, world.ball.r);
+      if (hit) {
+        x = hit.x;
+        vx = hit.vx;
+        banked = true;
+        boardHits += 1;
+      }
+    }
 
     minHoop = Math.min(minHoop, Math.hypot(x - world.hoop.x, y - world.hoop.y));
     if (world.other) {
@@ -147,14 +201,14 @@ export function simulateFlight(world: AiWorld, vx0: number, vy0: number): Flight
     const main = planeScore(world.hoop, prevX, prevY, x, y, vy, world.ball.r, overMain, bothWays);
     overMain = main.overRim;
     if (main.scored) {
-      return {
+      return guess({
         scores: true,
-        swish: !grazed,
-        hitFloor: false,
+        swish: !grazed && !banked,
+        bank: banked,
         minHoopDist: minHoop,
         collectedAnti,
         minAntiDist: minAnti,
-      };
+      });
     }
     // Only a still-live other (frost dual stand) counts. The hoop you just
     // scored on is `other` while it slides off — treating it as a make freezes
@@ -166,39 +220,30 @@ export function simulateFlight(world: AiWorld, vx0: number, vy0: number): Flight
       const alt = planeScore(world.other, prevX, prevY, x, y, vy, world.ball.r, overOther, bothWays);
       overOther = alt.overRim;
       if (alt.scored) {
-        return {
+        return guess({
           scores: true,
-          swish: !grazed,
-          hitFloor: false,
+          swish: !grazed && !banked,
+          bank: banked,
           minHoopDist: minHoop,
           collectedAnti,
           minAntiDist: minAnti,
-        };
+        });
       }
     }
 
     if (y >= floor) {
-      return {
-        scores: false,
-        swish: false,
+      return guess({
         hitFloor: true,
         minHoopDist: minHoop,
         collectedAnti,
         minAntiDist: minAnti,
-      };
+      });
     }
     prevX = x;
     prevY = y;
   }
 
-  return {
-    scores: false,
-    swish: false,
-    hitFloor: false,
-    minHoopDist: minHoop,
-    collectedAnti,
-    minAntiDist: minAnti,
-  };
+  return guess({ minHoopDist: minHoop, collectedAnti, minAntiDist: minAnti });
 }
 
 export function predictCurrent(world: AiWorld): FlightGuess {

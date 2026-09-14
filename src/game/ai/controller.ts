@@ -16,6 +16,12 @@ const LEGIT_WAIT = new Set([
   "flight-scores",
   "hole-flight-scores",
   "let-drop",
+  "let-rattle",
+  "wait-spacing",
+  "glass-settle",
+  "protect-swish",
+  "protect-finish",
+  "protect-make",
 ]);
 
 export type AiController = {
