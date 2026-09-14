@@ -304,9 +304,9 @@ export const defaultPolicy: BallAiPolicy = {
     const launch = onLaunchSide(world) || world.onApproachSide;
     if (belowRim && launch && !messyContact(world)) {
       if (
+        longTravel(world) &&
         !world.onApproachSide &&
-        (closeToHoop(world, world.kit.ninja ? 0.42 : 0.28) ||
-          (longTravel(world) && flyingAtHoop(world)))
+        (closeToHoop(world) || flyingAtHoop(world))
       ) {
         return hold("let-drop");
       }
