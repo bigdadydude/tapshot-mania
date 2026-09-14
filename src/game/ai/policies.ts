@@ -97,6 +97,11 @@ function longTravel(world: AiWorld): boolean {
   return world.ballMul > 1.2 || Math.abs(world.jumpVx) > world.world.w * 0.8;
 }
 
+/** Ninja-style jumpFwd — not rubber's ballMul. A tap writes this vx. */
+function longJumpFwd(world: AiWorld): boolean {
+  return Math.abs(world.jumpVx) > world.world.w * 0.8;
+}
+
 function closeToHoop(world: AiWorld, frac = 0.32): boolean {
   return Math.abs(world.ball.x - world.hoop.x) < world.world.w * frac;
 }
@@ -264,7 +269,7 @@ export const defaultPolicy: BallAiPolicy = {
       if (
         comboPressure(world) &&
         !current.scores &&
-        !longTravel(world) &&
+        !longJumpFwd(world) &&
         world.ball.y > world.hoop.y + world.hoop.inner
       ) {
         return tap("pace-boost");
@@ -304,11 +309,12 @@ export const defaultPolicy: BallAiPolicy = {
       return tap(scoreTapReason(next));
     }
 
-    // tapJump writes full jumpVx. Long-travel kits (ninja) must ride a
+    // tapJump writes full jumpVx. Long jumpFwd kits (ninja) must ride a
     // *descending* arc — a combo-pace poke wraps at 44 px/s. Still rising
     // they need apex-boost or the 1.2 jump peeks early and tunnels under.
+    // Rubber is longTravel via ballMul, not this path.
     if (
-      longTravel(world) &&
+      longJumpFwd(world) &&
       flyingAtHoop(world) &&
       !onFloor(world) &&
       !world.onApproachSide &&
@@ -330,7 +336,7 @@ export const defaultPolicy: BallAiPolicy = {
     const launch = onLaunchSide(world) || world.onApproachSide;
     if (belowRim && launch && !messyContact(world)) {
       if (
-        longTravel(world) &&
+        longJumpFwd(world) &&
         !world.onApproachSide &&
         (closeToHoop(world) || flyingAtHoop(world)) &&
         world.ball.vy > 12
@@ -533,7 +539,7 @@ export const champPolicy: BallAiPolicy = {
 
 /**
  * Ninja: jumpFwd 1.2 + grav 0.9. tapJump *writes* that vector.
- * Height pumps and descending ride-flight live on default (`longTravel`).
+ * Height pumps and descending ride-flight live on default (`longJumpFwd`).
  * This policy only owns the under-rim freeze and the past-board wrap.
  */
 export const ninjaPolicy: BallAiPolicy = {
