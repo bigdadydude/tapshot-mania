@@ -126,6 +126,17 @@ describe("ball AI registry", () => {
     assert.equal(d.tap, true);
   });
 
+  it("default boosts from a settled floor toward the hoop", () => {
+    const w = world({
+      kit: flags(),
+      ball: { x: 300, y: 844 * 0.765 - 19.5, vx: -30, vy: 0, r: 19.5 },
+    });
+    const d = decideShot(w, helpers);
+    assert.equal(d.policyId, "default");
+    assert.equal(d.tap, true);
+    assert.ok(d.reason === "apex-boost" || d.reason === "predicted-make");
+  });
+
   it("default holds when the current flight already scores", () => {
     const hoop = { x: 200, y: 300, inner: 28, side: -1 as const, tube: 4, moving: false };
     const w = world({

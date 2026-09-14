@@ -21,6 +21,19 @@ function clockPanic(world: AiWorld, limit: number): boolean {
   return world.timer < limit;
 }
 
+function onLaunchSide(world: AiWorld): boolean {
+  return world.hoop.side < 0
+    ? world.ball.x > world.hoop.x - world.hoop.inner
+    : world.ball.x < world.hoop.x + world.hoop.inner;
+}
+
+function pastHoop(world: AiWorld): boolean {
+  const pad = world.hoop.inner * 1.6;
+  return world.hoop.side < 0
+    ? world.ball.x < world.hoop.x - pad
+    : world.ball.x > world.hoop.x + pad;
+}
+
 /** Generic tap timing — used for classic / lava / frost / ninja / unknown future balls. */
 export const defaultPolicy: BallAiPolicy = {
   id: "default",
@@ -34,23 +47,20 @@ export const defaultPolicy: BallAiPolicy = {
     if (current.scores) return hold("flight-scores");
 
     const next = helpers.predictTap(world);
-    const floor = onFloor(world);
-
-    if (next.scores) {
-      if (floor) return tap("floor-window");
-      if (world.shotOpen) return tap("air-correct");
-      return tap("launch-window");
-    }
+    if (next.scores) return tap("predicted-make");
 
     if (clockPanic(world, 1.2)) return tap("shot-clock");
 
-    // Settled and nowhere to go — tap so wrap / roll can start a new window.
-    if (floor && Math.abs(world.ball.vx) < 12 && Math.abs(world.ball.vy) < 20) {
-      return tap("unstick");
-    }
+    // One floor/air tap is not enough to reach the rim — chain jumps at the apex
+    // (vy near 0 or falling) while still below the basket, same as a human.
+    if (pastHoop(world) && !world.onApproachSide) return hold("overshot");
 
-    // Height-wrap approach: never wait for a floor that will not come.
-    if (world.kit.wrap === "height" && world.onApproachSide && next.minHoopDist < world.world.w * 0.55) {
+    const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.2;
+    const atApex = world.ball.vy > -70;
+    const launch = onLaunchSide(world) || world.onApproachSide || onFloor(world);
+    if (belowRim && atApex && launch) return tap("apex-boost");
+
+    if (world.kit.wrap === "height" && world.onApproachSide && atApex) {
       return tap("wrap-approach");
     }
 

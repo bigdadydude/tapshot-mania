@@ -4842,6 +4842,8 @@ export function createGame(
       autoPlay.setEnabled(Boolean(on));
       emitHud();
     },
+    setBall: (id: BallId) => applyBall(id),
+    goTitle: () => goTitle(),
     setCombo(n: number) {
       combo = Math.max(0, Math.floor(n));
       streak = combo;
