@@ -24,7 +24,7 @@ function clockPanic(world: AiWorld, limit: number): boolean {
 /** Keep combo alive — minute mode has no decaying shot clock to force taps. */
 function comboPressure(world: AiWorld): boolean {
   if (!world.comboCounting || world.streak < 1) return false;
-  return world.comboClock > 2.35;
+  return world.comboClock > 1.85;
 }
 
 function onLaunchSide(world: AiWorld): boolean {
@@ -85,8 +85,8 @@ function longTravel(world: AiWorld): boolean {
   return world.ballMul > 1.2 || Math.abs(world.jumpVx) > world.world.w * 0.8;
 }
 
-function closeToHoop(world: AiWorld): boolean {
-  return Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.32;
+function closeToHoop(world: AiWorld, frac = 0.32): boolean {
+  return Math.abs(world.ball.x - world.hoop.x) < world.world.w * frac;
 }
 
 /** Velocity points at the court-facing glass, not away after a bounce. */
@@ -256,12 +256,14 @@ export const defaultPolicy: BallAiPolicy = {
     }
 
     // Live attempt still airborne — boost before a floor settle, which would
-    // make the next tap a miss-jump and kill the combo.
+    // make the next tap a miss-jump and kill the combo. Skip when already
+    // under the rim: a full jumpVx from there ruins a dropping finish.
     if (
       world.shotOpen &&
       !world.shotMade &&
       !world.shotMissed &&
       !world.kit.glass &&
+      !closeToHoop(world) &&
       (onFloor(world) || lowBounce(world))
     ) {
       return tap("keep-air");
@@ -301,6 +303,13 @@ export const defaultPolicy: BallAiPolicy = {
         longTravel(world) &&
         !world.onApproachSide &&
         (closeToHoop(world) || flyingAtHoop(world))
+      ) {
+        return hold("let-drop");
+      }
+      if (
+        closeToHoop(world) &&
+        !world.onApproachSide &&
+        (onFloor(world) || lowBounce(world))
       ) {
         return hold("let-drop");
       }
@@ -491,7 +500,11 @@ export const champPolicy: BallAiPolicy = {
   },
 };
 
-/** Ninja: default arc from space; miss → land/bounce out, never idle-mash under the rim. */
+/**
+ * Ninja: jumpFwd 1.2 + grav 0.9. A tap under the rim slams the glass and
+ * orbits. Climb from space, release early, wrap when past the board, and
+ * never sit idle under the hoop.
+ */
 export const ninjaPolicy: BallAiPolicy = {
   id: "ninja",
   priority: 30,
@@ -511,22 +524,31 @@ export const ninjaPolicy: BallAiPolicy = {
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return abstain("flight");
 
-    if (pastBoard(world) && !world.onApproachSide) return tap("wrap-boost");
+    // Inbound after ground-wrap (44 px/s roll) — default approach-enter / climb.
+    if (world.onApproachSide) return abstain("default-shot");
 
-    // Under the cylinder with no make: let it fall. A full jumpFwd here orbits.
-    const underNet =
-      world.ball.y > world.hoop.y + world.hoop.inner * 0.35 &&
-      !world.onApproachSide &&
-      closeToHoop(world);
-    if (underNet && !current.scores && !onFloor(world) && !lowBounce(world)) {
-      return hold("let-drop");
+    if (pastBoard(world)) {
+      const headingOut = world.hoop.side * world.ball.vx > 12;
+      if (headingOut) return hold("let-drop");
+      return tap("wrap-boost");
     }
 
-    if ((onFloor(world) || lowBounce(world)) && closeToHoop(world) && !clockPanic(world, 1.6)) {
-      return hold("floor-bounce");
-    }
-
-    if (stalledNearHoop(world) && !current.scores && !onFloor(world)) {
+    // Wider than classic: ninja covers ~125% the horizontal jump per tap.
+    const close = closeToHoop(world, 0.42);
+    if (close && !current.scores) {
+      if (onFloor(world) || lowBounce(world)) {
+        if (
+          bounceOpening(world) &&
+          !clockPanic(world, 1.45) &&
+          !comboPressure(world)
+        ) {
+          return hold("floor-bounce");
+        }
+        const spd = Math.hypot(world.ball.vx, world.ball.vy);
+        // Parked under the rim — one escape tap, then airborne let-drop holds.
+        if (spd < 90 || stalledNearHoop(world)) return tap("reset-boost");
+        return hold("floor-bounce");
+      }
       return hold("let-drop");
     }
 

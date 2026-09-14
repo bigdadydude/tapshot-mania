@@ -6,11 +6,20 @@ import type { AiDecision, AiWorld } from "./types.ts";
 const helpers = { predictCurrent, predictTap };
 
 /** Floor between AI taps so we don't jitter every physics step. */
-export const AI_TAP_INTERVAL = 0.09;
-const CHAIN_INTERVAL = 0.055;
-const PANIC_INTERVAL = 0.06;
+export const AI_TAP_INTERVAL = 0.08;
+const CHAIN_INTERVAL = 0.045;
+const PANIC_INTERVAL = 0.05;
 /** If we can shoot but haven't tapped, mash like a stuck human. */
-export const AI_WATCHDOG = 0.14;
+export const AI_WATCHDOG = 0.12;
+
+const SNAPPY = new Set([
+  "chain-next",
+  "approach-enter",
+  "wrap-boost",
+  "reset-boost",
+  "keep-air",
+  "floor-launch",
+]);
 
 const LEGIT_WAIT = new Set([
   "already-scored",
@@ -94,28 +103,31 @@ export function createAiController(): AiController {
 
       const panic =
         (world.timerArmed && world.timer < 1.2 && !world.buzzer) ||
-        (world.comboCounting && world.streak > 0 && world.comboClock > 2.35);
+        (world.comboCounting && world.streak > 0 && world.comboClock > 1.85);
 
       const decision = decideShot(world, helpers);
       last = decision;
-      const snappy = decision.reason === "chain-next" || decision.reason === "approach-enter";
+      const snappy = SNAPPY.has(decision.reason);
       const wait = panic ? PANIC_INTERVAL : snappy ? CHAIN_INTERVAL : AI_TAP_INTERVAL;
       if (decision.tap) {
         if (cooldown > 0) return false;
         return fire(decision, wait);
       }
 
-      if (world.scored || LEGIT_WAIT.has(decision.reason)) {
-        const staleDrop =
-          decision.reason === "let-drop" &&
-          world.comboCounting &&
-          world.streak > 0 &&
-          world.comboClock > 2.5 &&
-          world.ball.y + world.ball.r * 0.15 >= world.hoop.y;
-        if (!staleDrop) {
-          idle = 0;
-          return false;
-        }
+      const spd = Math.hypot(world.ball.vx, world.ball.vy);
+      const close =
+        Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36;
+      const below = world.ball.y + world.ball.r * 0.15 >= world.hoop.y;
+      const sitting = spd < 78 && close && below;
+      const staleDrop =
+        decision.reason === "let-drop" &&
+        below &&
+        ((world.comboCounting && world.streak > 0 && world.comboClock > 2.15) ||
+          sitting);
+      const staleBounce = decision.reason === "floor-bounce" && sitting;
+      if (world.scored || (LEGIT_WAIT.has(decision.reason) && !staleDrop && !staleBounce)) {
+        idle = 0;
+        return false;
       }
 
       idle += world.dt;

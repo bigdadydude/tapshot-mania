@@ -443,6 +443,63 @@ describe("ball AI registry", () => {
     assert.notEqual(ride.reason, "chase-boost");
   });
 
+  it("ninja taps out of a floor stall under the rim instead of freezing", () => {
+    const w = 390;
+    const h = 844;
+    const floorY = h * 0.765;
+    const r = 19.5;
+    const hoop = {
+      x: w - 28 - w * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const stuck = world({
+      hoop,
+      jumpVx: w * 0.76 * 1.2,
+      kit: flags({ ninja: true }),
+      shotOpen: true,
+      ball: { x: hoop.x - 40, y: floorY - r, vx: 4, vy: 12, r },
+    });
+    const d = decideShot(stuck, helpers);
+    assert.equal(d.policyId, "ninja");
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "reset-boost");
+
+    const opening = world({
+      hoop,
+      jumpVx: w * 0.76 * 1.2,
+      kit: flags({ ninja: true }),
+      shotMissed: true,
+      hitRim: true,
+      ball: { x: hoop.x - 50, y: floorY - r, vx: -180, vy: 40, r },
+    });
+    const bounce = decideShot(opening, helpers);
+    assert.equal(bounce.tap, false);
+    assert.equal(bounce.reason, "floor-bounce");
+  });
+
+  it("does not keep-air a live shot that is already under the hoop", () => {
+    const h = 844;
+    const floorY = h * 0.765;
+    const r = 19.5;
+    const hoop = { x: 66, y: 330, inner: 28, side: -1 as const, tube: 4.3, moving: false };
+    const w = world({
+      hoop,
+      shotOpen: true,
+      shotMade: false,
+      shotMissed: false,
+      combo: 8,
+      streak: 8,
+      comboCounting: true,
+      ball: { x: hoop.x + 20, y: floorY - r - 18, vx: -30, vy: 80, r },
+    });
+    const d = decideShot(w, helpers);
+    assert.notEqual(d.reason, "keep-air");
+  });
+
   it("lets a messy miss bounce on the floor to open spacing instead of mashing", () => {
     const h = 844;
     const floorY = h * 0.765;
@@ -467,7 +524,7 @@ describe("ball AI registry", () => {
       hoop,
       combo: 5,
       streak: 5,
-      comboClock: 2.6,
+      comboClock: 1.95,
       comboCounting: true,
       timer: 40,
       timerArmed: true,
@@ -643,6 +700,27 @@ describe("AI controller", () => {
     const w = world({ dt: AI_WATCHDOG / 2 });
     assert.equal(ai.tick(w), false);
     assert.equal(ai.tick(w), true);
+    assert.equal(ai.lastDecision()?.reason, "watchdog");
+  });
+
+  it("watchdog taps a sitting floor-bounce under the rim", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "stuck",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "hold", reason: "floor-bounce" }),
+    });
+    ai.setEnabled(true);
+    const h = 844;
+    const floorY = h * 0.765;
+    const r = 19.5;
+    const stuck = world({
+      dt: AI_WATCHDOG,
+      hoop: { x: 66, y: 330, inner: 28, side: -1, tube: 4.3, moving: false },
+      ball: { x: 80, y: floorY - r, vx: 3, vy: 8, r },
+    });
+    assert.equal(ai.tick(stuck), true);
     assert.equal(ai.lastDecision()?.reason, "watchdog");
   });
 
