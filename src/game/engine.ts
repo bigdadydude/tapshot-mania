@@ -4859,6 +4859,12 @@ export function createGame(
       };
     },
     tap: () => tapJump(),
+    noteMiss() {
+      shotMissed = true;
+      shotOpen = true;
+      ball.hitRim = true;
+      rimHits = Math.max(2, rimHits);
+    },
     setAutoPlay: (on: boolean) => {
       autoPlay.setEnabled(Boolean(on));
       emitHud();
