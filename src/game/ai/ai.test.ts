@@ -543,7 +543,36 @@ describe("ball AI registry", () => {
     });
     const bounce = decideShot(opening, helpers);
     assert.equal(bounce.tap, false);
-    assert.ok(bounce.reason === "floor-bounce" || bounce.reason === "pop-away");
+    assert.ok(
+      bounce.reason === "floor-bounce" ||
+        bounce.reason === "pop-away" ||
+        bounce.reason === "exit-space",
+    );
+  });
+
+  it("lets a long-jump bounce exit the cylinder instead of wrap-tapping it", () => {
+    const w = 390;
+    const h = 844;
+    const floorY = h * 0.765;
+    const r = 19.5;
+    const hoop = {
+      x: w - 28 - w * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const exit = world({
+      hoop,
+      jumpVx: w * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      ball: { x: hoop.x - 40, y: floorY - r, vx: -120, vy: 30, r },
+    });
+    const d = decideShot(exit, helpers);
+    assert.equal(d.tap, false);
+    assert.ok(d.reason === "exit-space" || d.reason === "pop-away");
   });
 
   it("ninja keep-airs a live mid-court shot instead of a wide no-tap zone", () => {
@@ -691,6 +720,22 @@ describe("ball AI registry", () => {
     assert.equal(d.policyId, "anti");
     assert.equal(d.tap, true);
     assert.equal(d.reason, "hole-spam");
+  });
+
+  it("anti does not farm a pickup over a dropping make", () => {
+    const hoop = { x: 200, y: 300, inner: 28, side: -1 as const, tube: 4, moving: false };
+    const d = decideShot(
+      world({
+        hoop,
+        kit: flags({ anti: true }),
+        antiMatter: { x: 80, y: 500, r: 16 },
+        ball: { x: 200, y: 240, vx: 0, vy: 220, r: 19.5 },
+      }),
+      helpers,
+    );
+    assert.notEqual(d.reason, "gather-tap");
+    assert.notEqual(d.reason, "gather-closer");
+    assert.ok(d.reason === "flight-scores" || d.reason === "score-over-pickup" || d.tap === false);
   });
 
   it("heat lets a close flying shot drop instead of apex-wrapping", () => {

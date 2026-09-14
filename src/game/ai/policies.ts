@@ -394,8 +394,9 @@ export const antiPolicy: BallAiPolicy = {
     }
 
     if (world.antiMatter) {
-      if (clockPanic(world, 1.6)) return abstain("clock-over-pickup");
+      if (clockPanic(world, 1.6) || comboPressure(world)) return abstain("clock-over-pickup");
       const current = helpers.predictCurrent(world);
+      if (confidentMake(world, current.scores)) return abstain("score-over-pickup");
       if (current.collectedAnti) return hold("gather-path");
       const next = helpers.predictTap(world);
       if (next.collectedAnti) return tap("gather-tap");
@@ -589,19 +590,21 @@ export const physPolicy: BallAiPolicy = {
       }
       if (under && !current.scores) {
         if (onFloor(world) || lowBounce(world)) {
+          const away = bounceOpening(world);
           if (
-            bounceOpening(world) &&
-            Math.abs(world.ball.vx) > 70 &&
+            away &&
+            Math.abs(world.ball.vx) > 48 &&
             !clockPanic(world, 1.7) &&
             !comboPressure(world)
           ) {
-            return hold("pop-away");
+            return hold("exit-space");
           }
           const spd = Math.hypot(world.ball.vx, world.ball.vy);
-          if (spd < 140 || Math.abs(world.ball.vx) < 90 || stalledNearHoop(world)) {
+          if (stalledNearHoop(world) || (onFloor(world) && spd < 78)) {
             return tap("wrap-escape");
           }
-          return hold("pop-away");
+          if (away) return hold("exit-space");
+          return tap("wrap-escape");
         }
         if (world.ball.vy < -12 && world.ball.y > world.hoop.y) return hold("tube-up");
         return hold("let-drop");

@@ -53,6 +53,7 @@ Ball-id / skill-flag votes are only for skills that are not a number:
 | `bank-steep` | Steeper cut into the board (`\|vy\| > 0.52·\|vx\|`) | velocity vs board |
 | `rim-swirl` | Inner-rim rattle (刷马桶) — hold, don't reset `jumpVx` | `hitRim` + inner side |
 | `tube-up` | Climbing through the net from below, then drop | under cylinder + `vy < 0` |
+| `exit-space` | Under-rim but opening court — let spacing grow, then jump back | under + bounce away |
 | `pop-away` | Elastic pop near the rim — let spacing open, then re-attack | `hotBounce` / `hoopRest` |
 | `wrap-escape` | Stuck under the rim: tap/wrap to the far side (穿屏) | `longJump` or `slipperyGlass` |
 | `early-jump` | Far + rising + long jumpFwd — jump **early** (snappy) for a steep fall | `longJump` + dx + hangTime |
@@ -61,8 +62,20 @@ Ball-id / skill-flag votes are only for skills that are not a number:
 | `hole-spam` | Black hole open — tap; gravity pulls it in | `kit.anti` / `holeOn` |
 | `gather-tap` | Antimatter pickup, but shot clock beats farming | `kit.anti` |
 
-Antimatter later: keep gathering **while scoring**; `clock-over-pickup` already
-drops the farm when the clock is short. Once `holeOn`, `hole-spam` is snappy.
+Antimatter later: keep gathering **while scoring** (`score-over-pickup` defers a
+make); `clock-over-pickup` drops the farm when the shot/combo clock is short.
+Once `holeOn`, `hole-spam` is snappy.
+
+Playbook mapping (PO):
+
+1. Bank → `bank-half` / `bank-steep`
+2. 刷马桶 → `rim-swirl`
+3. Under-rim tube **or** exit to spacing → `tube-up` / `exit-space`
+4. High bounce → `pop-away`
+5. Stuck 穿屏 → `wrap-escape`
+6. Distant 90° taps → `far-climb`
+7. Long jumpFwd early + inner rim → `early-jump` then `ride-flight` / `rim-swirl`
+8. Black hole → `gather-tap` while scoring; `hole-spam` once open
 
 ## Adding a new ball policy
 

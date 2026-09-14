@@ -47,6 +47,8 @@ const LEGIT_WAIT = new Set([
   "tube-up",
   "bank-steep",
   "bank-half",
+  "exit-space",
+  "gather-path",
 ]);
 
 export type AiController = {
