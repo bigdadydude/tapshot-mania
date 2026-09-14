@@ -66,8 +66,8 @@ Skills live on `effectiveBall()` flags (`heat`, `frost`, `champ`, `anti`,
 The default policy covers plain kinematics for anything that only changes jump / gravity.
 
 - **Chain:** at the make (`shotMade`) it jumps toward the **new** hoop immediately — no floor wait. It only holds `chain-wait` while still *above* the new rim (a full `jumpVy` from there orbits). `tapJump` after a counted make is a new shot and does not break combo.
-- **Banks:** 擦板 only in the **glass pocket** (between rim and backboard). Mid-court bank guesses and `wrap-boost` past the board were the “不停打板 / fly past the glass” bugs. If the current flight already banks in, hold.
-- **Floor bounce reset:** after a messy miss (rim/board), **do not mash** on the floor — hold `floor-bounce` so the bounce opens spacing, then `floor-launch`. First shots and clean distant windows still launch immediately.
+- **Banks:** 擦板 only in the **glass pocket** (between rim and backboard). Once there, **hold** `commit-glass` / `let-drop` — a tap resets to full `jumpVx` and is how long-travel kits bank-spam or fly past. Mid-court bank guesses and `wrap-boost` *near* the board are refused; wrap only after the ball is actually past the glass.
+- **Floor bounce reset:** after a messy miss (rim/board), or a long-travel kit already under the rim with no mid-air finish — **do not mash**. Hold `floor-bounce` so the bounce opens spacing, then `floor-launch`. First shots and clean distant windows still launch immediately. This is an intentional recovery, not a fallback to delete.
 - **Climb / release:** mash while below the basket on a clean look, release in the pocket, let-drop above the rim. Watchdog refuses to mash from above the rim.
 
 `glass` (priority 70) still protects a real dropping swish, climbs via default below the rim, then commits in the pocket. `wrap-height` (rubber) lets rattles resolve and only banks in the glass pocket — not every bounce.

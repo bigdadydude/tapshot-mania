@@ -79,6 +79,16 @@ function longTravel(world: AiWorld): boolean {
   return world.ballMul > 1.2 || Math.abs(world.jumpVx) > world.world.w * 0.8;
 }
 
+function closeToHoop(world: AiWorld): boolean {
+  return Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.32;
+}
+
+/** Velocity points at the court-facing glass, not away after a bounce. */
+function movingTowardBoard(world: AiWorld): boolean {
+  const face = boardFaceX(world);
+  return (face - world.ball.x) * world.ball.vx > 12;
+}
+
 function messyContact(world: AiWorld): boolean {
   return (
     world.rimHits >= 2 ||
@@ -133,28 +143,31 @@ function sameJumpAngle(world: AiWorld): boolean {
 }
 
 /**
- * Commit 擦板 only in the glass pocket. Mid-court `predictTap.bank` is how
- * long-travel balls spam the board; wrap-boost here flies past it.
+ * Commit 擦板 only in the glass pocket. A tap here resets to full jumpVx —
+ * that's how long-travel kits bank-spam and fly past the board. Committing
+ * means holding the current flight into the glass.
  */
 function bankCommit(world: AiWorld, helpers: AiHelpers): AiVote | null {
-  if (!nearBoard(world) || !inBankBand(world) || onFloor(world)) return null;
+  if (onFloor(world) || !inBankBand(world)) return null;
+  if (!nearBoard(world) || pastBoard(world)) return null;
+
   const current = helpers.predictCurrent(world);
-  const next = helpers.predictTap(world);
   if (current.scores && (current.bank || current.swish)) return hold("flight-scores");
-  if (world.hitBoard && world.ball.vy > 10 && !next.swish) return hold("let-drop");
-  if (next.scores && next.bank && !sameJumpAngle(world)) return tap("predicted-bank");
-  if (pastHoop(world)) return hold("let-drop");
-  return null;
+  if (world.hitBoard && world.ball.vy > 8) return hold("let-drop");
+  if (movingTowardBoard(world) || world.ball.vy > 12) return hold("commit-glass");
+  return hold("let-drop");
 }
 
 function floorRecover(world: AiWorld, next: { scores: boolean; bank: boolean; swish: boolean }): AiVote {
   if (clockPanic(world, 1.7)) return tap("floor-launch");
   if (next.scores && next.swish) return tap("floor-launch");
-  if (next.scores && nearBoard(world) && next.bank) return tap("predicted-bank");
   const close = Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.4;
+  if (next.scores && nearBoard(world) && next.bank && !longTravel(world)) {
+    return tap("predicted-bank");
+  }
   const speed = Math.hypot(world.ball.vx, world.ball.vy);
   const recover =
-    messyContact(world) || world.shotMissed || (longTravel(world) && (world.hitBoard || world.hitRim));
+    messyContact(world) || world.shotMissed || (longTravel(world) && close);
   if (
     recover &&
     close &&
@@ -199,14 +212,10 @@ export const defaultPolicy: BallAiPolicy = {
     const bank = bankCommit(world, helpers);
     if (bank) return bank;
 
-    // Full jumpVy from above the rim is an orbit. One tap at/below the rim
-    // cannot hang all the way to the far hoop — mash while *below* the rim
-    // until the ball is in the pocket, then release / 擦板.
+    // Full jumpVy from above the rim is an orbit. Behind/over the glass, wait
+    // to fall into the bank window — wrap-boost here is how we fly past it.
     if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
       if (pastBoard(world) && world.ball.vy > 8) return tap("wrap-boost");
-      if (pastHoop(world) && world.ball.vy > 8 && !nearBoard(world)) {
-        return tap("wrap-boost");
-      }
       return hold("let-drop");
     }
 
@@ -221,9 +230,6 @@ export const defaultPolicy: BallAiPolicy = {
       world.ball.y < releaseY;
     if (inRelease) {
       if (pastBoard(world) && world.ball.vy > 8) return tap("wrap-boost");
-      if (pastHoop(world) && world.ball.vy > 8 && !nearBoard(world)) {
-        return tap("wrap-boost");
-      }
       const save = helpers.predictTap(world);
       if (save.scores && save.swish && !current.scores && world.ball.vy > 12) {
         return tap("predicted-make");
@@ -231,21 +237,21 @@ export const defaultPolicy: BallAiPolicy = {
       return hold("let-drop");
     }
 
-    // Missed glass / rim pinball: don't keep boosting — land, bounce away, re-attack.
-    if (
-      !world.kit.glass &&
-      lowBounce(world) &&
-      messyContact(world) &&
-      !clockPanic(world, 1.7)
-    ) {
+    // Missed glass / rim pinball — or a long-travel kit already under the rim:
+    // don't keep boosting. Land, bounce away, re-attack.
+    if (!world.kit.glass && lowBounce(world) && !clockPanic(world, 1.7)) {
       const nextLow = helpers.predictTap(world);
-      if (!(nextLow.scores && nextLow.swish)) return hold("floor-bounce");
+      if (!(nextLow.scores && nextLow.swish)) {
+        if (messyContact(world) || (longTravel(world) && closeToHoop(world))) {
+          return hold("floor-bounce");
+        }
+      }
     }
 
     const next = helpers.predictTap(world);
     if (next.scores && next.swish) return tap("predicted-make");
     if (next.scores && next.bank && nearBoard(world) && inBankBand(world)) {
-      return tap("predicted-bank");
+      return hold("commit-glass");
     }
     if (next.scores && !next.bank) return tap("predicted-make");
     if (next.scores && !longTravel(world) && !world.hitBoard) {
@@ -255,17 +261,24 @@ export const defaultPolicy: BallAiPolicy = {
     if (clockPanic(world, 1.6)) return tap("shot-clock");
 
     if (world.ballHidden && world.onApproachSide) return tap("approach-enter");
-    if (onFloor(world) || (lowBounce(world) && (world.shotMissed || messyContact(world)))) {
+    if (
+      onFloor(world) ||
+      (lowBounce(world) && (world.shotMissed || messyContact(world) || longTravel(world)))
+    ) {
       return floorRecover(world, next);
     }
 
+    // Off the glass entirely — wrap. Do not wrap-boost merely *near* the board.
     if (pastBoard(world) && !world.onApproachSide) return tap("wrap-boost");
-    if (pastHoop(world) && !world.onApproachSide && !nearBoard(world)) {
-      return tap("wrap-boost");
-    }
 
-    const launch = onLaunchSide(world) || world.onApproachSide || pastHoop(world);
-    if (belowRim && launch && !messyContact(world)) return tap("apex-boost");
+    const launch = onLaunchSide(world) || world.onApproachSide;
+    // Long-travel kits skip the pocket if they full-jump when already close.
+    if (belowRim && launch && !messyContact(world)) {
+      if (longTravel(world) && closeToHoop(world) && !world.onApproachSide) {
+        return hold("let-drop");
+      }
+      return tap("apex-boost");
+    }
 
     if (world.kit.wrap === "height" && world.onApproachSide) {
       return tap("wrap-approach");
@@ -400,8 +413,8 @@ export const wrapHeightPolicy: BallAiPolicy = {
     }
 
     if (next.scores && next.swish) return tap("predicted-make");
-    if (next.scores && next.bank && nearBoard(world) && inBankBand(world) && !sameJumpAngle(world)) {
-      return tap("predicted-bank");
+    if (next.scores && next.bank && nearBoard(world) && inBankBand(world)) {
+      return hold("commit-glass");
     }
     if (next.scores && !next.bank && !sameJumpAngle(world)) return tap(scoreTapReason(next));
     if (next.scores && !rattled && !next.bank) return tap(scoreTapReason(next));

@@ -361,7 +361,11 @@ describe("ball AI registry", () => {
     });
     const stay = decideShot(onGlass, helpers);
     assert.equal(stay.tap, false);
-    assert.ok(stay.reason === "flight-scores" || stay.reason === "let-drop");
+    assert.ok(
+      stay.reason === "flight-scores" ||
+        stay.reason === "let-drop" ||
+        stay.reason === "commit-glass",
+    );
 
     const overfly = world({
       hoop,
@@ -370,6 +374,46 @@ describe("ball AI registry", () => {
     });
     const hold = decideShot(overfly, helpers);
     assert.notEqual(hold.reason, "wrap-boost");
+    assert.notEqual(hold.reason, "predicted-bank");
+    assert.ok(
+      hold.reason === "flight-scores" ||
+        hold.reason === "let-drop" ||
+        hold.reason === "commit-glass",
+    );
+
+    // Over the rim / glass, still on court — fall into the bank window.
+    const skyPast = world({
+      hoop,
+      jumpVx: w * 0.76,
+      ball: { x: hoop.x + hoop.inner * 1.15, y: hoop.y - 80, vx: 140, vy: -40, r: 19.5 },
+    });
+    const drop = decideShot(skyPast, helpers);
+    assert.equal(drop.tap, false);
+    assert.notEqual(drop.reason, "wrap-boost");
+    assert.notEqual(drop.reason, "apex-boost");
+  });
+
+  it("long-travel kits do not full-jump when already under the rim", () => {
+    const w = 390;
+    const hoop = {
+      x: w - 28 - w * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const close = world({
+      hoop,
+      jumpVx: w * 0.76 * 1.2,
+      ballMul: 1,
+      kit: flags({ ninja: true }),
+      ball: { x: hoop.x - 70, y: hoop.y + 90, vx: 220, vy: 40, r: 19.5 },
+    });
+    const d = decideShot(close, helpers);
+    assert.notEqual(d.reason, "apex-boost");
+    assert.notEqual(d.reason, "predicted-bank");
+    assert.notEqual(d.reason, "wrap-boost");
   });
 
   it("lets a messy miss bounce on the floor to open spacing instead of mashing", () => {

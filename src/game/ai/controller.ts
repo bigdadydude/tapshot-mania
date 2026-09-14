@@ -25,6 +25,7 @@ const LEGIT_WAIT = new Set([
   "protect-make",
   "floor-bounce",
   "let-bounce",
+  "commit-glass",
 ]);
 
 export type AiController = {
