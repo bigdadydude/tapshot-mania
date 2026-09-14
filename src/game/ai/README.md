@@ -63,9 +63,7 @@ Skills live on `effectiveBall()` flags (`heat`, `frost`, `champ`, `anti`,
 | heat         | 15       | `kit.heat` (abstain) |
 | default      | 0        | always               |
 
-Future balls: pick a unique `id`, match the **new flag** you add on
-`EffectiveBall` (not a ball-id list), and register. The default policy covers
-plain kinematics for anything that only changes jump / gravity.
+The default policy covers plain kinematics for anything that only changes jump / gravity. It chains **apex boosts** (tap near the top of a jump) because a single floor tap cannot reach the rim — the same pattern a human uses. Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, or steer in a black hole.
 
 ## Formal menu later
 
