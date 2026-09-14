@@ -481,6 +481,24 @@ export const ninjaPolicy: BallAiPolicy = {
 
     if (pastBoard(world) && !world.onApproachSide) return tap("wrap-boost");
 
+    // Default holds let-drop / commit-glass here — that's the under-rim freeze.
+    const underNet =
+      world.ball.y > world.hoop.y + world.hoop.inner * 0.45 &&
+      !onFloor(world) &&
+      !world.onApproachSide &&
+      closeToHoop(world);
+    if (underNet && !current.scores) {
+      if (
+        stalledNearHoop(world) ||
+        world.hitRim ||
+        world.hitBoard ||
+        world.shotMissed ||
+        world.ball.vy > 28
+      ) {
+        return tap("chase-boost");
+      }
+    }
+
     if (stalledNearHoop(world) && !current.scores) return tap("chase-boost");
 
     return abstain("default-shot");
