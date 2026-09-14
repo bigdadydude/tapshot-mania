@@ -107,14 +107,37 @@ export const defaultPolicy: BallAiPolicy = {
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
 
+    // Full jumpVy from above the rim is an orbit. One tap at/below the rim
+    // cannot hang all the way to the far hoop — mash while *below* the rim
+    // until the ball is in the pocket, then release / 擦板.
+    if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
+      if (pastHoop(world) && world.ball.vy > 8) return tap("wrap-boost");
+      const save = helpers.predictTap(world);
+      if (
+        save.scores &&
+        save.bank &&
+        !save.swish &&
+        world.ball.vy > 18 &&
+        boardSide(world) &&
+        nearRim(world)
+      ) {
+        return tap("predicted-bank");
+      }
+      return hold("let-drop");
+    }
+
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
     const releaseY = world.hoop.y + world.hoop.inner * 2.2;
+    const pocket =
+      Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 1.55 + world.ball.r * 0.35;
     const inRelease =
-      !onFloor(world) && !world.onApproachSide && world.ball.y < releaseY;
+      !onFloor(world) &&
+      !world.onApproachSide &&
+      pocket &&
+      world.ball.y < releaseY;
     if (inRelease) {
       if (pastHoop(world) && world.ball.vy > 8) return tap("wrap-boost");
       const save = helpers.predictTap(world);
-      // 擦板: if the direct thread is poor, bank off the glass instead of holding.
       if (save.scores && save.bank && !current.swish) {
         if (!current.scores || boardSide(world)) return tap("predicted-bank");
       }
