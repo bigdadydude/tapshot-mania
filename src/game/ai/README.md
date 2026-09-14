@@ -58,7 +58,7 @@ Skills live on `effectiveBall()` flags (`heat`, `frost`, `champ`, `anti`,
 | wrap-height  | 60       | `kit.wrap === "height"` |
 | chain        | 50       | `kit.chain` (placeholder) |
 | champ        | 40       | `kit.champ`          |
-| ninja        | 30       | `kit.ninja` (abstain)|
+| ninja        | 30       | `kit.ninja`          |
 | frost        | 20       | `kit.frost` (abstain)|
 | heat         | 15       | `kit.heat` (abstain) |
 | default      | 0        | always               |
@@ -67,10 +67,11 @@ The default policy covers plain kinematics for anything that only changes jump /
 
 - **Chain:** at the make (`shotMade`) it jumps toward the **new** hoop immediately — no floor wait. It only holds `chain-wait` while still *above* the new rim (a full `jumpVy` from there orbits). `tapJump` after a counted make is a new shot and does not break combo.
 - **Banks:** 擦板 only in the **glass pocket** (between rim and backboard). Once there, **hold** `commit-glass` / `let-drop` — a tap resets to full `jumpVx` and is how long-travel kits bank-spam or fly past. Mid-court bank guesses and `wrap-boost` *near* the board are refused; wrap only after the ball is actually past the glass.
-- **Floor bounce reset:** after a messy miss (rim/board), or a long-travel kit already under the rim with no mid-air finish — **do not mash**. Hold `floor-bounce` so the bounce opens spacing, then `floor-launch`. First shots and clean distant windows still launch immediately. This is an intentional recovery, not a fallback to delete.
+- **Floor bounce reset:** after a messy miss, hold `floor-bounce` only while the bounce is **opening spacing** (velocity away from the hoop). Sitting idle under the rim is not a recovery. First shots and clean windows still launch immediately.
 - **Climb / release:** mash while below the basket on a clean look, release in the pocket, let-drop above the rim. Watchdog refuses to mash from above the rim.
+- **Ninja:** owns its vote. Long `jumpFwd` + a smaller hoop — if the current flight is not scoring, **chase / wrap** instead of holding `let-drop` under the rim. Chain at the make; tap interval is shorter on chain / chase / wrap.
 
-`glass` (priority 70) still protects a real dropping swish, climbs via default below the rim, then commits in the pocket. `wrap-height` (rubber) lets rattles resolve and only banks in the glass pocket — not every bounce.
+`glass` (priority 70) still protects a real dropping swish, climbs below the rim, then commits in the pocket. `wrap-height` (rubber) lets rattles resolve and only banks in the glass pocket — not every bounce.
 
 Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, steer in a black hole, or (rubber) refuse a bad rim spam. Do not abandon floor-bounce recovery for high-travel balls.
 

@@ -408,7 +408,7 @@ describe("ball AI registry", () => {
     assert.notEqual(drop.reason, "apex-boost");
   });
 
-  it("long-travel kits do not full-jump when already under the rim", () => {
+  it("ninja chases instead of freezing under the rim", () => {
     const w = 390;
     const hoop = {
       x: w - 28 - w * 0.1,
@@ -423,12 +423,14 @@ describe("ball AI registry", () => {
       jumpVx: w * 0.76 * 1.2,
       ballMul: 1,
       kit: flags({ ninja: true }),
-      ball: { x: hoop.x - 70, y: hoop.y + 90, vx: 220, vy: 40, r: 19.5 },
+      ball: { x: hoop.x - 70, y: hoop.y + 90, vx: 40, vy: 80, r: 19.5 },
     });
     const d = decideShot(close, helpers);
-    assert.notEqual(d.reason, "apex-boost");
-    assert.notEqual(d.reason, "predicted-bank");
-    assert.notEqual(d.reason, "wrap-boost");
+    assert.equal(d.policyId, "ninja");
+    assert.equal(d.tap, true);
+    assert.ok(d.reason === "chase-boost" || d.reason === "wrap-boost" || d.reason === "apex-boost");
+    assert.notEqual(d.reason, "let-drop");
+    assert.notEqual(d.reason, "wait-window");
   });
 
   it("lets a messy miss bounce on the floor to open spacing instead of mashing", () => {

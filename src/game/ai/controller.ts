@@ -6,10 +6,11 @@ import type { AiDecision, AiWorld } from "./types.ts";
 const helpers = { predictCurrent, predictTap };
 
 /** Floor between AI taps so we don't jitter every physics step. */
-export const AI_TAP_INTERVAL = 0.14;
-const PANIC_INTERVAL = 0.09;
+export const AI_TAP_INTERVAL = 0.09;
+const CHAIN_INTERVAL = 0.055;
+const PANIC_INTERVAL = 0.06;
 /** If we can shoot but haven't tapped, mash like a stuck human. */
-export const AI_WATCHDOG = 0.22;
+export const AI_WATCHDOG = 0.14;
 
 const LEGIT_WAIT = new Set([
   "already-scored",
@@ -92,10 +93,15 @@ export function createAiController(): AiController {
       if (world.paused || world.phase !== "playing") return false;
 
       const panic = world.timerArmed && world.timer < 1.2 && !world.buzzer;
-      const wait = panic ? PANIC_INTERVAL : AI_TAP_INTERVAL;
 
       const decision = decideShot(world, helpers);
       last = decision;
+      const snappy =
+        decision.reason === "chain-next" ||
+        decision.reason === "chase-boost" ||
+        decision.reason === "approach-enter" ||
+        decision.reason === "wrap-boost";
+      const wait = panic ? PANIC_INTERVAL : snappy ? CHAIN_INTERVAL : AI_TAP_INTERVAL;
       if (decision.tap) {
         if (cooldown > 0) return false;
         return fire(decision, wait);

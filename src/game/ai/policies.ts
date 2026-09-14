@@ -165,14 +165,12 @@ function floorRecover(world: AiWorld, next: { scores: boolean; bank: boolean; sw
   if (next.scores && nearBoard(world) && next.bank && !longTravel(world)) {
     return tap("predicted-bank");
   }
-  const speed = Math.hypot(world.ball.vx, world.ball.vy);
-  const recover =
-    messyContact(world) || world.shotMissed || (longTravel(world) && close);
+  const recover = messyContact(world) || world.shotMissed;
   if (
     recover &&
     close &&
-    !clockPanic(world, 2.1) &&
-    (speed > 48 || bounceOpening(world) || lowBounce(world))
+    bounceOpening(world) &&
+    !clockPanic(world, 2.1)
   ) {
     return hold("floor-bounce");
   }
@@ -191,15 +189,6 @@ export const defaultPolicy: BallAiPolicy = {
     // Only hold if we're still *above* the new rim (a full jumpVy would orbit).
     if (world.shotMade) {
       if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
-        return hold("chain-wait");
-      }
-      // Long jumpFwd (ninja) overshoots if the chain tap is still at rim height.
-      if (
-        longTravel(world) &&
-        !onFloor(world) &&
-        !world.onApproachSide &&
-        world.ball.y < world.hoop.y + world.hoop.inner * 0.85
-      ) {
         return hold("chain-wait");
       }
       return tap("chain-next");
@@ -237,14 +226,11 @@ export const defaultPolicy: BallAiPolicy = {
       return hold("let-drop");
     }
 
-    // Missed glass / rim pinball — or a long-travel kit already under the rim:
-    // don't keep boosting. Land, bounce away, re-attack.
-    if (!world.kit.glass && lowBounce(world) && !clockPanic(world, 1.7)) {
+    // Missed glass / rim pinball: don't mash — bounce away, then re-attack.
+    if (!world.kit.glass && lowBounce(world) && messyContact(world) && !clockPanic(world, 1.7)) {
       const nextLow = helpers.predictTap(world);
-      if (!(nextLow.scores && nextLow.swish)) {
-        if (messyContact(world) || (longTravel(world) && closeToHoop(world))) {
-          return hold("floor-bounce");
-        }
+      if (!(nextLow.scores && nextLow.swish) && bounceOpening(world)) {
+        return hold("floor-bounce");
       }
     }
 
@@ -261,10 +247,7 @@ export const defaultPolicy: BallAiPolicy = {
     if (clockPanic(world, 1.6)) return tap("shot-clock");
 
     if (world.ballHidden && world.onApproachSide) return tap("approach-enter");
-    if (
-      onFloor(world) ||
-      (lowBounce(world) && (world.shotMissed || messyContact(world) || longTravel(world)))
-    ) {
+    if (onFloor(world) || (lowBounce(world) && (world.shotMissed || messyContact(world)))) {
       return floorRecover(world, next);
     }
 
@@ -272,11 +255,7 @@ export const defaultPolicy: BallAiPolicy = {
     if (pastBoard(world) && !world.onApproachSide) return tap("wrap-boost");
 
     const launch = onLaunchSide(world) || world.onApproachSide;
-    // Long-travel kits skip the pocket if they full-jump when already close.
     if (belowRim && launch && !messyContact(world)) {
-      if (longTravel(world) && closeToHoop(world) && !world.onApproachSide) {
-        return hold("let-drop");
-      }
       return tap("apex-boost");
     }
 
@@ -463,12 +442,68 @@ export const champPolicy: BallAiPolicy = {
   },
 };
 
-/** Ninja clones follow the body path in-engine — no extra taps needed. Slot for future clone-aware aim. */
+/** Ninja: long jumpFwd + smaller hoop. Never idle under the rim — wrap / chase. */
 export const ninjaPolicy: BallAiPolicy = {
   id: "ninja",
   priority: 30,
   match: (kit) => kit.ninja,
-  vote: () => abstain("body-shot"),
+  vote(world, helpers): AiVote {
+    if (world.kit.glass) return abstain("glass-owns");
+    if (world.ballHidden && !world.onApproachSide) return hold("offscreen");
+
+    if (world.shotMade) {
+      if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
+        return hold("chain-wait");
+      }
+      return tap("chain-next");
+    }
+    if (world.scored) return hold("already-scored");
+
+    const current = helpers.predictCurrent(world);
+    if (confidentMake(world, current.scores)) return hold("flight-scores");
+
+    if (nearBoard(world) && inBankBand(world) && !pastBoard(world) && !onFloor(world)) {
+      if (current.scores && (current.bank || current.swish)) return hold("flight-scores");
+      if (current.scores && movingTowardBoard(world) && world.ball.vy > 12) {
+        return hold("commit-glass");
+      }
+      // Under the glass with no make — jump through and wrap instead of sitting.
+      return tap("wrap-boost");
+    }
+
+    if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
+      if (pastBoard(world) && world.ball.vy > 4) return tap("wrap-boost");
+      return hold("let-drop");
+    }
+
+    if (world.ballHidden && world.onApproachSide) return tap("approach-enter");
+    if (pastBoard(world) && !world.onApproachSide) return tap("wrap-boost");
+
+    const next = helpers.predictTap(world);
+    if (next.scores && next.swish) return tap("predicted-make");
+    if (next.scores && !next.bank) return tap("predicted-make");
+
+    const underRim = world.ball.y > world.hoop.y + world.ball.r * 0.05;
+    if (underRim && closeToHoop(world) && !world.onApproachSide && !onFloor(world)) {
+      if (current.scores) return hold("flight-scores");
+      return tap("chase-boost");
+    }
+
+    if (onFloor(world) || lowBounce(world)) {
+      if (
+        bounceOpening(world) &&
+        closeToHoop(world) &&
+        !clockPanic(world, 1.7) &&
+        !(next.scores && next.swish)
+      ) {
+        return hold("floor-bounce");
+      }
+      return tap("floor-launch");
+    }
+
+    if (onLaunchSide(world) || world.onApproachSide) return tap("apex-boost");
+    return tap("chase-boost");
+  },
 };
 
 /** Frost freeze is combo-driven in-engine. Keep shooting via default. */
