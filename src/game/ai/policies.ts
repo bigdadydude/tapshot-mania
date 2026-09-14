@@ -564,35 +564,19 @@ export const physPolicy: BallAiPolicy = {
   vote(world, helpers): AiVote {
     if (world.kit.glass) return abstain("glass-owns");
     if (world.ballHidden && !world.onApproachSide) return abstain();
-    if (world.shotMade) {
-      const feelMade = shotFeel(world);
-      // A 1.2 jump from the pocket wraps into the 44 px/s crawl. If the make
-      // already sent us at the new hoop, ride it; otherwise default chains.
-      if (
-        feelMade.longJump &&
-        flyingAtHoop(world) &&
-        world.ball.vy > 12 &&
-        !onFloor(world) &&
-        !lowBounce(world)
-      ) {
-        return hold("ride-flight");
-      }
-      return abstain("chain");
-    }
+    if (world.shotMade) return abstain("chain");
     if (world.scored) return hold("already-scored");
 
     const feel = shotFeel(world);
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
 
-    // 2. Rim toilet swirl — inner rim, let it rattle in. Miss rattles with
-    // a long jumpFwd still need to wrap out; only freeze a real swirl.
+    // 2. Rim toilet swirl — inner rim, let it rattle in.
     if (
       world.hitRim &&
       onInnerRim(world) &&
       !onFloor(world) &&
-      !pastBoard(world) &&
-      (current.scores || (world.ball.vy > 28 && Math.abs(world.ball.vx) < 220))
+      (current.scores || world.ball.vy > 18)
     ) {
       return hold("rim-swirl");
     }
@@ -637,19 +621,13 @@ export const physPolicy: BallAiPolicy = {
           return hold("pop-away");
         }
         const spd = Math.hypot(world.ball.vx, world.ball.vy);
-        // Sitting only — a live 1.2 bounce still has |vx|~80–130; tapping it wraps.
-        if (stalledNearHoop(world) || (onFloor(world) && spd < 90)) {
+        if (spd < 140 || Math.abs(world.ball.vx) < 90 || stalledNearHoop(world)) {
           return tap("wrap-escape");
         }
         return hold("pop-away");
       }
-      // Through the net from below, then drop in. Full jumpVx from here wraps.
-      if (world.ball.vy < -12 && world.ball.y > world.hoop.y) {
-        const aligned =
-          Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 0.85 + world.ball.r;
-        const slowSlam = Math.abs(world.ball.vx) < Math.abs(world.jumpVx) * 0.55;
-        if (aligned && slowSlam) return hold("tube-up");
-      }
+      // Through the net from below, then drop in.
+      if (world.ball.vy < -12 && world.ball.y > world.hoop.y) return hold("tube-up");
       return hold("let-drop");
     }
 
@@ -659,7 +637,7 @@ export const physPolicy: BallAiPolicy = {
     // must leave the ground earlier — a late tap writes full jumpVx and wraps.
     const dx = Math.abs(world.ball.x - world.hoop.x);
     const hangScale = 1 - Math.max(-0.06, Math.min(0.08, (feel.hangTime - 0.7) * 0.25));
-    const far = dx > world.world.w * 0.38 * hangScale;
+    const far = dx > world.world.w * (feel.longJump ? 0.34 : 0.38) * hangScale;
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
     if (
       feel.longJump &&
