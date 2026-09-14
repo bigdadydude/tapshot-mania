@@ -106,8 +106,16 @@ export function createAiController(): AiController {
       }
 
       if (world.scored || LEGIT_WAIT.has(decision.reason)) {
-        idle = 0;
-        return false;
+        const staleDrop =
+          decision.reason === "let-drop" &&
+          world.comboCounting &&
+          world.streak > 0 &&
+          world.comboClock > 2.5 &&
+          world.ball.y + world.ball.r * 0.15 >= world.hoop.y;
+        if (!staleDrop) {
+          idle = 0;
+          return false;
+        }
       }
 
       idle += world.dt;
