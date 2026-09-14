@@ -51,7 +51,7 @@ import {
 import { createAiController, flagsFromKit } from "./ai";
 import { createPlayRecorder } from "./record";
 
-export const GAME_REV = 337;
+export const GAME_REV = 338;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -969,11 +969,11 @@ export function createGame(
     });
   }
 
-  function noteScoreRecord(ghostMake: boolean) {
+  function noteScoreRecord(ghostMake: boolean, hs: -1 | 1 = hoop.side) {
     if (!recorder.live()) return;
     recorder.noteEvent("score", {
       finish: lastFinish ?? (ghostMake ? "swish" : undefined),
-      hs: hoop.side,
+      hs,
       ghost: ghostMake || undefined,
       x: ball.x,
       y: ball.y,
@@ -4125,8 +4125,9 @@ export function createGame(
       tugNet(hoop);
       refillShotClock();
       prisonShackleBest = Math.max(prisonShackleBest, streak);
+      const scoredHs = hoop.side;
       if (!ghost) nextHoop();
-      noteScoreRecord(ghost);
+      noteScoreRecord(ghost, scoredHs);
       emitHud();
       if (streak >= prisonTarget) enterPrisonFree(Math.max(prisonShackleBest, streak));
       return;
@@ -4384,6 +4385,7 @@ export function createGame(
       return;
     }
     const stage = fireStage(heatN());
+    const scoredHs = hoop.side;
     if (!ghost) {
       if (isFrost() && Math.random() < frostChance()) {
         // hoop is the stand just scored into (swapped earlier if needed).
@@ -4415,7 +4417,7 @@ export function createGame(
       }
     }
     syncNinjaGhosts();
-    noteScoreRecord(ghost);
+    noteScoreRecord(ghost, scoredHs);
     emitHud();
     if (
       !ghost &&
