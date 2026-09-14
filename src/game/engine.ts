@@ -50,7 +50,7 @@ import {
 } from "./rogue";
 import { createAiController, flagsFromKit } from "./ai";
 
-export const GAME_REV = 318;
+export const GAME_REV = 319;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -1797,6 +1797,8 @@ export function createGame(
       timeUp,
       combo,
       streak,
+      comboClock,
+      comboCounting,
       world: { w: world.w, h: world.h, floorY: world.floorY },
       ball: { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy, r: ball.r },
       hoop: {

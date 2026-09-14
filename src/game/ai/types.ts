@@ -73,6 +73,9 @@ export type AiWorld = {
   timeUp: boolean;
   combo: number;
   streak: number;
+  /** Seconds since last make while the streak is live (`COMBO_STOP` is 4). */
+  comboClock: number;
+  comboCounting: boolean;
   world: { w: number; h: number; floorY: number };
   ball: { x: number; y: number; vx: number; vy: number; r: number };
   hoop: AiHoop;

@@ -92,7 +92,9 @@ export function createAiController(): AiController {
       if (world.tapLock > 0) return false;
       if (world.paused || world.phase !== "playing") return false;
 
-      const panic = world.timerArmed && world.timer < 1.2 && !world.buzzer;
+      const panic =
+        (world.timerArmed && world.timer < 1.2 && !world.buzzer) ||
+        (world.comboCounting && world.streak > 0 && world.comboClock > 2.35);
 
       const decision = decideShot(world, helpers);
       last = decision;

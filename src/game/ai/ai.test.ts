@@ -61,6 +61,8 @@ function world(over: Partial<AiWorld> = {}): AiWorld {
     timeUp: false,
     combo: 0,
     streak: 0,
+    comboClock: 0,
+    comboCounting: false,
     world: { w, h, floorY },
     ball: { x: w * 0.78, y: floorY - r, vx: 0, vy: 0, r },
     hoop: { x: hoopX, y: hoopY, inner: 28, side: -1, tube: 4.3, moving: false },
@@ -457,6 +459,23 @@ describe("ball AI registry", () => {
     const d = decideShot(w, helpers);
     assert.equal(d.tap, false);
     assert.equal(d.reason, "floor-bounce");
+  });
+
+  it("taps to keep combo alive when the streak clock is running out", () => {
+    const hoop = { x: 66, y: 330, inner: 28, side: -1 as const, tube: 4.3, moving: false };
+    const w = world({
+      hoop,
+      combo: 5,
+      streak: 5,
+      comboClock: 2.6,
+      comboCounting: true,
+      timer: 40,
+      timerArmed: true,
+      ball: { x: 200, y: 500, vx: 20, vy: 40, r: 19.5 },
+    });
+    const d = decideShot(w, helpers);
+    assert.equal(d.tap, true);
+    assert.ok(d.reason === "shot-clock" || d.reason === "pace-boost" || d.reason === "apex-boost");
   });
 
   it("does not bank-spam from mid-court just because a board bounce might score", () => {
