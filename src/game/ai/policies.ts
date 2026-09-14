@@ -180,6 +180,15 @@ export const defaultPolicy: BallAiPolicy = {
       if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
         return hold("chain-wait");
       }
+      // Long jumpFwd (ninja) overshoots if the chain tap is still at rim height.
+      if (
+        longTravel(world) &&
+        !onFloor(world) &&
+        !world.onApproachSide &&
+        world.ball.y < world.hoop.y + world.hoop.inner * 0.85
+      ) {
+        return hold("chain-wait");
+      }
       return tap("chain-next");
     }
     if (world.scored) return hold("already-scored");
