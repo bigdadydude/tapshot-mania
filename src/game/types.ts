@@ -155,6 +155,8 @@ export type HudState = {
   rogue: RogueHud | null;
   /** Session-only auto-play. Default false; not persisted. */
   autoPlay: boolean;
+  /** Session-only hand-play recording. Default false; not persisted. */
+  recording: boolean;
 };
 
 export type World = {

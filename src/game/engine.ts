@@ -49,8 +49,9 @@ import {
   type RogueRun,
 } from "./rogue";
 import { createAiController, flagsFromKit } from "./ai";
+import { createPlayRecorder } from "./record";
 
-export const GAME_REV = 336;
+export const GAME_REV = 337;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -130,6 +131,10 @@ export type GameHandle = {
   devBackFromSettle: () => void;
   /** Session-only auto-play (demo / AFK). Default off; not persisted. */
   setAutoPlay: (on: boolean) => void;
+  /** Session-only hand-play recording. Default off; JSON download on stop / over. */
+  setRecording: (on: boolean) => void;
+  /** Re-download the last (or live) recording, if any. */
+  downloadRecording: () => void;
   /** Activate inventory item / usable ornament from pause. */
   useRogue: (id: string) => void;
   /** Answer连击保护 prompt. */
@@ -245,6 +250,8 @@ export function createGame(
     y: number;
   };
   const autoPlay = createAiController();
+  const recorder = createPlayRecorder();
+  let tapFromAi = false;
   let pathHist: PathSample[] = [];
   let pathClock = 0;
   let ninjaGhosts: NinjaGhost[] = [];
@@ -468,7 +475,18 @@ export function createGame(
   }
 
   function markShotMissed() {
-    if (shotOpen && !shotMade) shotMissed = true;
+    if (shotOpen && !shotMade) {
+      shotMissed = true;
+      if (recorder.live()) {
+        recorder.noteEvent("miss", {
+          x: ball.x,
+          y: ball.y,
+          hs: hoop.side,
+          score,
+          combo: comboShown(),
+        });
+      }
+    }
   }
 
   /** Break active streak (timeout or finished miss jump). Heat may keep decaying. */
@@ -895,6 +913,72 @@ export function createGame(
       prison: prisonHud(),
       rogue: toRogueHud(isRogueMode() ? rogueRun : null),
       autoPlay: autoPlay.enabled(),
+      recording: recorder.enabled(),
+    });
+  }
+
+  function comboShown() {
+    return comboCounting ? streak : combo;
+  }
+
+  function recordingMeta() {
+    return {
+      mode: playMode,
+      ballId,
+      world: { w: world.w, h: world.h, floorY: world.floorY },
+    };
+  }
+
+  function recordingTally() {
+    return { score, combo: comboShown() };
+  }
+
+  function beginRecordingRun() {
+    if (!recorder.enabled()) return;
+    recorder.beginRun(recordingMeta());
+  }
+
+  function endRecordingRun(reason: "over" | "stop" | "restart") {
+    if (!recorder.live()) return;
+    recorder.endRun(reason, recordingTally());
+  }
+
+  function samplePlay() {
+    if (!recorder.enabled() || !recorder.live()) return;
+    if (phase !== "playing") return;
+    const g = boardGeom(hoop, world);
+    recorder.tick({
+      x: ball.x,
+      y: ball.y,
+      vx: ball.vx,
+      vy: ball.vy,
+      hs: hoop.side,
+      hx: hoop.x,
+      hy: hoop.y,
+      hi: hoop.inner,
+      ht: hoop.tube,
+      hm: hoop.moving,
+      bx: g.visX,
+      by: g.visY,
+      bw: g.visW,
+      bh: g.bh,
+      score,
+      combo: comboShown(),
+      hitRim: ball.hitRim,
+      hitBoard: ball.hitBoard,
+    });
+  }
+
+  function noteScoreRecord(ghostMake: boolean) {
+    if (!recorder.live()) return;
+    recorder.noteEvent("score", {
+      finish: lastFinish ?? (ghostMake ? "swish" : undefined),
+      hs: hoop.side,
+      ghost: ghostMake || undefined,
+      x: ball.x,
+      y: ball.y,
+      score,
+      combo: comboShown(),
     });
   }
 
@@ -1962,6 +2046,7 @@ export function createGame(
   }
 
   function beginPlay() {
+    endRecordingRun("restart");
     phase = "playing";
     paused = false;
     score = 0;
@@ -2040,6 +2125,7 @@ export function createGame(
     resetPrisonRun();
     resetNinjaPath();
     autoPlay.reset();
+    beginRecordingRun();
     if (isPrison()) {
       callouts.push({
         text: "审判",
@@ -2068,6 +2154,16 @@ export function createGame(
 
   function gameOver(opts?: { quiet?: boolean }) {
     if (phase === "over") return;
+    if (recorder.live()) {
+      recorder.noteEvent("over", {
+        x: ball.x,
+        y: ball.y,
+        hs: hoop.side,
+        score,
+        combo: comboShown(),
+      });
+      endRecordingRun("over");
+    }
     phase = "over";
     paused = false;
     buzzer = false;
@@ -2477,6 +2573,14 @@ export function createGame(
       glassLand = true;
       tapLock = 0.03;
       audio.whoosh(0.5);
+      if (recorder.live()) {
+        recorder.noteTap(tapFromAi ? "ai" : "player", {
+          x: ball.x,
+          y: ball.y,
+          vx: ball.vx,
+          vy: ball.vy,
+        });
+      }
       emitHud();
       return;
     }
@@ -2504,6 +2608,14 @@ export function createGame(
     glassLand = true;
     tapLock = 0.03;
     audio.whoosh(0.5);
+    if (recorder.live()) {
+      recorder.noteTap(tapFromAi ? "ai" : "player", {
+        x: ball.x,
+        y: ball.y,
+        vx: ball.vx,
+        vy: ball.vy,
+      });
+    }
     emitHud();
   }
 
@@ -2555,6 +2667,15 @@ export function createGame(
   }
 
   function goTitle() {
+    if (recorder.live()) {
+      recorder.noteEvent("stop", {
+        x: ball.x,
+        y: ball.y,
+        score,
+        combo: comboShown(),
+      });
+      endRecordingRun("stop");
+    }
     phase = "title";
     paused = false;
     score = 0;
@@ -3267,8 +3388,11 @@ export function createGame(
 
     // Isolated auto-play: no-op when OFF. Taps the real shot path only.
     if (autoPlay.enabled() && autoPlay.tick(snapshotAiWorld(dt))) {
+      tapFromAi = true;
       tapJump();
+      tapFromAi = false;
     }
+    samplePlay();
   }
 
   function boardTravel() {
@@ -3647,6 +3771,14 @@ export function createGame(
       Math.abs(ball.vx) < 14 &&
       ball.vy >= 0;
     if (!exitLeft && !exitRight && !stuckOff) return;
+    if (recorder.live()) {
+      recorder.noteEvent("wrap", {
+        x: ball.x,
+        y: ball.y,
+        hs: hoop.side,
+        wrap: getBall(ballId).wrap === "height" ? "height" : "ground",
+      });
+    }
     // Wrap is not a miss: clear airborne so the post-wrap floor contact does not markShotMissed.
     shotAirborne = false;
     if (getBall(ballId).wrap === "height") {
@@ -3994,6 +4126,7 @@ export function createGame(
       refillShotClock();
       prisonShackleBest = Math.max(prisonShackleBest, streak);
       if (!ghost) nextHoop();
+      noteScoreRecord(ghost);
       emitHud();
       if (streak >= prisonTarget) enterPrisonFree(Math.max(prisonShackleBest, streak));
       return;
@@ -4236,6 +4369,7 @@ export function createGame(
       champIdleLeft = -1;
       // 肉鸽：绝杀进球若已达目标则过关，否则本关失败；经典模式仍直接结束
       if (isRogueMode() && rogueRun) {
+        noteScoreRecord(ghost);
         emitHud();
         if (!rogueRun.endless && rogueRun.stageScore >= rogueRun.target) {
           enterRogueSettle();
@@ -4244,6 +4378,7 @@ export function createGame(
         }
         return;
       }
+      noteScoreRecord(ghost);
       emitHud();
       gameOver({ quiet: true });
       return;
@@ -4280,6 +4415,7 @@ export function createGame(
       }
     }
     syncNinjaGhosts();
+    noteScoreRecord(ghost);
     emitHud();
     if (
       !ghost &&
@@ -4660,6 +4796,8 @@ export function createGame(
   const handle: GameHandle = {
     destroy() {
       running = false;
+      if (recorder.live()) endRecordingRun("stop");
+      recorder.reset();
       autoPlay.setEnabled(false);
       cancelAnimationFrame(raf);
       canvas.removeEventListener("pointerdown", onDown);
@@ -4802,6 +4940,29 @@ export function createGame(
       autoPlay.setEnabled(Boolean(on));
       emitHud();
     },
+    setRecording(on) {
+      if (on) {
+        recorder.setEnabled(true);
+        if (phase === "playing" && !recorder.live()) beginRecordingRun();
+      } else {
+        if (recorder.live()) {
+          recorder.noteEvent("stop", {
+            x: ball.x,
+            y: ball.y,
+            score,
+            combo: comboShown(),
+          });
+          endRecordingRun("stop");
+        } else {
+          recorder.downloadLast();
+        }
+        recorder.setEnabled(false);
+      }
+      emitHud();
+    },
+    downloadRecording() {
+      recorder.downloadLast();
+    },
     dev(cmd) {
       applyDev(cmd);
     },
@@ -4864,6 +5025,9 @@ export function createGame(
         autoPlay: autoPlay.enabled(),
         autoPlayReason: autoPlay.lastDecision()?.reason ?? null,
         autoPlayPolicy: autoPlay.lastDecision()?.policyId ?? null,
+        recording: recorder.enabled(),
+        recordingLive: recorder.live(),
+        recordingSamples: recorder.exportLive()?.samples.length ?? recorder.lastFile()?.samples.length ?? 0,
       };
     },
     tap: () => tapJump(),
@@ -4877,6 +5041,11 @@ export function createGame(
       autoPlay.setEnabled(Boolean(on));
       emitHud();
     },
+    setRecording: (on: boolean) => {
+      handle.setRecording(Boolean(on));
+    },
+    exportRecording: () => recorder.exportLive() ?? recorder.lastFile(),
+    downloadRecording: () => recorder.downloadLast(),
     setBall: (id: BallId) => applyBall(id),
     goTitle: () => goTitle(),
     setCombo(n: number) {

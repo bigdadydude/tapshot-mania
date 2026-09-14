@@ -17,6 +17,12 @@ its cooldown / last decision are cleared — manual play is unchanged.
 
 The toggle does not start a match. Title still needs a real start tap.
 
+## Hand-play recording
+
+**录制** lives in `src/game/record/` (chip next to 代打). Default OFF, session-only,
+JSON download on stop / game over. Field docs: `src/game/record/README.md`.
+Does not change how 代打 decides — capture now, fit tactics later.
+
 ## Physics feel → decisions (`feel.ts`)
 
 `tapJump()` **writes** `jumpVx` / `jumpVy` every tap. Policies should key off

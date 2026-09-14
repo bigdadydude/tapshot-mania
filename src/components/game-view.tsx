@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
-import { AudioLines, Bot, Music, Pause, Volume2, VolumeX } from "lucide-react";
+import { AudioLines, Bot, CircleDot, Music, Pause, Volume2, VolumeX } from "lucide-react";
 import { createGame, rankFor, GAME_REV, type GameHandle } from "@/game/engine";
 import { primeArt } from "@/game/art";
 import { DEFAULT_DEV, wantDevQuery } from "@/game/dev";
@@ -38,6 +38,7 @@ const idleHud: HudState = {
   prison: null,
   rogue: null,
   autoPlay: false,
+  recording: false,
 };
 
 type Menu = "none" | "pause" | "settings" | "gfx" | "sound";
@@ -257,6 +258,28 @@ export function GameView() {
               </span>
             </button>
             ) : null}
+            {hud.loadPct >= 1 &&
+            !hud.dev.on &&
+            menu === "none" &&
+            (hud.phase === "playing" || hud.phase === "title" || hud.phase === "over") ? (
+            <button
+              type="button"
+              className={cn(
+                "pointer-events-auto flex h-11 items-center gap-1.5 rounded-md border px-3",
+                hud.recording
+                  ? "border-accent bg-accent text-accent-fg"
+                  : "border-border bg-bg-elevated text-fg",
+              )}
+              onClick={() => gameRef.current?.setRecording(!hud.recording)}
+              aria-pressed={hud.recording}
+              aria-label={hud.recording ? "关闭对局录制" : "开启对局录制"}
+            >
+              <CircleDot className="size-4" />
+              <span className="text-xs font-medium tracking-wide">
+                {hud.recording ? "录制中" : "录制"}
+              </span>
+            </button>
+            ) : null}
             {hud.loadPct >= 1 && !hud.dev.on && hud.phase !== "over" ? (
             <button
               type="button"
@@ -309,7 +332,9 @@ export function GameView() {
           rogue={hud.playMode === "rogue" ? hud.rogue : null}
           ballId={hud.ballId}
           autoPlay={hud.autoPlay}
+          recording={hud.recording}
           onToggleAutoPlay={() => gameRef.current?.setAutoPlay(!hud.autoPlay)}
+          onToggleRecording={() => gameRef.current?.setRecording(!hud.recording)}
           onDismiss={hud.phase === "playing" ? resume : () => setMenu("none")}
           onRestart={restart}
           onSettings={() => setMenu("settings")}
@@ -340,7 +365,9 @@ export function GameView() {
         <SettingsHub
           showDev={hud.dev.unlocked}
           autoPlay={hud.autoPlay}
+          recording={hud.recording}
           onToggleAutoPlay={() => gameRef.current?.setAutoPlay(!hud.autoPlay)}
+          onToggleRecording={() => gameRef.current?.setRecording(!hud.recording)}
           onGfx={() => setMenu("gfx")}
           onSound={() => setMenu("sound")}
           onDev={() => {
@@ -1663,7 +1690,9 @@ function PauseMenu({
   rogue,
   ballId,
   autoPlay,
+  recording,
   onToggleAutoPlay,
+  onToggleRecording,
   onDismiss,
   onRestart,
   onSettings,
@@ -1675,7 +1704,9 @@ function PauseMenu({
   rogue: HudState["rogue"];
   ballId: BallId;
   autoPlay: boolean;
+  recording: boolean;
   onToggleAutoPlay: () => void;
+  onToggleRecording: () => void;
   onDismiss: () => void;
   onRestart: () => void;
   onSettings: () => void;
@@ -1807,10 +1838,11 @@ function PauseMenu({
             <p>被动饰品：{passiveOrns.length ? passiveOrns.join("、") : "无"}</p>
           </div>
         ) : null}
-        <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2">
           {canResume ? (
             <ToggleRow label="自动代打" on={autoPlay} onToggle={onToggleAutoPlay} />
           ) : null}
+          <ToggleRow label="录制对局" on={recording} onToggle={onToggleRecording} />
           <MenuBtn label="重新开始" onClick={onRestart} />
           {rogue && onEndRun ? (
             <MenuBtn label="结束游戏" onClick={onEndRun} />
@@ -1853,7 +1885,9 @@ function MenuBtn({
 function SettingsHub({
   showDev,
   autoPlay,
+  recording,
   onToggleAutoPlay,
+  onToggleRecording,
   onGfx,
   onSound,
   onDev,
@@ -1861,7 +1895,9 @@ function SettingsHub({
 }: {
   showDev: boolean;
   autoPlay: boolean;
+  recording: boolean;
   onToggleAutoPlay: () => void;
+  onToggleRecording: () => void;
   onGfx: () => void;
   onSound: () => void;
   onDev: () => void;
@@ -1875,6 +1911,10 @@ function SettingsHub({
           <ToggleRow label="自动代打" on={autoPlay} onToggle={onToggleAutoPlay} />
           <p className="px-1 pb-1 text-[11px] leading-relaxed text-subtle">
             局内 AI 持续投球（演示 / 挂机）。关闭后立即交还操作，不留代打状态。
+          </p>
+          <ToggleRow label="录制对局" on={recording} onToggle={onToggleRecording} />
+          <p className="px-1 pb-1 text-[11px] leading-relaxed text-subtle">
+            记下球与篮架轨迹、点击和进球事件。结束一局或关闭时下载 JSON。默认关，不影响手感。
           </p>
           <MenuBtn label="画面" onClick={onGfx} />
           <MenuBtn label="声音" onClick={onSound} />
