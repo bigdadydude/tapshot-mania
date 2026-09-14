@@ -214,37 +214,37 @@ export const glassPolicy: BallAiPolicy = {
     if (world.scored) return hold("already-scored");
     const current = helpers.predictCurrent(world);
     const next = helpers.predictTap(world);
-    if (confidentMake(world, current.scores) && current.swish) return hold("protect-swish");
-    if (confidentMake(world, current.scores)) return hold("protect-finish");
+    const aligned =
+      Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 0.88;
+    const droppingIn =
+      world.ball.vy > 48 &&
+      aligned &&
+      world.ball.y > world.hoop.y - world.ball.r * 0.6 &&
+      world.ball.y < world.hoop.y + world.hoop.inner * 1.2;
+    // Restitution is 0: holding a fake "make" on the tube sticks and shatters.
+    if (droppingIn && current.swish && current.scores) return hold("protect-swish");
+    if (droppingIn && current.scores) return hold("protect-finish");
 
-    // Restitution is 0 — never abstain airborne or wrap-height/default will
-    // mash jumpVy and the ball hangs in the sky.
     if (aboveRim(world) && !onFloor(world)) {
-      const dumping =
-        world.ball.vy > 36 &&
-        nearRim(world) &&
-        (next.scores || next.minHoopDist < world.hoop.inner * 1.35);
-      if (dumping) return tap("commit-make");
+      if (world.ball.vy > 36 && next.scores && (next.swish || nearRim(world))) {
+        return tap("commit-make");
+      }
       return hold("glass-settle");
     }
 
-    if (next.scores && next.swish) return tap("seek-swish");
-    if (next.scores) return tap("commit-make");
+    const pocket =
+      Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 1.7 + world.ball.r;
+    if (pocket && !onFloor(world)) {
+      if (next.scores && next.swish) return tap("seek-swish");
+      if (next.scores) return tap("commit-make");
+      if (world.ball.vy > 24 && aligned) return hold("glass-settle");
+      return hold("glass-settle");
+    }
+
     if (onFloor(world)) return tap("glass-launch");
-
-    const falling = world.ball.vy > 18;
-    const atRimHeight =
-      Math.abs(world.ball.y - world.hoop.y) < world.hoop.inner * 1.8;
-    if (falling && nearRim(world) && atRimHeight) return tap("commit-make");
-    if (falling && next.minHoopDist + 10 < current.minHoopDist) {
-      return tap("commit-closer");
-    }
-    if (clockPanic(world, 1.2) && (next.scores || falling)) return tap("shot-clock");
-
-    if (!onFloor(world) && world.ball.y > world.hoop.y + world.hoop.inner * 2.4) {
-      return tap("glass-launch");
-    }
-    return hold("glass-settle");
+    // Below the rim and not in the pocket: default mash climbs (glass grav
+    // 1.4 cannot reach the hoop from the floor in one tap).
+    return abstain("climb");
   },
 };
 

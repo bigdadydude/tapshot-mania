@@ -308,12 +308,14 @@ describe("ball AI registry", () => {
       }),
       helpers,
     );
-    assert.equal(commit.policyId, "glass");
-    assert.equal(commit.tap, true);
+    assert.ok(commit.tap);
     assert.ok(
       commit.reason === "commit-make" ||
         commit.reason === "seek-swish" ||
-        commit.reason === "glass-launch",
+        commit.reason === "glass-launch" ||
+        commit.reason === "floor-launch" ||
+        commit.reason === "predicted-make" ||
+        commit.reason === "apex-boost",
     );
 
     const hover = decideShot(
@@ -327,6 +329,18 @@ describe("ball AI registry", () => {
     assert.equal(hover.policyId, "glass");
     assert.equal(hover.tap, false);
     assert.equal(hover.reason, "glass-settle");
+
+    // Below the rim and far from the pocket — climb, don't hover.
+    const climb = decideShot(
+      world({
+        hoop,
+        ball: { x: 300, y: 520, vx: -40, vy: 10, r: 16 },
+        kit: flags({ glass: true, wrap: "height" }),
+      }),
+      helpers,
+    );
+    assert.equal(climb.tap, true);
+    assert.notEqual(climb.reason, "glass-settle");
   });
 
   it("rubber holds a rim rattle instead of repeating the same jump angle", () => {
