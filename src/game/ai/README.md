@@ -69,9 +69,9 @@ The default policy covers plain kinematics for anything that only changes jump /
 - **Banks:** the kinematic guess includes a court-facing backboard bounce. In the release band, a poor direct thread on the glass side becomes `predicted-bank` (擦板) instead of a hold.
 - **Climb / release:** mash while below the basket, release in the band under the rim, let-drop above it so jump resets cannot orbit. The watchdog also refuses to mash from above the rim.
 
-`glass` (priority 70) still protects a real dropping swish, but **never abstains airborne** — it `commit-make` / `glass-launch` / `glass-settle` instead of deferring to wrap-height (which would float it). `wrap-height` (rubber) **lets a rim rattle resolve** (`let-rattle` / `wait-spacing`) instead of repeating the same `jumpVx`/`jumpVy`, and only retakes once a spaced bank/swish window opens.
+`glass` (priority 70) still protects a real dropping swish, but **never mashed a fake finish on the tube** (0 restitution sticks and shatters). Below the rim it **abstains so default can climb** (glass gravity cannot reach from the floor in one tap), then `commit-make` / `glass-settle` in the pocket. `wrap-height` (rubber) **lets a rim rattle resolve** (`let-rattle` / `wait-spacing`) instead of repeating the same `jumpVx`/`jumpVy`, and only retakes once a spaced bank/swish window opens.
 
-Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, steer in a black hole, or (rubber) refuse a bad rim spam. Glass must not abstain in the air.
+Specialized policies should `abstain` unless they need to gather a pickup, protect a glass swish, steer in a black hole, or (rubber) refuse a bad rim spam. Glass must not freeze on the rim.
 
 ## Formal menu later
 

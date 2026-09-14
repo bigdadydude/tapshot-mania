@@ -221,29 +221,26 @@ export const glassPolicy: BallAiPolicy = {
       aligned &&
       world.ball.y > world.hoop.y - world.ball.r * 0.6 &&
       world.ball.y < world.hoop.y + world.hoop.inner * 1.2;
-    // Restitution is 0: holding a fake "make" on the tube sticks and shatters.
     if (droppingIn && current.swish && current.scores) return hold("protect-swish");
     if (droppingIn && current.scores) return hold("protect-finish");
 
-    if (aboveRim(world) && !onFloor(world)) {
-      if (world.ball.vy > 36 && next.scores && (next.swish || nearRim(world))) {
+    // jumpVy from above the rim is the hover loop: fall → tap → climb → repeat.
+    if (aboveRim(world) && !onFloor(world)) return hold("glass-settle");
+
+    const pocket =
+      Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 1.7 + world.ball.r;
+    if (pocket && !onFloor(world)) {
+      // Already falling through the pocket — committing means NOT tapping.
+      if (world.ball.vy > 22) return hold("glass-settle");
+      if (next.scores && next.swish) return tap("seek-swish");
+      if (next.scores) return tap("commit-make");
+      if (Math.abs(world.ball.vy) < 30 && world.ball.y >= world.hoop.y - world.ball.r) {
         return tap("commit-make");
       }
       return hold("glass-settle");
     }
 
-    const pocket =
-      Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 1.7 + world.ball.r;
-    if (pocket && !onFloor(world)) {
-      if (next.scores && next.swish) return tap("seek-swish");
-      if (next.scores) return tap("commit-make");
-      if (world.ball.vy > 24 && aligned) return hold("glass-settle");
-      return hold("glass-settle");
-    }
-
     if (onFloor(world)) return tap("glass-launch");
-    // Below the rim and not in the pocket: default mash climbs (glass grav
-    // 1.4 cannot reach the hoop from the floor in one tap).
     return abstain("climb");
   },
 };
