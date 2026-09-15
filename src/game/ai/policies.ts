@@ -482,15 +482,10 @@ export const glassPolicy: BallAiPolicy = {
     if (next.scores && next.swish && !(droppingIn && current.swish)) {
       return tap("seek-swish");
     }
-    // Rim finish is OK with HP to spare (human 52/117) — not when fragile.
-    if (
-      next.scores &&
-      !next.bank &&
-      !fragile &&
-      !fallingInPocket
-    ) {
-      return tap("commit-make");
-    }
+    // Do NOT commit-make a rim. tapJump writes full jumpVx — that's 打铁 −2
+    // and is why the first commit pass shattered at combo 25. Human finishes
+    // by dropping (settle) after the approach taps. Rim finishes still
+    // happen from a held drop; they just aren't slammed.
     if (comboPressure(world) && !pocket && !aboveRim(world) && !droppingIn) {
       return tap("pace-boost");
     }
