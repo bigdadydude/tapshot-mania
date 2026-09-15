@@ -136,12 +136,13 @@ function inboundGlass(
 ): boolean {
   if (onFloor(world) || pastBoard(world) || world.onApproachSide) return false;
   if (world.hitRim && onInnerRim(world)) return false;
-  // Long-range willBoard is a guess — holding it from mid-court freezes
-  // ninja recatch / far-climb. Only commit in the glass pocket.
-  if (!nearBoard(world) && !atHalfBoard(world)) return false;
+  // atHalfBoard is a Y band across the whole court — without an X gate a
+  // ninja climb at board height froze as flight-scores / commit-glass.
+  const dist = Math.abs(boardFaceX(world) - world.ball.x);
+  const inPocket = nearBoard(world) || (atHalfBoard(world) && dist < world.hoop.inner * 3.2);
+  if (!inPocket) return false;
   if (current.willBoard) return true;
   if (current.scores && (current.bank || current.swish)) return true;
-  const dist = Math.abs(boardFaceX(world) - world.ball.x);
   const close = closingOnBoard(world);
   if (bounceOpening(world)) return false;
   // Already overlapping the face — a tap writes through the glass.
@@ -161,10 +162,13 @@ function wantsBankCut(
 ): boolean {
   if (onFloor(world) || pastBoard(world) || world.onApproachSide) return false;
   if (world.hitRim || world.rimHits >= 1) return false;
+  // Climbing: a tap writes another full jumpVy and sails over the board.
+  if (world.ball.vy < -24) return false;
   if (inboundGlass(world, current)) return false;
   if (!inBankBand(world) && !atHalfBoard(world)) return false;
   const dist = Math.abs(boardFaceX(world) - world.ball.x);
   if (dist > world.world.w * 0.38) return false;
+  if (!nearBoard(world) && dist > world.hoop.inner * 3.2) return false;
   return next.willBoard || (next.scores && next.bank);
 }
 
@@ -588,7 +592,7 @@ export const glassPolicy: BallAiPolicy = {
     if (next.scores && next.swish && !(droppingIn && current.swish)) {
       return tap("seek-swish");
     }
-    if (!fragile && current.willBoard && !onFloor(world) && (nearBoard(world) || atHalfBoard(world))) {
+    if (!fragile && current.willBoard && !onFloor(world) && nearBoard(world)) {
       return hold("commit-glass");
     }
     if (!fragile && wantsBankCut(world, current, next)) {

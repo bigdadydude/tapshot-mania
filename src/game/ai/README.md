@@ -91,7 +91,7 @@ points into the hole.
 
 Playbook mapping (PO):
 
-1. Bank → hold if `predictCurrent.willBoard` (or a scoring bank/swish, or already overlapping the face). `bank-cut` tap only when that current path misses **and** `predictTap.willBoard` — `tapJump` always writes full jumpVx, so a tap on a live glass flight overshoots, and closing-speed-only holds froze makeable steep cuts.
+1. Bank → hold if `predictCurrent.willBoard` **in the glass pocket** (near the board in X, not merely at half-board height). `bank-cut` tap only when that current path misses **and** `predictTap.willBoard` **and** the ball is not still climbing (`vy > -24`). `tapJump` always writes full jumpVx/jumpVy, so a tap on a live glass flight overshoots, a Y-only half-board hold froze ninja climbs as `flight-scores`, and closing-speed-only holds froze makeable steep cuts.
 2. 刷马桶 → `rim-swirl`
 3. Under-rim: `tube-up` while rising through the net; `let-drop` if too low; `exit-space` when opening
 4. High bounce → `pop-away`

@@ -611,6 +611,33 @@ describe("ball AI registry", () => {
     assert.notEqual(n.reason, "shot-clock");
   });
 
+  it("does not freeze a ninja climb at half-board height far from the glass", () => {
+    const hoop = {
+      x: 28 + 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: -1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const climb = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: -390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      combo: 2,
+      streak: 2,
+      comboCounting: true,
+      ball: { x: 246, y: 281, vx: -355, vy: -699, r: 19.5 },
+    });
+    const d = decideShot(climb, helpers);
+    assert.notEqual(d.reason, "flight-scores");
+    assert.notEqual(d.reason, "commit-glass");
+    assert.notEqual(d.reason, "bank-cut");
+  });
+
   it("ninja lets a miss under the rim fall instead of jumping over", () => {
     const w = 390;
     const hoop = {
