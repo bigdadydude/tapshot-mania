@@ -1,8 +1,10 @@
 import { registerBallAiPolicy } from "./registry.ts";
 import { comboPaceLimit, releasePocket, shotFeel } from "./feel.ts";
+import { demoPriors } from "./demo-priors.ts";
 import type { AiHelpers, AiVote, AiWorld, BallAiPolicy } from "./types.ts";
 
 export { comboPaceLimit, shotFeel } from "./feel.ts";
+export { demoPriors } from "./demo-priors.ts";
 
 function tap(reason: string): AiVote {
   return { action: "tap", reason };
@@ -163,8 +165,8 @@ function wantsBankCut(
   if (onFloor(world) || pastBoard(world) || world.onApproachSide) return false;
   if (world.hitRim || world.rimHits >= 1) return false;
   if (current.scores) return false;
-  // Ninja / long jumpFwd: missing a cut beats flying over the board.
-  if (longJumpFwd(world)) return false;
+  // Demo 310: ~2 taps then ride. Oral bank-cut is demoted on long jumpFwd / glass.
+  if (!demoPriors(world).bankCutTap) return false;
   // Climbing: a tap writes another full jumpVy and sails over the board.
   if (world.ball.vy < -24) return false;
   if (inboundGlass(world, current)) return false;
@@ -189,10 +191,6 @@ function nearFinishPocket(world: AiWorld): boolean {
   return true;
 }
 
-/**
- * ZERO taps: current flight already makes, or is clearly inbound to glass/rim.
- * Long jumpFwd prefers a missed cut over an overshoot tap.
- */
 /**
  * ZERO taps: current flight already makes, or is clearly inbound to glass/rim.
  * Long jumpFwd prefers a missed cut over an overshoot tap.
@@ -384,7 +382,13 @@ function floorRecover(world: AiWorld, next: { scores: boolean; bank: boolean; sw
   if (clockPanic(world, 1.7) || comboPressure(world)) return tap("floor-launch");
   if (next.scores && next.swish) return tap("floor-launch");
   const close = Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.4;
-  if (next.scores && nearBoard(world) && next.bank && !longTravel(world)) {
+  if (
+    next.scores &&
+    nearBoard(world) &&
+    next.bank &&
+    !longTravel(world) &&
+    demoPriors(world).bankCutTap
+  ) {
     return tap("predicted-bank");
   }
   const recover = messyContact(world) || world.shotMissed;
@@ -452,7 +456,13 @@ export const defaultPolicy: BallAiPolicy = {
     if (inRelease) {
       if (pastBoard(world) && world.ball.vy > 8) return tap("wrap-boost");
       const save = helpers.predictTap(world);
-      if (save.scores && save.swish && !current.scores && world.ball.vy > 12) {
+      if (
+        demoPriors(world).huntSwish &&
+        save.scores &&
+        save.swish &&
+        !current.scores &&
+        world.ball.vy > 12
+      ) {
         return tap("predicted-make");
       }
       if (
@@ -489,23 +499,27 @@ export const defaultPolicy: BallAiPolicy = {
     }
 
     const next = helpers.predictTap(world);
+    const demo = demoPriors(world);
     if (mustHoldFinish(world, current) || (longJumpFwd(world) && nearFinishPocket(world))) {
       return hold(current.scores ? "flight-scores" : "protect-finish");
     }
     if (inboundGlass(world, current)) {
       return hold(current.scores ? "flight-scores" : "commit-glass");
     }
-    if (next.scores && next.swish) return tap("predicted-make");
-    if (next.scores && next.bank && nearBoard(world) && inBankBand(world)) {
+    // Oral swish-hunt / bank-cut: ninja 310 is 0 swishes and ~2 taps near finish.
+    if (demo.huntSwish && next.scores && next.swish) return tap("predicted-make");
+    if (demo.bankCutTap && next.scores && next.bank && nearBoard(world) && inBankBand(world)) {
       return tap("bank-cut");
     }
-    if (next.scores && !next.bank) return tap("predicted-make");
-    if (next.scores && !longTravel(world) && !world.hitBoard) {
+    if (next.scores && !next.bank && !(longJumpFwd(world) && closeToHoop(world))) {
+      return tap("predicted-make");
+    }
+    if (next.scores && !longTravel(world) && !world.hitBoard && demo.bankCutTap) {
       return tap(scoreTapReason(next));
     }
 
-    // tapJump writes full jumpVx. Ride only a *descending* long-jump
-    // arc — rising still needs apex-boost or the 1.2 jump tunnels under.
+    // tapJump writes full jumpVx. Ride a descending long-jump arc.
+    // Oral apex-boost after launch is demoted (demo: 2 taps then ride).
     if (
       longJumpFwd(world) &&
       flyingAtHoop(world) &&
@@ -516,7 +530,12 @@ export const defaultPolicy: BallAiPolicy = {
       return hold("ride-flight");
     }
 
-    if (clockPanic(world, 1.6) || comboPressure(world)) return tap("shot-clock");
+    if (
+      (clockPanic(world, 1.6) || comboPressure(world)) &&
+      !(longJumpFwd(world) && closeToHoop(world) && !demoPriors(world).comboPokeNearHoop)
+    ) {
+      return tap("shot-clock");
+    }
 
     if (world.ballHidden && world.onApproachSide) return tap("approach-enter");
     if (onFloor(world) || (lowBounce(world) && (world.shotMissed || messyContact(world)))) {
@@ -556,6 +575,14 @@ export const defaultPolicy: BallAiPolicy = {
       ) {
         return hold("let-drop");
       }
+      // Oral apex-boost: ninja 310 is early-jump + recatch, then ride.
+      // Far from the hoop the 2nd tap is still early-jump, not a pocket poke.
+      if (!demoPriors(world).extraClimbTaps) {
+        if (closeToHoop(world) || nearFinishPocket(world) || underCylinder(world)) {
+          return hold("let-drop");
+        }
+        return tap("early-jump");
+      }
       return tap("apex-boost");
     }
 
@@ -563,7 +590,7 @@ export const defaultPolicy: BallAiPolicy = {
       return tap("wrap-approach");
     }
 
-    if (comboPressure(world)) return tap("pace-boost");
+    if (comboPressure(world) && demoPriors(world).comboPokeNearHoop) return tap("pace-boost");
     return hold("wait-window");
   },
 };

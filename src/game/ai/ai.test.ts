@@ -13,6 +13,7 @@ import {
   resetBuiltInInstallForTests,
   comboPaceLimit,
   shotFeel,
+  demoPriors,
 } from "./policies.ts";
 import { createAiController, AI_TAP_INTERVAL, AI_WATCHDOG } from "./controller.ts";
 import { predictCurrent, predictTap } from "./predict.ts";
@@ -666,6 +667,50 @@ describe("ball AI registry", () => {
     assert.equal(d.tap, false);
     assert.notEqual(d.reason, "bank-cut");
     assert.notEqual(d.reason, "apex-boost");
+  });
+
+  it("demo priors demote oral bank-cut / swish-hunt / extra climb on ninja", () => {
+    const ninja = world({
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+    });
+    const n = demoPriors(ninja);
+    assert.equal(n.bankCutTap, false);
+    assert.equal(n.huntSwish, false);
+    assert.equal(n.extraClimbTaps, false);
+    assert.equal(n.comboPokeNearHoop, false);
+    assert.equal(n.holdInboundBank, true);
+    assert.equal(n.wrapRecovery, true);
+    assert.equal(n.popAway, true);
+    assert.equal(demoPriors(world({ jumpVx: 390 * 0.76 * 0.95 })).bankCutTap, true);
+    assert.equal(demoPriors(world({ kit: flags({ glass: true, wrap: "height" }), ballMul: 0 })).bankCutTap, false);
+  });
+
+  it("ninja does not apex-boost a below-rim launch (demo: early-jump then ride)", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const climb = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 150, y: hoop.y + 70, vx: 120, vy: -60, r: 19.5 },
+    });
+    const d = decideShot(climb, helpers);
+    assert.notEqual(d.reason, "apex-boost");
+    assert.notEqual(d.reason, "bank-cut");
+    assert.notEqual(d.reason, "predicted-make");
+    assert.notEqual(d.reason, "shot-clock");
   });
 
   it("does not freeze a ninja climb at half-board height far from the glass", () => {
