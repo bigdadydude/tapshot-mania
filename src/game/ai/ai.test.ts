@@ -495,7 +495,7 @@ describe("ball AI registry", () => {
       hoopMul: 0.8,
       boardFric: 0.7,
       shotOpen: true,
-      ball: { x: hoop.x - 210, y: hoop.y + 170, vx: 280, vy: -300, r: 19.5 },
+      ball: { x: hoop.x - 210, y: hoop.y + 170, vx: 280, vy: -150, r: 19.5 },
     });
     const d = decideShot(mid, helpers);
     assert.equal(d.tap, true);
@@ -541,7 +541,7 @@ describe("ball AI registry", () => {
       hoopMul: 0.8,
       boardFric: 0.7,
       shotOpen: true,
-      ball: { x: hoop.x - 120, y: hoop.y + 150, vx: 280, vy: -300, r: 19.5 },
+      ball: { x: hoop.x - 120, y: hoop.y + 150, vx: 280, vy: -150, r: 19.5 },
     });
     const d = decideShot(mid, helpers);
     assert.equal(d.tap, true);
@@ -615,7 +615,7 @@ describe("ball AI registry", () => {
       hoopMul: 0.8,
       boardFric: 0.7,
       shotOpen: true,
-      ball: { x: hoop.x - 224, y: hoop.y + 180, vx: 36, vy: -280, r: 19.5 },
+      ball: { x: hoop.x - 224, y: hoop.y + 180, vx: 36, vy: -150, r: 19.5 },
     });
     const d = decideShot(rising, helpers);
     assert.equal(d.tap, true);

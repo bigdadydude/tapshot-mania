@@ -594,10 +594,11 @@ export const physPolicy: BallAiPolicy = {
     const launchFar = feel.longJump ? dx > world.world.w * 0.5 : dx > world.world.w * 0.48;
     const recatchFar = feel.longJump ? dx > world.world.w * 0.28 : far;
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
-    // 2nd tap: climb has slowed (vy decayed from full jumpVy). Tapping at
-    // full jumpVy every 80ms was a 3rd/4th reset that tunneled under the rim.
+    // 2nd tap is near apex (human ~2 taps). Half-jumpVy recatch was too
+    // early: the extra jump then overshot the rim into a wrap. Near-apex
+    // from ~dx 110–160 lands in the glass pocket for a bank.
     const climbSlowing =
-      world.ball.vy < -20 && world.ball.vy > world.jumpVy * 0.5;
+      world.ball.vy < -12 && world.ball.vy > world.jumpVy * 0.22;
     const launched =
       flyingAtHoop(world) && Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55;
 

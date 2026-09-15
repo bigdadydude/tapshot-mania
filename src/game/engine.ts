@@ -51,7 +51,7 @@ import {
 import { createAiController, flagsFromKit } from "./ai";
 import { createPlayRecorder } from "./record";
 
-export const GAME_REV = 349;
+export const GAME_REV = 350;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
