@@ -41,15 +41,18 @@ those numbers (and elasticity), not `ballId`. `shotFeel(world)` derives:
 | `pMul("floor")` | `floorMul` | Floor pop energy |
 | `kit.wrap` | `groundWrap` | 44 px/s crawl after an overshoot |
 
-**Combo pace** (window is 4s): classic ~1.72; **heat / frost** ~1.48 (human lava
-678 / 28, frost 1339 / 36). **Long jumpFwd (ninja)** is **tighter** (~1.08s) —
+**Combo pace** (window is 4s): classic ~1.72; **heat / frost** ~1.36 (sep15
+gold lava 1264 / 43, frost 1985 / 50; older 678 / 28, 1339 / 36). **Long
+jumpFwd (ninja)** is **tighter** (~1.08s) —
 a human 1-min 310 (combo 28, ~5.0 pts/s) had a median make gap of ~1.05s,
 first-tap |dx| ~237 (p25–p75 ≈ 195–290), ~2 taps before a make, and **no
 swishes** (bank 29 / rim 17). Elite classic 2641 / 138 (~0.64s/make, rim+bank)
-and 1324 / 97 (almost all banks) are the decaying-clock bar. Classic 360 was
-~1.35s. The old 2.6s ninja wait sat under the rim. `carry-flight` / `ride-flight`
-still block combo-clock mash on a live arc; a dying combo on a parked miss
-under the rim is `wrap-escape`, not a 1–13 pt drought.
+and 1324 / 97 (almost all banks) are the decaying-clock bar. Sep15 gold
+classic ninja **1411 / 97** and **1196 / 85** are the opener bar (first make
+arms the clock). Classic 360 was ~1.35s. The old 2.6s ninja wait sat under
+the rim. `carry-flight` / `ride-flight` still block combo-clock mash on a
+live arc; a dying combo on a parked miss under the rim is `wrap-escape`,
+not a 1–13 pt drought.
 **Glass (bounce 0)** is also tight (~1.24s) — human classic 10156 / combo 117
 and 5992 / 88 had a ~1.29s gap and ~3.6 short taps from |dx| ~296 (rim / swish /
 bank mix).
@@ -65,7 +68,7 @@ Ball-id / skill-flag votes are only for skills that are not a number:
 ## Policy hierarchy (hard)
 
 1. **Physics hard limits** — `tapJump` always writes full `jumpVx` / `jumpVy`. If the current flight already scores **or** is inbound in the finish pocket on long jumpFwd → **ZERO taps** (`finishPocketLocked` / `protect-finish` / `overshoot-cool` on ninja). Do not weaken these.
-2. **Human JSON demos** — mined stats in `demo-priors.ts` (ninja 310 / 2641 / 1324, glass 10156 / 5992, anti packs). Re-mine with `node --experimental-strip-types scripts/summarize-recording.mjs <file.json>` from packs under `/workspace/human-recordings/` when present. Demo numbers win.
+2. **Human JSON demos** — mined stats in `demo-priors.ts` (ninja 310 / 2641 / 1324 / sep15 gold 1411/97 + 1196/85, frost 1985/50, lava 1264/43, glass 10156 / 5992, anti packs). Re-mine with `node --experimental-strip-types scripts/summarize-recording.mjs <file.json>` from packs under `/workspace/human-recordings/` when present. The summary prints an **opener** line (first-make time, first-tap |dx|, taps/wraps before first score). Demo numbers win.
 3. **Oral 8-tactic playbook** — **soft hints only**. When it conflicts with (1) or (2), demote or disable.
 
 The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
@@ -84,7 +87,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 ### Oral tactics kept (demos agree)
 
 - Half-board / steep **holds** when the current path already hits glass (`holdInboundBank`)
-- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap, do not wrap-escape the same pose or full-jump from off-screen (`wrap-loop`). A parked ball *inside* the launch band still wrap-escapes to the far side (blocking that froze classic at 0). Prefer one `wrap-bank` when a *close* reset would kiss glass. Demo-band launch + too-low recatch remain the attack. After wrap, wait for the 195–265 band before the next floor jump so recatch geometry still works — but after two empty wraps, or once the classic clock is live, launch anyway rather than sitting until timeout.
+- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap, do not wrap-escape the same pose or full-jump from off-screen (`wrap-loop`). A parked ball *inside* the launch band still wrap-escapes to the far side (blocking that froze classic at 0). Prefer one `wrap-bank` when a *close* reset would kiss glass. Demo-band launch + too-low recatch remain the attack. After wrap, wait for the opener band (~195–250, ≲0.64w) before the next floor jump so recatch geometry still works. Do **not** impatient-jump from ≳0.64w after empty wraps — that peaks past recatch and is the all-zero classic (clock never arms). Once the ball is *in* the opener band, two empty wraps or a live clock may still force the floor launch.
 - `hole-spam` / `hole-ride` after the hole opens (anti packs)
 - `pop-away` on a hot bounce
 - Glass `seek-swish` (+4 HP) and drop-finish (10156 / 5992)
@@ -104,7 +107,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `exit-space` | Under-rim but opening court — let spacing grow, then jump back | under + bounce away |
 | `pop-away` | Elastic pop near the rim — let spacing open, then re-attack | `hotBounce` / `hoopRest` |
 | `wrap-escape` | Stuck under the rim: tap/wrap to the far side (穿屏) | `longJump` or `slipperyGlass` |
-| `early-jump` | Far floor launch (`|dx|` ~195–265; wait while crawling in from farther), then recatch near a too-low apex after flying in (`|dx|` ~110–133) so the reset peaks at the rim | `longJump` + dx / vy |
+| `early-jump` | Far floor launch (`|dx|` ~195–250; wait while crawling in from farther), then recatch near a too-low apex after flying in (`|dx|` ~110–133) so the reset peaks at the rim | `longJump` + dx / vy |
 | `far-climb` | Distant rapid taps so the ball falls near **90°** | far + rising, not `longJump` |
 | `ride-flight` | Descending live arc on a long jump — don't poke | `longJump` + `vy > 0` |
 | `carry-flight` | Already flying at the hoop while still rising at jump speed — don't reset `jumpVx` | `longJump` + `flyingAtHoop` |
@@ -130,7 +133,7 @@ Oral mapping (soft; demoted rows are in the table above):
 7. Long jumpFwd: floor/far `early-jump` → `carry-flight` → one recatch (`tooLowApex`) → `ride-flight`. No apex-boost / bank-cut / combo poke near finish.
 8. Black hole → gather while scoring; `hole-spam` / `hole-ride` once open
 
-Human ninja **1-min 310** (62s, combo 28, ~5.0 pts/s): bank 29 / rim 17 / swish 0. Elite classic **2641 / 138** (88s, rim+bank) and **1324 / 97** (79s, mostly banks). Summarize more demos with `node --experimental-strip-types scripts/summarize-recording.mjs <file.json>`.
+Human ninja **1-min 310** (62s, combo 28, ~5.0 pts/s): bank 29 / rim 17 / swish 0. Elite classic **2641 / 138** (88s, rim+bank) and **1324 / 97** (79s, mostly banks). Sep15 gold classic: ninja **1411 / 97**, **1196 / 85**, **660 / 65**, **502 / 53**; frost **1985 / 50**; lava **1264 / 43**. Finishes mostly bank then rim. Summarize more demos with `node --experimental-strip-types scripts/summarize-recording.mjs <file.json>`.
 Human ninja classic 360 (101.9s, 3.5 pts/s): bank ~58% / rim ~33% / swish ~9%.
 
 ## Adding a new ball policy

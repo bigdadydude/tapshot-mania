@@ -1,10 +1,10 @@
 import { registerBallAiPolicy } from "./registry.ts";
 import { comboPaceLimit, releasePocket, shotFeel } from "./feel.ts";
-import { demoPriors } from "./demo-priors.ts";
+import { demoPriors, NINJA_OPENER } from "./demo-priors.ts";
 import type { AiHelpers, AiVote, AiWorld, BallAiPolicy } from "./types.ts";
 
 export { comboPaceLimit, shotFeel } from "./feel.ts";
-export { demoPriors } from "./demo-priors.ts";
+export { demoPriors, NINJA_OPENER } from "./demo-priors.ts";
 
 function tap(reason: string): AiVote {
   return { action: "tap", reason };
@@ -296,7 +296,10 @@ function ninjaBandRecatch(
   // Apex travel ~129px: recatch in ~110–133 so the reset peaks at the rim.
   // The live too-low frame is ~121 after a 230 launch; 0.36w tapped at 133
   // and the 2nd jump hit iron on the way up.
-  return dx > world.world.w * 0.28 && dx < world.world.w * 0.34;
+  return (
+    dx > world.world.w * NINJA_OPENER.recatchMin &&
+    dx < world.world.w * NINJA_OPENER.recatchMax
+  );
 }
 
 /**
@@ -895,10 +898,11 @@ export const physPolicy: BallAiPolicy = {
     const far = feel.longJump
       ? dx > world.world.w * 0.5
       : dx > world.world.w * 0.38 * hangScale;
-    // Human p25–p75 |dx| ≈ 195–290. Apex travel ~129px: jump from ≳0.68w
-    // (~265) peaks too far for the recatch window.
+    // Sep15 gold openers (1411/97, 1196/85): first tap |dx| ~237 (spawn).
+    // Apex travel ~129px: jump from ≳0.64w (~250) peaks outside recatch.
     const launchFar = feel.longJump
-      ? dx > world.world.w * 0.5 && dx < world.world.w * 0.68
+      ? dx > world.world.w * NINJA_OPENER.launchMin &&
+        dx < world.world.w * NINJA_OPENER.launchMax
       : dx > world.world.w * 0.48;
     const crawlingIn = (world.hoop.x - world.ball.x) * world.ball.vx > 12;
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
@@ -999,14 +1003,15 @@ export const physPolicy: BallAiPolicy = {
         const spd = Math.hypot(world.ball.vx, world.ball.vy);
         if (spd < 78) return tap("wrap-escape");
       }
-      // After a wrap the ball rolls in from ~0.76w. Wait until the 195–265
-      // band so the 2nd tap can still recatch at the too-low apex.
+      // After a wrap the ball rolls in from ~0.76w. Wait until the opener
+      // band so the 2nd tap can still recatch at the too-low apex. Jumping
+      // from ≳0.64w is the 26-wrap classic zero (clock never arms).
       if (
         feel.longJump &&
         onFloor(world) &&
         !world.onApproachSide &&
         !world.ballHidden &&
-        dx >= world.world.w * 0.68 &&
+        dx >= world.world.w * NINJA_OPENER.launchMax &&
         crawlingIn
       ) {
         return hold("wait-window");
@@ -1068,7 +1073,7 @@ export const physPolicy: BallAiPolicy = {
     }
 
     // Slightly long jumpFwd (heat 1.0): last apex in a wider pocket wraps.
-    // Human lava 678 / 28 — don't sit that hold after combo pace elapses.
+    // Human lava 1264 / 43 (678 / 28) — don't sit that hold after combo pace.
     if (
       feel.jumpFwd >= 0.98 &&
       !feel.longJump &&
@@ -1111,7 +1116,7 @@ export const frostPolicy: BallAiPolicy = {
       if (aboveRim(world) && !onFloor(world)) return hold("chain-wait");
       if (onFloor(world) || lowBounce(world)) {
         const spd = Math.hypot(world.ball.vx, world.ball.vy);
-        // Frost 1339 / 36: don't idle a frozen stand after combo pace.
+        // Frost 1985 / 50 (1339 / 36): don't idle a frozen stand after combo pace.
         if (onFloor(world) && (spd < 90 || comboPressure(world))) return tap("reset-boost");
         return hold("floor-bounce");
       }

@@ -1,6 +1,7 @@
 import { predictCurrent, predictTap } from "./predict.ts";
 import { decideShot } from "./registry.ts";
 import { comboPaceLimit, finishPocketLocked, installBuiltInBallAiPolicies } from "./policies.ts";
+import { NINJA_OPENER } from "./demo-priors.ts";
 import { shotFeel } from "./feel.ts";
 import type { AiDecision, AiWorld } from "./types.ts";
 
@@ -262,8 +263,8 @@ export function createAiController(): AiController {
       const demoRecatch =
         recoverTap &&
         !airSpam &&
-        dx > world.world.w * 0.28 &&
-        dx < world.world.w * 0.34;
+        dx > world.world.w * NINJA_OPENER.recatchMin &&
+        dx < world.world.w * NINJA_OPENER.recatchMax;
       // Break-glass only: off-screen / identical pose / extra jump-speed tap.
       // Demo-band launch + too-low recatch stay the attack, even after a graze.
       let wrapLoop =
@@ -325,19 +326,22 @@ export function createAiController(): AiController {
       const thaw = grounded && sitHold > 2.4 && !farRestart;
       if (thaw && (wantBoardTap || !persistShot)) wrapLoop = false;
       const forceBank = wantBoardTap;
-      // After two empty wraps, or once classic clock is live, don't spend
-      // the shot sitting in wait-window on a dying far-side crawl.
+      // After two empty wraps, or once classic clock is live, don't sit in
+      // the opener band. Never jump from ≳launchMax — that peaks outside
+      // recatch and is the 26-wrap zero (clock never arms).
       const clockLive = world.timerArmed && !world.buzzer && !world.timeUp;
+      const inOpenerBand =
+        dx > world.world.w * NINJA_OPENER.launchMin &&
+        dx < world.world.w * NINJA_OPENER.launchMax;
       const forceLaunch =
         longJump &&
         grounded &&
         !farRestart &&
         !world.onApproachSide &&
         !world.ballHidden &&
-        dx > world.world.w * 0.5 &&
+        inOpenerBand &&
         (fruitlessWraps >= 2 || clockLive) &&
-        (decision.reason === "wait-window" ||
-          (!decision.tap && dx >= world.world.w * 0.68));
+        (decision.reason === "wait-window" || !decision.tap);
       if (forceLaunch) wrapLoop = false;
       if (decision.tap || forceBank || forceLaunch) {
         // Long jumpFwd near glass/rim: ZERO extra taps. bank-cut / apex /
@@ -415,7 +419,7 @@ export function createAiController(): AiController {
         !farRestart &&
         !world.onApproachSide &&
         !world.ballHidden &&
-        dx >= world.world.w * 0.68 &&
+        dx >= world.world.w * NINJA_OPENER.launchMax &&
         (world.hoop.x - world.ball.x) * world.ball.vx > 12;
       if (
         world.scored ||

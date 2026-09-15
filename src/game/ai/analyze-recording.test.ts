@@ -49,6 +49,13 @@ describe("recording analyzer", () => {
     assert.equal(s.tapsInWindowBeforeMake[0], 2);
     assert.ok(s.medianBoardYRatio != null && s.medianBoardYRatio > 0.8);
     assert.equal(s.playerTaps, 2);
+    assert.ok(s.opener);
+    assert.equal(s.opener.firstFinish, "bank");
+    assert.ok(s.opener.firstScoreT > 1.3 && s.opener.firstScoreT < 1.5);
+    assert.equal(s.opener.tapsBeforeFirstScore, 2);
+    assert.equal(s.opener.wrapsBeforeFirstScore, 0);
+    assert.equal(s.opener.banksBeforeFirstScore, 1);
+    assert.ok(s.opener.firstTapDx != null && s.opener.firstTapDx > 220);
   });
 
   it("reads a v2 pack as its last session and lists every game", () => {

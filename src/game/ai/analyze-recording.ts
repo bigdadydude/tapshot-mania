@@ -35,6 +35,22 @@ export type RecordingSummary = {
   holeCloses: number;
   antiOrbSamples: number;
   antiIds: number[];
+  /** First-make geometry. Classic ninja crisis: clock never arms without this. */
+  opener: RecordingOpener | null;
+};
+
+export type RecordingOpener = {
+  firstScoreT: number;
+  firstFinish: "bank" | "rim" | "swish" | "other";
+  /** First tap of the session vs hoop x. */
+  firstTapDx: number | null;
+  /** First tap in the 1.6s window before the first score. */
+  firstMakeTapDx: number | null;
+  tapsBeforeFirstScore: number;
+  tapsInWindowBeforeFirstScore: number;
+  wrapsBeforeFirstScore: number;
+  banksBeforeFirstScore: number;
+  rimsBeforeFirstScore: number;
 };
 
 const PRE_MAKE = 1.6;
@@ -52,6 +68,40 @@ function median(xs: number[]): number | null {
   const a = [...xs].sort((x, y) => x - y);
   const mid = Math.floor(a.length / 2);
   return a.length % 2 ? a[mid]! : (a[mid - 1]! + a[mid]!) / 2;
+}
+
+function openerFinish(e: PlayEvent): RecordingOpener["firstFinish"] {
+  if (e.finish === "bank" || e.finish === "rim" || e.finish === "swish") return e.finish;
+  return "other";
+}
+
+/** First make only — classic ninja clock never arms without this. */
+export function summarizeOpener(rec: PlayRecording): RecordingOpener | null {
+  const first = rec.events.find((e) => e.kind === "score" && !e.ghost);
+  if (!first) return null;
+  const t = first.t;
+  const before = rec.taps.filter((tap) => tap.t <= t);
+  const win = rec.taps.filter((tap) => tap.t <= t && tap.t >= t - PRE_MAKE);
+  const firstTap = rec.taps[0];
+  const makeTap = win[0];
+  const dxAt = (tap: PlayTap | undefined): number | null => {
+    if (!tap) return null;
+    const s = sampleAt(rec.samples, tap.t);
+    const hx = s?.hx ?? first.x;
+    if (hx == null) return null;
+    return Math.abs(tap.x - hx);
+  };
+  return {
+    firstScoreT: t,
+    firstFinish: openerFinish(first),
+    firstTapDx: dxAt(firstTap),
+    firstMakeTapDx: dxAt(makeTap),
+    tapsBeforeFirstScore: before.length,
+    tapsInWindowBeforeFirstScore: win.length,
+    wrapsBeforeFirstScore: rec.events.filter((e) => e.kind === "wrap" && e.t < t).length,
+    banksBeforeFirstScore: rec.events.filter((e) => e.kind === "bank" && e.t <= t).length,
+    rimsBeforeFirstScore: rec.events.filter((e) => e.kind === "rim" && e.t <= t).length,
+  };
 }
 
 function sampleAt(samples: PlaySample[], t: number): PlaySample | null {
@@ -151,6 +201,7 @@ export function summarizePlayRecording(
   }
 
   const playerTaps = rec.taps.filter((t) => t.src === "player").length;
+  const opener = summarizeOpener(rec);
   return {
     mode: rec.mode,
     ballId: rec.ballId,
@@ -184,6 +235,7 @@ export function summarizePlayRecording(
     antiIds: [
       ...new Set(rec.samples.flatMap((s) => sampleOrbs(s).map((o) => o.id))),
     ],
+    opener,
   };
 }
 
@@ -205,6 +257,16 @@ export function formatRecordingSummary(s: RecordingSummary): string {
     `wraps ${s.wraps}, scored within ${s.wrapScoreWindowSec}s: ${s.wrapsScoredWithin}`,
     `median board-Y ratio (1=top) near banks ${s.medianBoardYRatio?.toFixed(2) ?? "—"}`,
   ];
+  if (s.opener) {
+    const o = s.opener;
+    lines.push(
+      `opener t=${o.firstScoreT.toFixed(2)}s ${o.firstFinish}` +
+        `  first-tap |dx| ${o.firstTapDx?.toFixed(0) ?? "—"}` +
+        `  make-window |dx| ${o.firstMakeTapDx?.toFixed(0) ?? "—"}` +
+        `  taps ${o.tapsBeforeFirstScore} (window ${o.tapsInWindowBeforeFirstScore})` +
+        `  wraps ${o.wrapsBeforeFirstScore} bank ${o.banksBeforeFirstScore} rim ${o.rimsBeforeFirstScore}`,
+    );
+  }
   if (s.antiSpawns || s.antiCollects || s.holeOpens || s.antiOrbSamples) {
     lines.push(
       `antimatter spawn ${s.antiSpawns} collect ${s.antiCollects}  hole open ${s.holeOpens} close ${s.holeCloses}  orb samples ${s.antiOrbSamples} ids [${s.antiIds.join(",")}]`,

@@ -885,6 +885,30 @@ describe("ball AI registry", () => {
     assert.notEqual(d.reason, "early-jump");
   });
 
+  it("ninja waits until the opener band (≳0.64w peaks past recatch)", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const floorY = 844 * 0.765;
+    const r = 19.5;
+    const edge = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      ball: { x: hoop.x - 258, y: floorY - r, vx: 44, vy: 0, r },
+    });
+    const d = decideShot(edge, helpers);
+    assert.equal(d.tap, false);
+    assert.equal(d.reason, "wait-window");
+  });
+
   it("ninja recatches mid-climb after flying in (human 2nd tap)", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
@@ -1296,8 +1320,8 @@ describe("ball AI registry", () => {
     const plain = world({ jumpVx: 390 * 0.76 * 0.95 });
     assert.ok(comboPaceLimit(ninja) < comboPaceLimit(plain));
     assert.ok(comboPaceLimit(heat) < comboPaceLimit(plain));
-    assert.ok(comboPaceLimit(heat) <= 1.62);
-    assert.ok(comboPaceLimit(heat) >= 1.38);
+    assert.ok(comboPaceLimit(heat) <= 1.48);
+    assert.ok(comboPaceLimit(heat) >= 1.24);
     assert.ok(comboPaceLimit(ninja) <= 1.22);
     assert.ok(comboPaceLimit(ninja) >= 1.05);
 
@@ -2455,7 +2479,7 @@ describe("AI controller", () => {
     assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
   });
 
-  it("launches from a far crawl after two fruitless wraps instead of waiting out classic", () => {
+  it("waits out a far crawl after fruitless wraps so the opener band can recatch", () => {
     const ai = createAiController();
     ai.setEnabled(true);
     const hoop = {
@@ -2509,7 +2533,18 @@ describe("AI controller", () => {
       ball: { x: hoop.x - 280, y: floorY - r, vx: 44, vy: 0, r },
     });
     assert.equal(decideShot(crawl, helpers).reason, "wait-window");
-    assert.equal(ai.tick(crawl), true, ai.lastDecision()?.reason);
+    assert.equal(ai.tick(crawl), false, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "wait-window");
+    assert.notEqual(ai.lastDecision()?.reason, "early-jump");
+
+    const band = world({
+      ...ninja,
+      dt: 0.2,
+      wraps: 2,
+      ball: { x: hoop.x - 224, y: floorY - r, vx: 44, vy: 0, r },
+    });
+    assert.equal(decideShot(band, helpers).reason, "early-jump");
+    assert.equal(ai.tick(band), true, ai.lastDecision()?.reason);
     assert.equal(ai.lastDecision()?.reason, "early-jump");
   });
 });
