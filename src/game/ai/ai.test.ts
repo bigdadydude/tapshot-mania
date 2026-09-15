@@ -1929,7 +1929,7 @@ describe("AI controller", () => {
       id: "stuck",
       priority: 99,
       match: () => true,
-      vote: () => ({ action: "hold", reason: "wait-window" }),
+      vote: () => ({ action: "hold", reason: "stuck-idle" }),
     });
     ai.setEnabled(true);
     const w = world({ dt: AI_WATCHDOG / 2 });
@@ -2766,5 +2766,118 @@ describe("AI controller", () => {
     assert.equal(decideShot(band, helpers).reason, "early-jump");
     assert.equal(ai.tick(band), true, ai.lastDecision()?.reason);
     assert.equal(ai.lastDecision()?.reason, "early-jump");
+  });
+
+  it("resumes the demo-band launch after a ground wrap reappears on court", () => {
+    const ai = createAiController();
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const floorY = 844 * 0.765;
+    const r = 19.5;
+    const ninja = {
+      dt: 1 / 60,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      hoop,
+    };
+    const seed = world({
+      ...ninja,
+      ball: { x: hoop.x - 224, y: floorY - r, vx: 8, vy: 10, r },
+    });
+    assert.equal(ai.tick(seed), true);
+
+    // Ninja ground wrap: approach-side floor just off the left edge.
+    const hidden = world({
+      ...ninja,
+      dt: 0.02,
+      wraps: 1,
+      onApproachSide: true,
+      ballHidden: true,
+      ball: { x: -r - 58, y: floorY - r, vx: 44, vy: 0, r },
+    });
+    assert.equal(ai.tick(hidden), false, ai.lastDecision()?.reason);
+    assert.ok(
+      ai.lastDecision()?.reason === "wrap-loop" ||
+        ai.lastDecision()?.reason === "wait-window" ||
+        ai.lastDecision()?.reason === "approach-enter",
+      ai.lastDecision()?.reason,
+    );
+    assert.notEqual(ai.lastDecision()?.reason, "early-jump");
+
+    // Reappeared on court, still beyond 0.67w — rolling in, not wrap-loop.
+    const farFloor = world({
+      ...ninja,
+      dt: 0.2,
+      wraps: 1,
+      ball: { x: hoop.x - 310, y: floorY - r, vx: 44, vy: 0, r },
+    });
+    assert.ok(Math.abs(farFloor.ball.x - farFloor.hoop.x) > 390 * 0.76);
+    assert.equal(decideShot(farFloor, helpers).reason, "wait-window");
+    assert.equal(ai.tick(farFloor), false, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "wait-window");
+    assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
+
+    // Demo band — attack resumes even while wrapCool is still ticking.
+    const band = world({
+      ...ninja,
+      dt: 0.2,
+      wraps: 1,
+      ball: { x: hoop.x - 224, y: floorY - r, vx: 44, vy: 0, r },
+    });
+    assert.equal(ai.tick(band), true, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "early-jump");
+    assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
+  });
+
+  it("still wrap-loops jump-speed far spam after a wrap (empty cycle)", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "force-far-spam",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "tap", reason: "approach-enter" }),
+    });
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const ninja = {
+      dt: 1 / 60,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      jumpVy: -671,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      hoop,
+    };
+    const seed = world({
+      ...ninja,
+      onApproachSide: true,
+      ballHidden: true,
+      ball: { x: -72, y: 487, vx: 44, vy: 0, r: 19.5 },
+    });
+    ai.tick(seed);
+    const spam = world({
+      ...ninja,
+      dt: 0.05,
+      wraps: 1,
+      ball: { x: 15, y: 378, vx: 328, vy: -671, r: 19.5 },
+    });
+    assert.equal(ai.tick(spam), false, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
   });
 });

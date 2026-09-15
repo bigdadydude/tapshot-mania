@@ -82,13 +82,13 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `apex-boost` extra climb on ninja | Oral mash after launch | Sep15: 3–4 spaced `early-jump` taps in the climb |dx| band (`NINJA_OPENER`), then ride. Not default apex-boost. |
 | Swish-hunt `predicted-make` on ninja | 310 mix is bank 29 / rim 17 / **swish 0**; HQ 9806 is bank 201 / rim 78 / swish 13 | Hold inbound; don't poke for +swish |
 | Combo-clock `shot-clock` / `pace-boost` near the hoop on ninja | Oral "keep combo" poke is the same overshoot tap | Pace from the climb; near glass, hold. Median make gap 1.33–1.69s. |
-| Repeating `wrap-escape` / off-screen `approach-enter` / 5th jump-speed recatch (ninja-stuck-1/2) | Same jump vector `(±328,-671)` empty wrap | `wrap-loop` **only** on off-screen / jump-speed identical pose / 5th air tap. **Do not** hold the 3–4 tap opener (floor ~194–260, climb ~147 then ~95, HQ 4th ~118). Rim during the opener is part of the first bank — not fruitless. If wrap-escape would fire after a fruitless wrap and the reset would kiss glass, one `wrap-bank`, then ride. |
+| Repeating `wrap-escape` / off-screen `approach-enter` / 5th jump-speed recatch (ninja-stuck-1/2) | Same jump vector `(±328,-671)` empty wrap | `wrap-loop` **only** on off-screen FAR_JUMP, in-air jump-speed spam at far-court / identical pose, or a 5th air tap. **Not** a grounded on-court roll after a real wrap (HQ 9806 wraps 11× / 188s). **Do not** hold the 3–4 tap opener (floor ~194–260, climb ~147 then ~95, HQ 4th ~118). Rim during the opener is part of the first bank — not fruitless. If wrap-escape would fire after a fruitless wrap and the reset would kiss glass, one `wrap-bank`, then ride. |
 | Oral "must bank" / upper `bank-half` **tap** | Humans bank from a held inbound, not a jump-reset | `bank-half` / `bank-steep` remain as **holds** when `willBoard` |
 
 ### Oral tactics kept (demos agree)
 
 - Half-board / steep **holds** when the current path already hits glass (`holdInboundBank`)
-- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap, do not wrap-escape the same *jump-speed* pose or full-jump from off-screen (`wrap-loop`). A parked ball *inside* the launch band still wrap-escapes to the far side (blocking that froze classic at 0). Prefer one `wrap-bank` when a *close* reset would kiss glass. The attack is the JSON opener: floor launch ~194–260, then 2–3 climb taps at ~147 / ~95 / (~118), then ride into bank. After wrap, wait only while crawling **beyond** ~0.67w; do not sit inside the chain band. Once the ball is *in* the opener band, two empty wraps or a live clock may still force the floor launch.
+- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s; HQ 9806: 11 wraps over 188s, then the same demo attack. **Not** the stuck-loop: after a 0-score wrap, do not wrap-escape the same *jump-speed* pose or full-jump from off-screen (`wrap-loop`). A *grounded on-court* ball after wrap is playable — resume floor ~190–260, then climb. A parked ball *inside* the launch band still wrap-escapes to the far side (blocking that froze classic at 0). Prefer one `wrap-bank` when a *close* reset would kiss glass. The attack is the JSON opener: floor launch ~194–260, then 2–3 climb taps at ~147 / ~95 / (~118), then ride into bank. After wrap, wait only while crawling **beyond** ~0.67w; do not sit inside the chain band. Once the ball is *in* the opener band, two empty wraps or a live clock may still force the floor launch.
 - `hole-spam` / `hole-ride` after the hole opens (anti packs)
 - `pop-away` on a hot bounce
 - Glass `seek-swish` (+4 HP) and drop-finish (10156 / 5992)
@@ -100,7 +100,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `bank-half` | Contact around half board height, moving into glass — **hold** | board geom + vy |
 | `bank-steep` | Steeper cut into the board (`\|vy\| > 0.52·\|vx\|`) — **hold** | velocity vs board |
 | `protect-finish` | Long jumpFwd in the glass/rim pocket — ZERO extra taps (overshoot loop) | `finishPocketLocked` |
-| `wrap-loop` | Break-glass only: off-screen / jump-speed identical pose / 5th air tap. Never the 3–4 tap opener | recent poses + jump vel |
+| `wrap-loop` | Break-glass only: off-screen FAR_JUMP / in-air jump-speed far spam / identical pose / 5th air tap. Never the 3–4 tap opener or a grounded post-wrap roll | recent poses + jump vel |
 | `wrap-bank` | Break-glass close kiss after a fruitless wrap when the reset would hit glass — not the 190–260 launch | `predictTap.willBoard` once |
 | `bank-cut` | Classic only (demo `bankCutTap`): current path misses glass, jump-reset would kiss | `demoPriors.bankCutTap` |
 | `rim-swirl` | Inner-rim rattle (刷马桶) — hold, don't reset `jumpVx` | `hitRim` + inner side |

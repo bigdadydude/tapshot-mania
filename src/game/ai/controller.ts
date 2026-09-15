@@ -46,6 +46,7 @@ const LEGIT_WAIT = new Set([
   "protect-make",
   "overshoot-cool",
   "wrap-loop",
+  "wait-window",
   "floor-bounce",
   "let-bounce",
   "commit-glass",
@@ -230,11 +231,12 @@ export function createAiController(): AiController {
         decision.reason === "chain-next" || decision.reason === "early-jump";
       const nearBoardX = Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36;
       const dx = Math.abs(world.ball.x - world.hoop.x);
-      // Off-screen wrap spam (stuck-1: tap (-72,487) → (15,378) → wrap).
-      const farRestart =
-        world.onApproachSide ||
-        world.ballHidden ||
-        dx > world.world.w * 0.76;
+      // Off-screen vs merely far on the court. HQ gold wraps 11× in 188s and
+      // keeps scoring — a ground wrap reappears on the approach floor and
+      // rolls in. Treating |dx| > 0.76w as wrap-loop froze that recovery.
+      const offscreen = world.onApproachSide || world.ballHidden;
+      const farCourt = dx > world.world.w * 0.76;
+      const farRestart = offscreen || farCourt;
       const sameShot = recentTaps.some(
         (p) =>
           p.side === world.hoop.side &&
@@ -268,14 +270,31 @@ export function createAiController(): AiController {
         recoverTap &&
         dx > world.world.w * NINJA_OPENER.climbMin &&
         dx < world.world.w * NINJA_OPENER.climbMax;
-      // Empty-cycle only: off-screen, jump-speed pose replay (±328/-671),
-      // or a 5th air tap. Do not freeze wrapCool on the opener/climb —
-      // humans retry 200→147→95 (or HQ 194→140→96→118) after a miss.
+      // Empty-cycle only: off-screen FAR_JUMP, in-air jump-speed spam at
+      // far-court / identical pose (±328/-671), or a 5th air tap.
+      // Do NOT wrap-loop a grounded on-court roll after a real wrap — that
+      // is the demo attack (floor ~190–260, then climb).
+      const offscreenSpam =
+        offscreen &&
+        FAR_JUMP.has(decision.reason) &&
+        !inOpenerBand &&
+        !demoClimb;
+      const jumpSpeedFarSpam =
+        launched &&
+        !grounded &&
+        !demoClimb &&
+        !inOpenerBand &&
+        FAR_JUMP.has(decision.reason) &&
+        (offscreen || farCourt);
       let wrapLoop =
         longJump &&
-        (farRestart ||
-          (sameShot && launched && !grounded && !demoClimb) ||
-          extraClimb);
+        (extraClimb ||
+          offscreenSpam ||
+          jumpSpeedFarSpam ||
+          (sameShot && launched && !grounded && !demoClimb));
+      // Ground wrap recovery: ball is rolling/sitting on the visible court.
+      // Resume the JSON opener; wrap-loop must not sit forever.
+      if (grounded && !offscreen) wrapLoop = false;
       if (wrapLoop && grounded && !farRestart) sitHold += world.dt;
       else if (!wrapLoop) sitHold = 0;
       // After a wrap, lastTap is cleared. Rolling onto the previous launch
@@ -418,9 +437,7 @@ export function createAiController(): AiController {
       const crawlWait =
         longJump &&
         grounded &&
-        !farRestart &&
-        !world.onApproachSide &&
-        !world.ballHidden &&
+        !offscreen &&
         dx >= world.world.w * NINJA_OPENER.launchMax &&
         (world.hoop.x - world.ball.x) * world.ball.vx > 12;
       if (
