@@ -265,42 +265,24 @@ function onInnerRim(world: AiWorld): boolean {
 }
 
 /**
- * First jump from the floor peaks ~150px under the rim (ninja jumpH).
- * Recatch near that dead apex so the second jump can still bank/rim.
- * A mid-climb recatch (vy ~-270) overshoots into a wrap — keep this
- * window to ~0.1s around the apex (~2 AI ticks).
+ * Sep15 gold: 3–4 climb taps ~150ms apart while still rising (tap 2 vy ~-500
+ * at |dx| ~147, tap 3 at |dx| ~95, HQ tap 4 at ~118 after a rim). The old
+ * too-low-apex window (vy > -250, |dx| 110–133) skipped those taps and
+ * classic never chained.
  */
-function tooLowApex(world: AiWorld): boolean {
-  const belowFinish = world.ball.y > world.hoop.y + world.hoop.inner * 1.2;
-  const nearApex = world.ball.vy > -250 && world.ball.vy < 55;
-  if (!belowFinish || !nearApex) return false;
-  // Parked / dying under the rim — a full jumpVy from here flies over.
-  if (Math.abs(world.ball.vx) < 50) return false;
-  return true;
-}
-
-/**
- * Demo 2nd tap: too-low recatch after the ball has flown in from the
- * 195–290 launch band. Apex travel on ninja is ~129px, so recatch around
- * |dx| ~110–195 lets the reset jump peak at the rim. Recatch still in the
- * launch band peaks early and falls under; inside ~0.28w is a pocket poke.
- */
-function ninjaBandRecatch(
+function ninjaClimbTap(
   world: AiWorld,
-  current: { scores: boolean; willBoard: boolean },
+  current: { scores: boolean },
 ): boolean {
   if (!shotFeel(world).longJump) return false;
-  if (!tooLowApex(world) || onFloor(world)) return false;
-  // Ride a live make. Long-range willBoard from 150px under the rim is a
-  // false positive — skipping the 2nd tap is the classic 0 (clock never arms).
+  if (onFloor(world)) return false;
   if (current.scores) return false;
+  // Falling: ride into the bank. Humans do not tap a 4th after the climb.
+  if (world.ball.vy >= -12) return false;
   const dx = Math.abs(world.ball.x - world.hoop.x);
-  // Apex travel ~129px: recatch in ~110–133 so the reset peaks at the rim.
-  // The live too-low frame is ~121 after a 230 launch; 0.36w tapped at 133
-  // and the 2nd jump hit iron on the way up.
   return (
-    dx > world.world.w * NINJA_OPENER.recatchMin &&
-    dx < world.world.w * NINJA_OPENER.recatchMax
+    dx > world.world.w * NINJA_OPENER.climbMin &&
+    dx < world.world.w * NINJA_OPENER.climbMax
   );
 }
 
@@ -900,8 +882,7 @@ export const physPolicy: BallAiPolicy = {
     const far = feel.longJump
       ? dx > world.world.w * 0.5
       : dx > world.world.w * 0.38 * hangScale;
-    // Sep15 gold openers (1411/97, 1196/85): first tap |dx| ~237 (spawn).
-    // Apex travel ~129px: jump from ≳0.64w (~250) peaks outside recatch.
+    // Sep15 gold: first tap |dx| ~196–201; chain the other hoop at ~190–260.
     const launchFar = feel.longJump
       ? dx > world.world.w * NINJA_OPENER.launchMin &&
         dx < world.world.w * NINJA_OPENER.launchMax
@@ -911,10 +892,8 @@ export const physPolicy: BallAiPolicy = {
     const launched =
       flyingAtHoop(world) && Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55;
 
-    // Long jumpFwd / slippery glass. 310 demo: launch from the 195–290 band,
-    // 2 taps, bank+rim (no swish), wrap is a next-shot (4/8 scored <2.5s).
-    // Late under-rim starts lose. Banks/swirls run after so they cannot
-    // freeze the launch.
+    // Long jumpFwd / slippery glass. Sep15 gold: 3–4 climb taps then ride
+    // into bank (0 wraps before first make). Wrap is a next shot, not a hover.
     if (longOrSlip) {
       if (!world.onApproachSide && !current.scores && pastBoard(world)) {
         // 310 demo: 4/8 wraps scored within 2.5s — wrap is a next shot, not a hover.
@@ -954,7 +933,7 @@ export const physPolicy: BallAiPolicy = {
         // Too-low apex under the cylinder: recatch for height. Tube-up only
         // when actually climbing through the net — holding it from 150px
         // under was the 0-pt tunnel (carry/let-drop ate the 2nd tap).
-        if (ninjaBandRecatch(world, current)) return tap("early-jump");
+        if (ninjaClimbTap(world, current)) return tap("early-jump");
         if (
           world.ball.vy < -12 &&
           world.ball.y > world.hoop.y &&
@@ -1005,9 +984,8 @@ export const physPolicy: BallAiPolicy = {
         const spd = Math.hypot(world.ball.vx, world.ball.vy);
         if (spd < 78) return tap("wrap-escape");
       }
-      // After a wrap the ball rolls in from ~0.76w. Wait until the opener
-      // band so the 2nd tap can still recatch at the too-low apex. Jumping
-      // from ≳0.64w is the 26-wrap classic zero (clock never arms).
+      // After a wrap the ball rolls in from ~0.76w. Wait until |dx| ≲260
+      // (human chain band). Do not sit past that — first make never arms.
       if (
         feel.longJump &&
         onFloor(world) &&
@@ -1021,7 +999,7 @@ export const physPolicy: BallAiPolicy = {
       if (feel.longJump && onFloor(world) && launchFar) {
         return tap("early-jump");
       }
-      if (ninjaBandRecatch(world, current)) return tap("early-jump");
+      if (ninjaClimbTap(world, current)) return tap("early-jump");
       if (flyingAtHoop(world) && world.ball.vy > 12 && !onFloor(world)) {
         return hold("ride-flight");
       }

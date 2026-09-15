@@ -43,16 +43,17 @@ those numbers (and elasticity), not `ballId`. `shotFeel(world)` derives:
 
 **Combo pace** (window is 4s): classic ~1.72; **heat / frost** ~1.36 (sep15
 gold lava 1264 / 43, frost 1985 / 50; older 678 / 28, 1339 / 36). **Long
-jumpFwd (ninja)** is **tighter** (~1.08s) —
-a human 1-min 310 (combo 28, ~5.0 pts/s) had a median make gap of ~1.05s,
-first-tap |dx| ~237 (p25–p75 ≈ 195–290), ~2 taps before a make, and **no
-swishes** (bank 29 / rim 17). Elite classic 2641 / 138 (~0.64s/make, rim+bank)
-and 1324 / 97 (almost all banks) are the decaying-clock bar. Sep15 gold
-classic ninja **1411 / 97** and **1196 / 85** are the opener bar (first make
-arms the clock). Classic 360 was ~1.35s. The old 2.6s ninja wait sat under
-the rim. `carry-flight` / `ride-flight` still block combo-clock mash on a
-live arc; a dying combo on a parked miss under the rim is `wrap-escape`,
-not a 1–13 pt drought.
+jumpFwd (ninja)** follows sep15 gold make gaps **1.33–1.69s** (~**1.42s**).
+A 1.08s pace wrap-escaped every chain and capped classic at 1–7. Human 1-min
+310 (combo 28, ~5.0 pts/s) had a median make gap of ~1.05s and first-tap
+|dx| ~237 — that is the *minute* bar, not the decaying-clock opener.
+Sep15 gold classic ninja **1411 / 97**, **1196 / 85**, **660 / 65**, **502 / 53**
+open with **3 taps** (200→147→95) then bank; HQ **9806 / 277** opens with
+**4 taps** (194→140→96→118). Elite classic 2641 / 138 (~0.64s/make, rim+bank)
+and 1324 / 97 (almost all banks) are the decaying-clock bar. Classic 360 was
+~1.35s. The old 2.6s ninja wait sat under the rim. `carry-flight` /
+`ride-flight` still block combo-clock mash on a live *falling* arc; a dying
+combo on a parked miss under the rim is `wrap-escape`.
 **Glass (bounce 0)** is also tight (~1.24s) — human classic 10156 / combo 117
 and 5992 / 88 had a ~1.29s gap and ~3.6 short taps from |dx| ~296 (rim / swish /
 bank mix).
@@ -77,17 +78,17 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 
 | Oral tactic | Why demoted | Demo instead |
 |-------------|-------------|--------------|
-| `bank-cut` / `predicted-bank` on long jumpFwd or glass | Extra tap near glass writes full jumpVx → overshoot death loop | Ninja 310: median **~2 taps**, then ride; 0 swishes. Glass: drop-finish. Classic may still kiss-cut. |
-| `apex-boost` extra climb on ninja | Third tap after launch/recatch | 310: floor `early-jump` + one too-low recatch, then `carry-flight` / `ride-flight` |
-| Swish-hunt `predicted-make` on ninja | 310 mix is bank 29 / rim 17 / **swish 0** | Hold inbound; don't poke for +swish |
-| Combo-clock `shot-clock` / `pace-boost` near the hoop on ninja | Oral "keep combo" poke is the same overshoot tap | Pace from far (`early-jump`); near glass, hold |
-| Repeating `wrap-escape` / off-screen `approach-enter` / extra jump-speed recatch (ninja-stuck-1/2) | Same jump vector `(±328,-671)` empty wrap, or a 3rd tap after launch+recatch | Break-glass `wrap-loop` on off-screen / identical last pose / extra air tap. **Do not** hold the demo-band floor launch or the too-low recatch — those are the scoring path. Long-range `willBoard` from 150px under the rim must not skip that recatch (classic clock never arms). If wrap-escape would fire after a fruitless wrap and the reset would kiss glass, one `wrap-bank`, then ride. |
+| `bank-cut` / `predicted-bank` on long jumpFwd or glass | Extra tap near glass writes full jumpVx → overshoot death loop | Ninja 310: ride the inbound; 0 swishes. Glass: drop-finish. Classic may still kiss-cut. Sep15 gold first finish is **bank** after the climb, not a bank-cut tap. |
+| `apex-boost` extra climb on ninja | Oral mash after launch | Sep15: 3–4 spaced `early-jump` taps in the climb |dx| band (`NINJA_OPENER`), then ride. Not default apex-boost. |
+| Swish-hunt `predicted-make` on ninja | 310 mix is bank 29 / rim 17 / **swish 0**; HQ 9806 is bank 201 / rim 78 / swish 13 | Hold inbound; don't poke for +swish |
+| Combo-clock `shot-clock` / `pace-boost` near the hoop on ninja | Oral "keep combo" poke is the same overshoot tap | Pace from the climb; near glass, hold. Median make gap 1.33–1.69s. |
+| Repeating `wrap-escape` / off-screen `approach-enter` / 5th jump-speed recatch (ninja-stuck-1/2) | Same jump vector `(±328,-671)` empty wrap | `wrap-loop` **only** on off-screen / jump-speed identical pose / 5th air tap. **Do not** hold the 3–4 tap opener (floor ~194–260, climb ~147 then ~95, HQ 4th ~118). Rim during the opener is part of the first bank — not fruitless. If wrap-escape would fire after a fruitless wrap and the reset would kiss glass, one `wrap-bank`, then ride. |
 | Oral "must bank" / upper `bank-half` **tap** | Humans bank from a held inbound, not a jump-reset | `bank-half` / `bank-steep` remain as **holds** when `willBoard` |
 
 ### Oral tactics kept (demos agree)
 
 - Half-board / steep **holds** when the current path already hits glass (`holdInboundBank`)
-- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap, do not wrap-escape the same pose or full-jump from off-screen (`wrap-loop`). A parked ball *inside* the launch band still wrap-escapes to the far side (blocking that froze classic at 0). Prefer one `wrap-bank` when a *close* reset would kiss glass. Demo-band launch + too-low recatch remain the attack. After wrap, wait for the opener band (~195–250, ≲0.64w) before the next floor jump so recatch geometry still works. Do **not** impatient-jump from ≳0.64w after empty wraps — that peaks past recatch and is the all-zero classic (clock never arms). Once the ball is *in* the opener band, two empty wraps or a live clock may still force the floor launch.
+- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap, do not wrap-escape the same *jump-speed* pose or full-jump from off-screen (`wrap-loop`). A parked ball *inside* the launch band still wrap-escapes to the far side (blocking that froze classic at 0). Prefer one `wrap-bank` when a *close* reset would kiss glass. The attack is the JSON opener: floor launch ~194–260, then 2–3 climb taps at ~147 / ~95 / (~118), then ride into bank. After wrap, wait only while crawling **beyond** ~0.67w; do not sit inside the chain band. Once the ball is *in* the opener band, two empty wraps or a live clock may still force the floor launch.
 - `hole-spam` / `hole-ride` after the hole opens (anti packs)
 - `pop-away` on a hot bounce
 - Glass `seek-swish` (+4 HP) and drop-finish (10156 / 5992)
@@ -99,15 +100,15 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `bank-half` | Contact around half board height, moving into glass — **hold** | board geom + vy |
 | `bank-steep` | Steeper cut into the board (`\|vy\| > 0.52·\|vx\|`) — **hold** | velocity vs board |
 | `protect-finish` | Long jumpFwd in the glass/rim pocket — ZERO extra taps (overshoot loop) | `finishPocketLocked` |
-| `wrap-loop` | Break-glass only: off-screen / identical last tap pose / extra jump-speed recatch / wrap-escape after a fruitless wrap. Not the demo-band launch, too-low recatch, or a parked recover under the hoop | recent poses + jump vel |
-| `wrap-bank` | Break-glass close kiss after a fruitless wrap/rim when the reset would hit glass — not the 195–290 launch | `predictTap.willBoard` once |
+| `wrap-loop` | Break-glass only: off-screen / jump-speed identical pose / 5th air tap. Never the 3–4 tap opener | recent poses + jump vel |
+| `wrap-bank` | Break-glass close kiss after a fruitless wrap when the reset would hit glass — not the 190–260 launch | `predictTap.willBoard` once |
 | `bank-cut` | Classic only (demo `bankCutTap`): current path misses glass, jump-reset would kiss | `demoPriors.bankCutTap` |
 | `rim-swirl` | Inner-rim rattle (刷马桶) — hold, don't reset `jumpVx` | `hitRim` + inner side |
 | `tube-up` | Climbing through the net from below, then drop | under cylinder + `vy < 0` |
 | `exit-space` | Under-rim but opening court — let spacing grow, then jump back | under + bounce away |
 | `pop-away` | Elastic pop near the rim — let spacing open, then re-attack | `hotBounce` / `hoopRest` |
 | `wrap-escape` | Stuck under the rim: tap/wrap to the far side (穿屏) | `longJump` or `slipperyGlass` |
-| `early-jump` | Far floor launch (`|dx|` ~195–250; wait while crawling in from farther), then recatch near a too-low apex after flying in (`|dx|` ~110–133) so the reset peaks at the rim | `longJump` + dx / vy |
+| `early-jump` | Floor launch (`|dx|` ~190–260; wait only while crawling in from farther), then climb taps at ~147 and ~95 (HQ 4th ~118) ~150ms apart, then ride | `NINJA_OPENER` + `ninjaClimbTap` |
 | `far-climb` | Distant rapid taps so the ball falls near **90°** | far + rising, not `longJump` |
 | `ride-flight` | Descending live arc on a long jump — don't poke | `longJump` + `vy > 0` |
 | `carry-flight` | Already flying at the hoop while still rising at jump speed — don't reset `jumpVx` | `longJump` + `flyingAtHoop` |
@@ -130,10 +131,10 @@ Oral mapping (soft; demoted rows are in the table above):
 4. High bounce → `pop-away`
 5. Stuck 穿屏 → `wrap-escape`
 6. Distant 90° taps → `far-climb` (not long jumpFwd)
-7. Long jumpFwd: floor/far `early-jump` → `carry-flight` → one recatch (`tooLowApex`) → `ride-flight`. No apex-boost / bank-cut / combo poke near finish.
+7. Long jumpFwd: floor `early-jump` (~200) → climb `early-jump` (~147, ~95, optional ~118) → `ride-flight` into bank. No apex-boost / bank-cut / combo poke near finish. `carry-flight` only **outside** the climb window (just-launched at ~237).
 8. Black hole → gather while scoring; `hole-spam` / `hole-ride` once open
 
-Human ninja **1-min 310** (62s, combo 28, ~5.0 pts/s): bank 29 / rim 17 / swish 0. Elite classic **2641 / 138** (88s, rim+bank) and **1324 / 97** (79s, mostly banks). Sep15 gold classic: ninja **1411 / 97**, **1196 / 85**, **660 / 65**, **502 / 53**; frost **1985 / 50**; lava **1264 / 43**. Finishes mostly bank then rim. Summarize more demos with `node --experimental-strip-types scripts/summarize-recording.mjs <file.json>`.
+Human ninja **1-min 310** (62s, combo 28, ~5.0 pts/s): bank 29 / rim 17 / swish 0. Elite classic **2641 / 138** (88s, rim+bank) and **1324 / 97** (79s, mostly banks). Sep15 gold classic: ninja **1411 / 97**, **1196 / 85**, **660 / 65**, **502 / 53** (3-tap bank opener); HQ **9806 / 277** (4-tap bank opener, 188s). Frost **1985 / 50**; lava **1264 / 43**. Finishes mostly bank then rim. Summarize more demos with `node --experimental-strip-types scripts/summarize-recording.mjs <file.json>`.
 Human ninja classic 360 (101.9s, 3.5 pts/s): bank ~58% / rim ~33% / swish ~9%.
 
 ## Adding a new ball policy

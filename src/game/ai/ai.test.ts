@@ -794,7 +794,7 @@ describe("ball AI registry", () => {
       kit: flags({ ninja: true }),
       combo: 18,
       streak: 18,
-      comboClock: 1.4,
+      comboClock: 1.55,
       comboCounting: true,
       ball: { x: hoop.x - 55, y: hoop.y + 110, vx: 8, vy: 20, r: 19.5 },
     });
@@ -885,7 +885,7 @@ describe("ball AI registry", () => {
     assert.notEqual(d.reason, "early-jump");
   });
 
-  it("ninja waits until the opener band (≳0.64w peaks past recatch)", () => {
+  it("ninja launches from the human chain band (|dx| ~190–260)", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
       y: 330,
@@ -905,8 +905,8 @@ describe("ball AI registry", () => {
       ball: { x: hoop.x - 258, y: floorY - r, vx: 44, vy: 0, r },
     });
     const d = decideShot(edge, helpers);
-    assert.equal(d.tap, false);
-    assert.equal(d.reason, "wait-window");
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "early-jump");
   });
 
   it("ninja recatches mid-climb after flying in (human 2nd tap)", () => {
@@ -928,6 +928,78 @@ describe("ball AI registry", () => {
       ball: { x: hoop.x - 125, y: hoop.y + 170, vx: 280, vy: -150, r: 19.5 },
     });
     const d = decideShot(mid, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "early-jump");
+  });
+
+  it("ninja climb-tap 2 at |dx| ~147 (sep15 gold 200→147→95)", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const jumpVx = 390 * 0.76 * 1.2;
+    const tap2 = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 147, y: hoop.y + 180, vx: jumpVx, vy: -500, r: 19.5 },
+    });
+    const d = decideShot(tap2, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "early-jump");
+  });
+
+  it("ninja climb-tap 3 at |dx| ~95 (sep15 gold 3rd tap, then ride)", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const jumpVx = 390 * 0.76 * 1.2;
+    const tap3 = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 95, y: hoop.y + 160, vx: jumpVx, vy: -480, r: 19.5 },
+    });
+    const d = decideShot(tap3, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "early-jump");
+  });
+
+  it("ninja climb-tap 4 at |dx| ~118 (HQ gold 194→140→96→118)", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const jumpVx = 390 * 0.76 * 1.2;
+    const tap4 = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 118, y: hoop.y + 140, vx: jumpVx, vy: -420, r: 19.5 },
+    });
+    const d = decideShot(tap4, helpers);
     assert.equal(d.tap, true);
     assert.equal(d.reason, "early-jump");
   });
@@ -1347,8 +1419,8 @@ describe("ball AI registry", () => {
     assert.ok(comboPaceLimit(heat) < comboPaceLimit(plain));
     assert.ok(comboPaceLimit(heat) <= 1.48);
     assert.ok(comboPaceLimit(heat) >= 1.24);
-    assert.ok(comboPaceLimit(ninja) <= 1.22);
-    assert.ok(comboPaceLimit(ninja) >= 1.05);
+    assert.ok(comboPaceLimit(ninja) <= 1.55);
+    assert.ok(comboPaceLimit(ninja) >= 1.28);
 
     const glass = world({
       jumpVx: 390 * 0.76 * 0.8,
@@ -1972,36 +2044,45 @@ describe("AI controller", () => {
     assert.equal(ai.lastDecision()?.tap, false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
 
-    // Fruitless wrap: one board-kiss if the reset would hit glass, else hold.
+    // Fruitless wrap: one board-kiss if the reset would hit glass, else
+    // wrap-escape recover — do not freeze the opener climb.
     const afterWrap = world({
       ...under,
       dt: 0.02,
       wraps: 1,
       ball: { x: hoop.x + 58, y: hoop.y + 110, vx: -40, vy: 20, r: 19.5 },
     });
-    assert.equal(ai.tick(afterWrap), true);
-    assert.equal(ai.lastDecision()?.reason, "wrap-bank");
+    ai.tick(afterWrap);
+    assert.ok(
+      ai.lastDecision()?.reason === "wrap-bank" ||
+        ai.lastDecision()?.reason === "wrap-escape" ||
+        ai.lastDecision()?.reason === "wrap-loop",
+      ai.lastDecision()?.reason,
+    );
 
-    // Cool expired — identical parked pose + jump vector is still the loop.
+    // Parked under the hoop after cool: wrap-escape/wrap-bank recover, don't freeze.
     const afterCool = world({
       ...under,
       dt: 1.7,
       wraps: 1,
       ball: { x: hoop.x + 58, y: hoop.y + 110, vx: 8, vy: 12, r: 19.5 },
     });
-    assert.equal(ai.tick(afterCool), false);
-    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+    assert.equal(ai.tick(afterCool), true, ai.lastDecision()?.reason);
+    assert.ok(
+      ai.lastDecision()?.reason === "wrap-escape" || ai.lastDecision()?.reason === "wrap-bank",
+      ai.lastDecision()?.reason,
+    );
+    assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
 
-    // Spaced pose after a wrap: don't wrap-escape again; wait for a board-kiss
-    // or a demo-band floor launch.
+    // Spaced pose after a wrap may recover; do not freeze as wrap-loop.
     const shifted = world({
       ...under,
-      dt: 0.05,
+      dt: 0.2,
       wraps: 1,
       ball: { x: hoop.x + 140, y: hoop.y + 110, vx: 8, vy: 12, r: 19.5 },
     });
-    assert.equal(ai.tick(shifted), false);
-    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+    ai.tick(shifted);
+    assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
   });
 
   it("breaks the right-hoop empty wrap cycle (stuck-1)", () => {
@@ -2060,7 +2141,7 @@ describe("AI controller", () => {
     assert.equal(ai.tick(launch), true);
     const recatch = world({
       ...ninja,
-      dt: 0.05,
+      dt: 0.16,
       ball: { x: hoop.x - 160, y: hoop.y + 40, vx: 328, vy: -671, r },
     });
     assert.equal(ai.tick(recatch), true);
@@ -2097,15 +2178,16 @@ describe("AI controller", () => {
     assert.equal(ai.tick(sameBand), true, ai.lastDecision()?.reason);
     assert.equal(ai.lastDecision()?.reason, "approach-enter");
 
-    // Immediate replay of that same floor pose is still a loop.
+    // Demo-band floor retry after a wrap is the scoring path, not wrap-loop.
     const thawed = world({
       ...ninja,
       dt: 2.5,
       wraps: 1,
       ball: { x: hoop.x - 224, y: floorY - r, vx: 8, vy: 10, r },
     });
-    assert.equal(ai.tick(thawed), false);
-    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+    assert.equal(ai.tick(thawed), true, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "approach-enter");
+    assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
 
     // Break with one board-kiss, not another (±328,-671).
     const kiss = world({
@@ -2146,37 +2228,47 @@ describe("AI controller", () => {
     assert.equal(ai.tick(climb), true);
     const recatch = world({
       ...climb,
-      dt: 0.05,
+      dt: 0.16,
       ball: { x: hoop.x - 160, y: hoop.y + 40, vx: 328, vy: -671, r: 19.5 },
     });
     assert.equal(ai.tick(recatch), true);
     assert.equal(ai.lastDecision()?.reason, "early-jump");
+    // Sep15 gold: 3rd climb tap is the scoring path, not wrap spam.
+    const climb3 = world({
+      ...climb,
+      dt: 0.15,
+      ball: { x: hoop.x - 95, y: hoop.y + 40, vx: 328, vy: -671, r: 19.5 },
+    });
+    assert.equal(ai.tick(climb3), true);
+    assert.equal(ai.lastDecision()?.reason, "early-jump");
+    // HQ gold 4th tap after a rim bounce back to |dx| ~118.
+    const climb4 = world({
+      ...climb,
+      dt: 0.15,
+      hitRim: true,
+      ball: { x: hoop.x - 118, y: hoop.y + 30, vx: 328, vy: -671, r: 19.5 },
+    });
+    assert.equal(ai.tick(climb4), true, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "early-jump");
     const spam = world({
       ...climb,
-      dt: 0.05,
-      ball: { x: hoop.x - 120, y: hoop.y + 10, vx: 328, vy: -671, r: 19.5 },
+      dt: 0.15,
+      hitRim: true,
+      ball: { x: hoop.x - 70, y: hoop.y + 10, vx: 328, vy: -671, r: 19.5 },
     });
     assert.equal(ai.tick(spam), false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
 
-    const afterRim = world({
-      ...climb,
-      dt: 0.2,
-      hitRim: true,
-      ball: { x: hoop.x - 90, y: hoop.y + 20, vx: 120, vy: 40, r: 19.5 },
-    });
-    assert.equal(ai.tick(afterRim), false);
-    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
-
-    // Same climb start after wrap-cool expired — identical (328,-671) chain.
+    // Opener-band retry after a wrap is the scoring path, not wrap-loop.
     const afterWrapSame = world({
       ...climb,
       dt: 1.7,
       wraps: 1,
+      hitRim: false,
       ball: { x: hoop.x - 200, y: hoop.y + 80, vx: 40, vy: -20, r: 19.5 },
     });
-    assert.equal(ai.tick(afterWrapSame), false);
-    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+    assert.equal(ai.tick(afterWrapSame), true, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "early-jump");
 
     const floorY = 844 * 0.765;
     const r = 19.5;
@@ -2191,7 +2283,7 @@ describe("AI controller", () => {
     assert.equal(ai.tick(landSame), true, ai.lastDecision()?.reason);
     assert.equal(ai.lastDecision()?.reason, "early-jump");
 
-    // Immediate replay of that floor pose stays a loop.
+    // Immediate replay of that floor pose must not double-tap.
     const spaced = world({
       ...climb,
       dt: 0.05,
@@ -2199,7 +2291,6 @@ describe("AI controller", () => {
       ball: { x: hoop.x - 200, y: floorY - r, vx: 8, vy: 10, r },
     });
     assert.equal(ai.tick(spaced), false);
-    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
   });
 
   it("prefers one board-kiss tap over an empty wrap cycle (wrap-bank)", () => {

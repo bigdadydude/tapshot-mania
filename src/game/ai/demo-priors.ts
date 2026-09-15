@@ -26,8 +26,8 @@ export type DemoPriors = {
    */
   bankCutTap: boolean;
   /**
-   * Oral apex-boost / extra climb taps after the launch. Ninja 310: floor
-   * jump then one recatch, then ride.
+   * Oral apex-boost mash (default policy). Sep15 ninja climb is *not* this —
+   * it is three spaced `early-jump` taps in physPolicy (`NINJA_OPENER`).
    */
   extraClimbTaps: boolean;
   /** Oral combo-clock poke near the hoop. Conflicts with the 2-tap ride. */
@@ -43,21 +43,34 @@ export type DemoPriors = {
 };
 
 /**
- * Classic ninja first-make geometry (sep15 gold 1411/97, 1196/85, 660/65, 502/53).
- * Spawn |dx| ≈ 237 sits in the launch band. Apex travel ~129px, so a floor
- * jump from ≳0.64w (~250) peaks outside the too-low recatch window and the
- * clock never arms. Recatch 0.36w tapped too early (iron on the way up).
+ * Sep15 gold classic ninja openers. Extracted from pack JSON — first
+ * finish = bank, 0 wraps before first make:
+ *
+ *   502/53, 660/65, 1196/85, 1411/97: first make 1.23–1.57s, **3 taps**,
+ *   |dx| ~200 → 147 → 95 (~150ms apart), same full jump vector, ride
+ *   into bank (+ rim). Chain the other hoop with 2–3 taps at |dx|
+ *   ~190–260, median gap 1.33–1.69s.
+ *
+ *   HQ 9806/277 (188s): first make 2.13s, **4 taps**,
+ *   |dx| 194 → 140 → 96 → 118, then chain right 259 / 122.
+ *   Median taps in 1.6s before makes: 2; median first-tap |dx|: 226.
  */
 export const NINJA_OPENER = {
-  launchMin: 0.5,
-  launchMax: 0.64,
-  recatchMin: 0.28,
-  recatchMax: 0.34,
+  /** Floor launch |dx|/w. First tap ~194–201; chain ~190–260. */
+  launchMin: 0.49,
+  launchMax: 0.67,
+  /** Climb taps 2–4 while still rising. Human 135–152, then 92–102, then ~118 after a rim. */
+  climbMin: 0.23,
+  climbMax: 0.41,
+  /** Human ~150ms between opener taps. */
+  tapGap: 0.15,
+  /** Floor + up to 3 air taps (HQ 4-tap), then ride. A 5th air tap is wrap spam. */
+  maxAirTaps: 3,
 } as const;
 
 /** Ninja 1-min 310 + elite classic 2641/1324 + sep15 gold 1411/97, 1196/85. */
 const NINJA: DemoPriors = {
-  medianTapsBeforeMake: 2,
+  medianTapsBeforeMake: 3,
   huntSwish: false,
   bankCutTap: false,
   extraClimbTaps: false,

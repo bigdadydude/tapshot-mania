@@ -70,16 +70,17 @@ export function shotFeel(world: Pick<AiWorld, "world" | "jumpVx" | "jumpVy" | "g
 }
 
 /**
- * Combo window is 4s. Human ninja 1-min 310: median make gap ~1.05s,
- * ~2 taps in 1.6s before a make, first-tap |dx| ~237. Elite classic
- * 2641 / combo 138 was ~0.64s/make — still ride a live arc, but don't
- * sit a 1.12s let-drop after a miss. Classic 360 was ~1.35s.
+ * Combo window is 4s. Sep15 gold ninja classic: median make gap 1.33–1.69s
+ * after a 3-tap opener. Elite classic 2641 / combo 138 was ~0.64s/make.
+ * Classic 360 was ~1.35s. Human ninja 1-min 310: ~1.05s, first-tap |dx| ~237.
  * Heat/frost jumpFwd 1.0: sep15 gold lava 1264 / 43 and frost 1985 / 50
  * (also 1339 / 36, 678 / 28). Stretching pace with jumpFwd sat idle (~1.77s).
  */
 export function comboPaceLimit(world: Parameters<typeof shotFeel>[0]): number {
   const f = shotFeel(world);
-  if (f.longJump) return clamp(1.08, 1.05, 1.22);
+  // Sep15 ninja gaps 1.33–1.69s. 1.08s wrap-escaped every chain and capped
+  // classic at 1–7.
+  if (f.longJump) return clamp(1.42, 1.28, 1.55);
   // Glass (bounce 0): human classic 10156 / 117 and 5992 / 88, gap ~1.29s.
   if (f.bounce < 0.15) return clamp(1.24, 1.12, 1.38);
   // Lava / frost (jumpFwd ~1.0): gold 1985/50 and 1264/43 need a tighter

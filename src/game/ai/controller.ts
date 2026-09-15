@@ -211,10 +211,17 @@ export function createAiController(): AiController {
 
       const decision = decideShot(world, helpers);
       last = decision;
-      const snappy = SNAPPY.has(decision.reason);
-      const wait = panic ? PANIC_INTERVAL : snappy ? CHAIN_INTERVAL : AI_TAP_INTERVAL;
-      const locked = finishPocketLocked(world);
       const longJump = shotFeel(world).longJump;
+      const snappy = SNAPPY.has(decision.reason);
+      const climbGap = longJump && decision.reason === "early-jump";
+      const wait = panic
+        ? PANIC_INTERVAL
+        : climbGap
+          ? NINJA_OPENER.tapGap
+          : snappy
+            ? CHAIN_INTERVAL
+            : AI_TAP_INTERVAL;
+      const locked = finishPocketLocked(world);
       // Pocket lock: only floor chain + too-low recatch. wrap-escape stays
       // OUT — tapping wrap in the pocket re-aims jumpVx at the glass.
       const pocketExtra =
@@ -223,8 +230,7 @@ export function createAiController(): AiController {
         decision.reason === "chain-next" || decision.reason === "early-jump";
       const nearBoardX = Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36;
       const dx = Math.abs(world.ball.x - world.hoop.x);
-      // Off-screen or past the human |dx| band (~195–290). Do NOT tighten
-      // this for ninja — 0.62w (~242) wrap-loops the first demo-band jump.
+      // Off-screen wrap spam (stuck-1: tap (-72,487) → (15,378) → wrap).
       const farRestart =
         world.onApproachSide ||
         world.ballHidden ||
@@ -239,41 +245,37 @@ export function createAiController(): AiController {
         Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55;
       const grounded = ballOnFloor(world);
       if (grounded) airTaps = 0;
+      // Rim/board during the opener is the scoring path (sep15 first make
+      // is bank after 3 taps + a rim). Do not mark that fruitless.
       if (world.hitRim || world.hitBoard) {
-        if (longJump && !world.scored && !world.shotMade && !sawContact) {
-          contactCool = Math.max(contactCool, 0.9);
-          fruitlessContact += 1;
-        }
         sawContact = true;
       } else {
         sawContact = false;
       }
-      const fruitless = fruitlessWraps > 0 || fruitlessContact > 0;
-      // Only the launch-band floor attack repeats. Persist under the hoop
-      // (dx < 0.5w) was a crawl of empty wrap-escapes after lastTap.
+      const fruitless = fruitlessWraps > 0;
       const persistShot =
         !!lastTap &&
         lastTap.side === world.hoop.side &&
-        dx >= world.world.w * 0.5 &&
+        dx >= world.world.w * NINJA_OPENER.launchMin &&
         Math.hypot(world.ball.x - lastTap.x, world.ball.y - lastTap.y) < POSE_MATCH &&
         Math.hypot(world.jumpVx - lastTap.jvx, world.jumpVy - lastTap.jvy) < JUMP_VEL_MATCH;
-      const airSpam = launched && !grounded && airTaps >= 1;
-      // Human 2-tap: floor launch, too-low recatch in the 195–290 band, ride.
-      // contactCool must not freeze that 2nd tap after a rim graze.
-      const demoRecatch =
+      const extraClimb =
+        launched && !grounded && airTaps >= NINJA_OPENER.maxAirTaps;
+      const inOpenerBand =
+        dx > world.world.w * NINJA_OPENER.launchMin &&
+        dx < world.world.w * NINJA_OPENER.launchMax;
+      const demoClimb =
         recoverTap &&
-        !airSpam &&
-        dx > world.world.w * NINJA_OPENER.recatchMin &&
-        dx < world.world.w * NINJA_OPENER.recatchMax;
-      // Break-glass only: off-screen / identical pose / extra jump-speed tap.
-      // Demo-band launch + too-low recatch stay the attack, even after a graze.
+        dx > world.world.w * NINJA_OPENER.climbMin &&
+        dx < world.world.w * NINJA_OPENER.climbMax;
+      // Empty-cycle only: off-screen, jump-speed pose replay (±328/-671),
+      // or a 5th air tap. Do not freeze wrapCool on the opener/climb —
+      // humans retry 200→147→95 (or HQ 194→140→96→118) after a miss.
       let wrapLoop =
         longJump &&
         (farRestart ||
-          (sameShot && (wrapCool > 0 || poseFresh > 0)) ||
-          (fruitless && persistShot) ||
-          (contactCool > 0 && !grounded && !demoRecatch) ||
-          airSpam);
+          (sameShot && launched && !grounded && !demoClimb) ||
+          extraClimb);
       if (wrapLoop && grounded && !farRestart) sitHold += world.dt;
       else if (!wrapLoop) sitHold = 0;
       // After a wrap, lastTap is cleared. Rolling onto the previous launch
@@ -303,8 +305,11 @@ export function createAiController(): AiController {
       const wrapEscapeSpam =
         longJump &&
         fruitlessWraps > 0 &&
+        wrapCool > 0 &&
         decision.reason === "wrap-escape" &&
-        !stranded;
+        !stranded &&
+        !inOpenerBand &&
+        !demoClimb;
       if (stranded && (decision.reason === "wrap-escape" || decision.reason === "floor-launch")) {
         wrapLoop = false;
       }
@@ -330,9 +335,6 @@ export function createAiController(): AiController {
       // the opener band. Never jump from ≳launchMax — that peaks outside
       // recatch and is the 26-wrap zero (clock never arms).
       const clockLive = world.timerArmed && !world.buzzer && !world.timeUp;
-      const inOpenerBand =
-        dx > world.world.w * NINJA_OPENER.launchMin &&
-        dx < world.world.w * NINJA_OPENER.launchMax;
       const forceLaunch =
         longJump &&
         grounded &&
