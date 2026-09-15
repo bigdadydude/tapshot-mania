@@ -19,6 +19,8 @@ export type RecordingSummary = {
   medianMakeGap: number | null;
   firstTapDxBeforeMake: number[];
   medianFirstTapDx: number | null;
+  firstTapDxP25: number | null;
+  firstTapDxP75: number | null;
   tapsInWindowBeforeMake: number[];
   medianTapsBeforeMake: number | null;
   wraps: number;
@@ -37,6 +39,13 @@ export type RecordingSummary = {
 
 const PRE_MAKE = 1.6;
 const WRAP_SCORE = 2.5;
+
+function percentile(xs: number[], p: number): number | null {
+  if (!xs.length) return null;
+  const a = [...xs].sort((x, y) => x - y);
+  const i = Math.min(a.length - 1, Math.max(0, Math.round((a.length - 1) * p)));
+  return a[i]!;
+}
 
 function median(xs: number[]): number | null {
   if (!xs.length) return null;
@@ -141,6 +150,8 @@ export function summarizePlayRecording(
     medianMakeGap: median(makeGapsSec),
     firstTapDxBeforeMake,
     medianFirstTapDx: median(firstTapDxBeforeMake),
+    firstTapDxP25: percentile(firstTapDxBeforeMake, 0.25),
+    firstTapDxP75: percentile(firstTapDxBeforeMake, 0.75),
     tapsInWindowBeforeMake,
     medianTapsBeforeMake: median(tapsInWindowBeforeMake),
     wraps: wraps.length,
@@ -168,7 +179,10 @@ export function formatRecordingSummary(s: RecordingSummary): string {
     `events ${JSON.stringify(s.eventCounts)}`,
     `finishes bank ${s.finishes.bank} (${pct(s.finishShare.bank)})  rim ${s.finishes.rim} (${pct(s.finishShare.rim)})  swish ${s.finishes.swish} (${pct(s.finishShare.swish)})`,
     `median make gap ${s.medianMakeGap?.toFixed(2) ?? "—"}s`,
-    `median first-tap |dx| in ${PRE_MAKE}s before make ${s.medianFirstTapDx?.toFixed(0) ?? "—"}px`,
+    `median first-tap |dx| in ${PRE_MAKE}s before make ${s.medianFirstTapDx?.toFixed(0) ?? "—"}px` +
+      (s.firstTapDxP25 != null && s.firstTapDxP75 != null
+        ? ` (p25–p75 ${s.firstTapDxP25.toFixed(0)}–${s.firstTapDxP75.toFixed(0)})`
+        : ""),
     `median taps in that window ${s.medianTapsBeforeMake ?? "—"}`,
     `wraps ${s.wraps}, scored within ${s.wrapScoreWindowSec}s: ${s.wrapsScoredWithin}`,
     `median board-Y ratio (1=top) near banks ${s.medianBoardYRatio?.toFixed(2) ?? "—"}`,

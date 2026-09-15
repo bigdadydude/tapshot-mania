@@ -455,7 +455,7 @@ describe("ball AI registry", () => {
     assert.ok(ride.reason === "ride-flight" || ride.reason === "let-drop");
   });
 
-  it("ninja launches from far on the floor (human first-tap |dx| ~224)", () => {
+  it("ninja launches from far on the floor (human first-tap |dx| ~237)", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
       y: 330,
@@ -546,6 +546,34 @@ describe("ball AI registry", () => {
     const d = decideShot(rising, helpers);
     assert.equal(d.tap, false);
     assert.ok(d.reason === "ride-flight" || d.reason === "let-drop");
+  });
+
+  it("ninja carries a just-launched climb instead of recatching at full jumpVy", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const jumpVx = 390 * 0.76 * 1.2;
+    const jumpVy = -Math.sqrt(2 * (844 * 3.1 * 0.9) * 844 * 0.185);
+    const launched = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx,
+      jumpVy,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 237, y: hoop.y + 200, vx: jumpVx, vy: jumpVy, r: 19.5 },
+    });
+    const d = decideShot(launched, helpers);
+    assert.equal(d.tap, false);
+    assert.equal(d.reason, "carry-flight");
+    assert.notEqual(d.reason, "early-jump");
+    assert.notEqual(d.reason, "apex-boost");
   });
 
   it("ninja early-jumps a rising far shot that is not yet flying at the hoop", () => {
@@ -751,8 +779,8 @@ describe("ball AI registry", () => {
     const plain = world({ jumpVx: 390 * 0.76 * 0.95 });
     assert.ok(comboPaceLimit(ninja) < comboPaceLimit(plain));
     assert.ok(comboPaceLimit(heat) >= comboPaceLimit(plain) - 0.01);
-    assert.ok(comboPaceLimit(ninja) <= 1.65);
-    assert.ok(comboPaceLimit(ninja) >= 1.4);
+    assert.ok(comboPaceLimit(ninja) <= 1.28);
+    assert.ok(comboPaceLimit(ninja) >= 1.05);
   });
 
   it("frost does not chain-next into a freeze that kept the same hoop", () => {

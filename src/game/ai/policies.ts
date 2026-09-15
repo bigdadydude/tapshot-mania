@@ -587,16 +587,21 @@ export const physPolicy: BallAiPolicy = {
     const longOrSlip = feel.longJump || feel.slipperyGlass;
     const dx = Math.abs(world.ball.x - world.hoop.x);
     const hangScale = 1 - Math.max(-0.06, Math.min(0.08, (feel.hangTime - 0.7) * 0.25));
-    // Human first tap before a make: median |dx| ≈ 224 (often 200–310).
+    // Human 1-min 310: first tap |dx| median ~237 (p25–p75 ≈ 195–290).
     const far = feel.longJump
-      ? dx > world.world.w * 0.42
+      ? dx > world.world.w * 0.5
       : dx > world.world.w * 0.38 * hangScale;
-    const launchFar = dx > world.world.w * 0.48;
+    const launchFar = feel.longJump ? dx > world.world.w * 0.5 : dx > world.world.w * 0.48;
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
+    // 2nd tap: climb has slowed (vy decayed from full jumpVy). Tapping at
+    // full jumpVy every 80ms was a 3rd/4th reset that tunneled under the rim.
+    const climbSlowing =
+      world.ball.vy < -20 && world.ball.vy > world.jumpVy * 0.5;
 
-    // Long jumpFwd / slippery glass. Demo: launch early, 2–3 taps, wrap
-    // is a real next-shot (9/12 wraps scored in 2.5s). Late under-rim
-    // starts lose. Banks/swirls run after so they cannot freeze the launch.
+    // Long jumpFwd / slippery glass. 310 demo: launch from the 195–290 band,
+    // 2 taps, bank+rim (no swish), wrap is a next-shot (4/8 scored <2.5s).
+    // Late under-rim starts lose. Banks/swirls run after so they cannot
+    // freeze the launch.
     if (longOrSlip) {
       if (!world.onApproachSide && !current.scores && pastBoard(world)) {
         const headingOut = world.hoop.side * world.ball.vx > 12;
@@ -632,17 +637,26 @@ export const physPolicy: BallAiPolicy = {
         const tooLow = world.ball.y > world.hoop.y + world.hoop.inner * 2.2;
         if (tooLow) return hold("let-drop");
       }
-      // Descending live arc — don't poke. Rising + far: keep climbing
-      // (human 2–3 taps, first |dx| ~224). Rising + close: fall through
-      // so default can apex-boost / bank / swirl.
-      if (flyingAtHoop(world) && world.ball.vy > 12 && !onFloor(world)) {
-        return hold("ride-flight");
-      }
+      // Floor launch, then one recatch after vy decays (~2 taps). Holding
+      // carry-flight at full jumpVy stops the 80ms reset spam that tunneled
+      // under the rim. Descent still rides.
       if (feel.longJump && onFloor(world) && launchFar) {
         return tap("early-jump");
       }
-      if (far && belowRim && world.ball.vy < -20 && !onFloor(world) && !under) {
+      if (far && belowRim && climbSlowing && !onFloor(world) && !under) {
         return tap("early-jump");
+      }
+      if (flyingAtHoop(world) && world.ball.vy > 12 && !onFloor(world)) {
+        return hold("ride-flight");
+      }
+      if (
+        feel.longJump &&
+        flyingAtHoop(world) &&
+        world.ball.vy < -12 &&
+        !onFloor(world) &&
+        Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55
+      ) {
+        return hold("carry-flight");
       }
     }
 
