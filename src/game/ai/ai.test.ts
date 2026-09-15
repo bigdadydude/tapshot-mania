@@ -860,7 +860,7 @@ describe("ball AI registry", () => {
     assert.equal(d.reason, "early-jump");
   });
 
-  it("ninja recatches mid-climb while still far (human 2nd tap)", () => {
+  it("ninja recatches mid-climb after flying in (human 2nd tap)", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
       y: 330,
@@ -876,11 +876,34 @@ describe("ball AI registry", () => {
       hoopMul: 0.8,
       boardFric: 0.7,
       shotOpen: true,
-      ball: { x: hoop.x - 210, y: hoop.y + 170, vx: 280, vy: -150, r: 19.5 },
+      ball: { x: hoop.x - 145, y: hoop.y + 170, vx: 280, vy: -150, r: 19.5 },
     });
     const d = decideShot(mid, helpers);
     assert.equal(d.tap, true);
     assert.equal(d.reason, "early-jump");
+  });
+
+  it("ninja does not recatch while still in the launch band (peaks early, falls under)", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const far = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 210, y: hoop.y + 150, vx: 280, vy: -40, r: 19.5 },
+    });
+    const d = decideShot(far, helpers);
+    assert.equal(d.tap, false);
+    assert.notEqual(d.reason, "early-jump");
   });
 
   it("ninja does not recatch at full-speed mid-climb (that overshoots into a wrap)", () => {
@@ -923,14 +946,14 @@ describe("ball AI registry", () => {
       hoopMul: 0.8,
       boardFric: 0.7,
       shotOpen: true,
-      ball: { x: hoop.x - 200, y: hoop.y + 150, vx: 280, vy: -40, r: 19.5 },
+      ball: { x: hoop.x - 160, y: hoop.y + 150, vx: 280, vy: -40, r: 19.5 },
     });
     const d = decideShot(apex, helpers);
     assert.equal(d.tap, true);
     assert.equal(d.reason, "early-jump");
   });
 
-  it("ninja does not recatch inside 0.5w (that 2nd jump sails through)", () => {
+  it("ninja recatches after the ball has flown in (2nd tap is closer than 237)", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
       y: 330,
@@ -949,8 +972,8 @@ describe("ball AI registry", () => {
       ball: { x: hoop.x - 120, y: hoop.y + 150, vx: 280, vy: -150, r: 19.5 },
     });
     const d = decideShot(mid, helpers);
-    assert.equal(d.tap, false);
-    assert.notEqual(d.reason, "early-jump");
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "early-jump");
   });
 
   it("ninja does not recatch under the cylinder (2nd jump sails through)", () => {
@@ -2267,7 +2290,7 @@ describe("AI controller", () => {
       dt: 0.2,
       wraps: 1,
       shotOpen: true,
-      ball: { x: hoop.x - 200, y: hoop.y + 150, vx: 280, vy: -40, r },
+      ball: { x: hoop.x - 160, y: hoop.y + 150, vx: 280, vy: -40, r },
     });
     assert.equal(decideShot(apex, helpers).reason, "early-jump");
     assert.equal(ai.tick(apex), true, ai.lastDecision()?.reason);
@@ -2306,7 +2329,7 @@ describe("AI controller", () => {
       dt: 0.2,
       hitRim: true,
       shotOpen: true,
-      ball: { x: hoop.x - 200, y: hoop.y + 150, vx: 280, vy: -40, r },
+      ball: { x: hoop.x - 160, y: hoop.y + 150, vx: 280, vy: -40, r },
     });
     assert.equal(decideShot(apex, helpers).reason, "early-jump");
     assert.equal(ai.tick(apex), true, ai.lastDecision()?.reason);

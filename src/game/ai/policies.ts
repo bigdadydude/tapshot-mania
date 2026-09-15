@@ -280,8 +280,10 @@ function tooLowApex(world: AiWorld): boolean {
 }
 
 /**
- * Demo 2nd tap: too-low recatch while still in the |dx| ~195–290 band.
- * Inside ~0.5w a full jumpVx sails through the pocket (classic ninja 0-pt).
+ * Demo 2nd tap: too-low recatch after the ball has flown in from the
+ * 195–290 launch band. Apex travel on ninja is ~129px, so recatch around
+ * |dx| ~110–195 lets the reset jump peak at the rim. Recatch still in the
+ * launch band peaks early and falls under; inside ~0.28w is a pocket poke.
  */
 function ninjaBandRecatch(
   world: AiWorld,
@@ -290,7 +292,8 @@ function ninjaBandRecatch(
   if (!shotFeel(world).longJump) return false;
   if (!tooLowApex(world) || onFloor(world)) return false;
   if (current.scores || current.willBoard) return false;
-  return Math.abs(world.ball.x - world.hoop.x) > world.world.w * 0.5;
+  const dx = Math.abs(world.ball.x - world.hoop.x);
+  return dx > world.world.w * 0.28 && dx < world.world.w * 0.5;
 }
 
 /**
