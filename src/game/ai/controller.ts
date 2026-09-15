@@ -89,14 +89,18 @@ export function createAiController(): AiController {
   let boardCool = 0;
   let wrapCool = 0;
   let contactCool = 0;
+  let poseFresh = 0;
   let lastWraps = 0;
   let airTaps = 0;
+  let sawContact = false;
   let recentTaps: LoopPose[] = [];
 
   function clearLoop() {
     wrapCool = 0;
     contactCool = 0;
+    poseFresh = 0;
     airTaps = 0;
+    sawContact = false;
     recentTaps = [];
   }
 
@@ -132,6 +136,7 @@ export function createAiController(): AiController {
       boardCool = Math.max(0, boardCool - world.dt);
       wrapCool = Math.max(0, wrapCool - world.dt);
       contactCool = Math.max(0, contactCool - world.dt);
+      poseFresh = Math.max(0, poseFresh - world.dt);
 
       // New target hoop (left/right alternate) — don't sit on the previous cooldown.
       if (world.hoop.side !== lastSide) {
@@ -200,8 +205,14 @@ export function createAiController(): AiController {
       const launched =
         Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55;
       const grounded = ballOnFloor(world);
-      if (longJump && (world.hitRim || world.hitBoard) && !world.scored && !world.shotMade) {
-        contactCool = Math.max(contactCool, 0.9);
+      if (grounded) airTaps = 0;
+      if (world.hitRim || world.hitBoard) {
+        if (longJump && !world.scored && !world.shotMade && !sawContact) {
+          contactCool = Math.max(contactCool, 0.9);
+        }
+        sawContact = true;
+      } else {
+        sawContact = false;
       }
       if (decision.tap) {
         // Long jumpFwd near glass/rim: ZERO extra taps. bank-cut / apex /
@@ -213,10 +224,13 @@ export function createAiController(): AiController {
         }
         // stuck-1: repeating pose after wrap, including far approach-enter.
         // stuck-2: same full jumpVx after bank/rim, or extra air taps at jump speed.
+        // Pose match only during wrap-cool / just-tapped — a permanent pose
+        // ban froze the whole visit at 0 (same launch spot after a miss).
         if (longJump && decision.reason !== "chain-next") {
+          const poseLoop = samePose && (wrapCool > 0 || poseFresh > 0);
           const loop =
-            samePose ||
-            (wrapCool > 0 && (farRestart || wrapTap || nearBoardX)) ||
+            poseLoop ||
+            (wrapCool > 0 && (farRestart || wrapTap)) ||
             (contactCool > 0 && !grounded) ||
             (launched && !grounded && airTaps >= 1);
           if (loop) {
@@ -243,6 +257,7 @@ export function createAiController(): AiController {
             side: world.hoop.side,
           });
           if (recentTaps.length > 8) recentTaps.shift();
+          poseFresh = 0.45;
           airTaps = grounded ? 0 : airTaps + 1;
         }
         return fired;

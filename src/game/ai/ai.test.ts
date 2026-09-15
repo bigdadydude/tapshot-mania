@@ -1884,23 +1884,14 @@ describe("AI controller", () => {
     assert.equal(ai.tick(afterWrap), false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
 
-    // Same pose after cool is still the loop. A *new* parked pose can wrap-escape.
+    // Cool expired and this is a new attempt at the same parked miss.
     const afterCool = world({
       ...under,
       dt: 1.7,
       wraps: 1,
       ball: { x: hoop.x + 58, y: hoop.y + 110, vx: 8, vy: 12, r: 19.5 },
     });
-    assert.equal(ai.tick(afterCool), false);
-    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
-
-    const newPose = world({
-      ...under,
-      dt: 0.2,
-      wraps: 1,
-      ball: { x: hoop.x + 130, y: hoop.y + 110, vx: 8, vy: 12, r: 19.5 },
-    });
-    assert.equal(ai.tick(newPose), true, ai.lastDecision()?.reason);
+    assert.equal(ai.tick(afterCool), true);
     assert.equal(ai.lastDecision()?.reason, "wrap-escape");
   });
 
