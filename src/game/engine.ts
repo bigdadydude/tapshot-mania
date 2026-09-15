@@ -49,9 +49,10 @@ import {
   type RogueRun,
 } from "./rogue";
 import { createAiController, flagsFromKit } from "./ai";
+import { predictCurrent, predictTap } from "./ai/predict.ts";
 import { createPlayRecorder } from "./record";
 
-export const GAME_REV = 359;
+export const GAME_REV = 360;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -5081,6 +5082,23 @@ export function createGame(
         recordingLive: recorder.live(),
         recordingSessions: recorder.sessionCount(),
         recordingSamples: recorder.exportLive()?.samples.length ?? recorder.lastFile()?.samples.length ?? 0,
+      };
+    },
+    aiProbe() {
+      const w = snapshotAiWorld(1 / 60);
+      const current = predictCurrent(w);
+      const next = predictTap(w);
+      const d = autoPlay.lastDecision();
+      return {
+        reason: d?.reason ?? null,
+        policy: d?.policyId ?? null,
+        tap: d?.tap ?? false,
+        scores: current.scores,
+        bank: current.bank,
+        willBoard: current.willBoard,
+        nextScores: next.scores,
+        nextBank: next.bank,
+        nextWillBoard: next.willBoard,
       };
     },
     tap: () => tapJump(),

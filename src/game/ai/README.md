@@ -68,6 +68,7 @@ Ball-id / skill-flag votes are only for skills that are not a number:
 |--------|------|-----------|
 | `bank-half` | Contact around half board height, moving into glass | board geom + vy |
 | `bank-steep` | Steeper cut into the board (`\|vy\| > 0.52·\|vx\|`) | velocity vs board |
+| `bank-cut` | In the bank window but drifting — tap to kiss; skip if current flight already hits glass | `willBoard` vs tap |
 | `rim-swirl` | Inner-rim rattle (刷马桶) — hold, don't reset `jumpVx` | `hitRim` + inner side |
 | `tube-up` | Climbing through the net from below, then drop | under cylinder + `vy < 0` |
 | `exit-space` | Under-rim but opening court — let spacing grow, then jump back | under + bounce away |
@@ -90,7 +91,7 @@ points into the hole.
 
 Playbook mapping (PO):
 
-1. Bank → `bank-half` / `bank-steep`
+1. Bank → `bank-half` / `bank-steep` hold if `willBoard` (current path hits glass); `bank-cut` tap if in the window but drifting. `tapJump` always writes full jumpVx — tapping a live glass flight overshoots past the board. Do not freeze and watch a makeable kiss miss.
 2. 刷马桶 → `rim-swirl`
 3. Under-rim: `tube-up` while rising through the net; `let-drop` if too low; `exit-space` when opening
 4. High bounce → `pop-away`
@@ -150,7 +151,7 @@ The default policy covers plain kinematics. `phys` only votes when jumpFwd /
 bounce / glass grip make a tap dangerous or a playbook tactic applies.
 
 - **Chain:** at the make (`shotMade`) it jumps toward the **new** hoop immediately — no floor wait. It only holds `chain-wait` while still *above* the new rim (a full `jumpVy` from there orbits). `tapJump` after a counted make is a new shot and does not break combo.
-- **Banks:** 擦板 only in the **glass pocket**. Prefer **half-board** and **steep** cuts (`bank-half` / `bank-steep`). A tap resets to full `jumpVx`.
+- **Banks:** 擦板 only in the **glass pocket**. Prefer **half-board** and **steep** cuts (`bank-half` / `bank-steep`). Hold when `predictCurrent.willBoard` — a tap resets to full `jumpVx` and flies past the glass. Tap `bank-cut` when in that window but the current flight will miss.
 - **Floor bounce / pop-away:** after a messy miss or a hot bounce, hold while velocity is **opening spacing**. Sitting idle under the rim is `wrap-escape`, not a hover.
 - **Climb / release:** far + rising → tap-climb for a near-vertical drop; release in the pocket; let-drop above the rim. Long jumpFwd **jumps early** then **rides** the descent.
 - **Frost:** freeze can keep the scored stand (`nextHoop` does not always flip). After a make still next to that stand, **let-drop** instead of `chain-next` into the glass. Frozen +2 is in-engine. Human classic 1339 / 36: combo pace ~1.48s, floor `reset-boost` when the freeze clock is dying.

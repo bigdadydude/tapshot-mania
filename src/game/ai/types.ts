@@ -118,6 +118,11 @@ export type FlightGuess = {
   swish: boolean;
   /** Scored after a backboard bounce in the kinematic guess. */
   bank: boolean;
+  /**
+   * Path contacts the court-facing glass, even if it does not score.
+   * A tap here writes full jumpVx and flies past the board.
+   */
+  willBoard: boolean;
   hitFloor: boolean;
   minHoopDist: number;
   collectedAnti: boolean;

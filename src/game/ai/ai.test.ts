@@ -171,6 +171,7 @@ describe("ball AI registry", () => {
     const current = predictCurrent(flight);
     assert.equal(current.scores, true);
     assert.equal(current.bank, true);
+    assert.equal(current.willBoard, true);
     assert.equal(current.swish, false);
   });
 
@@ -480,6 +481,78 @@ describe("ball AI registry", () => {
     assert.equal(drop.tap, false);
     assert.notEqual(drop.reason, "wrap-boost");
     assert.notEqual(drop.reason, "apex-boost");
+  });
+
+  it("taps a bank-cut when drifting past a makeable glass kiss", () => {
+    const w = 390;
+    const hoop = {
+      x: w - 28 - w * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const drift = world({
+      hoop,
+      jumpVx: w * 0.76,
+      // On the glass side of the rim, opening toward court — freeze used to miss the kiss.
+      ball: { x: hoop.x + hoop.inner * 1.35, y: hoop.y - 40, vx: -18, vy: 55, r: 19.5 },
+    });
+    const cur = predictCurrent(drift);
+    assert.equal(cur.willBoard, false);
+    const d = decideShot(drift, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "bank-cut");
+  });
+
+  it("does not reset jumpVx on a flight already hitting the glass", () => {
+    const w = 390;
+    const hoop = {
+      x: w - 28 - w * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const inbound = world({
+      hoop,
+      jumpVx: w * 0.76,
+      combo: 8,
+      streak: 8,
+      comboClock: 1.9,
+      comboCounting: true,
+      ball: { x: hoop.x + hoop.inner * 0.85, y: hoop.y - 52, vx: 160, vy: 90, r: 19.5 },
+    });
+    const cur = predictCurrent(inbound);
+    assert.equal(cur.willBoard, true);
+    const d = decideShot(inbound, helpers);
+    assert.equal(d.tap, false);
+    assert.notEqual(d.reason, "shot-clock");
+    assert.notEqual(d.reason, "apex-boost");
+    assert.notEqual(d.reason, "predicted-make");
+    assert.notEqual(d.reason, "bank-cut");
+    assert.notEqual(d.reason, "wrap-escape");
+    assert.notEqual(d.reason, "wrap-boost");
+
+    const ninjaIn = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: w * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      combo: 10,
+      streak: 10,
+      comboClock: 1.5,
+      comboCounting: true,
+      ball: { x: hoop.x + hoop.inner * 0.85, y: hoop.y - 52, vx: 180, vy: 90, r: 19.5 },
+    });
+    const n = decideShot(ninjaIn, helpers);
+    assert.equal(n.tap, false);
+    assert.notEqual(n.reason, "early-jump");
+    assert.notEqual(n.reason, "wrap-escape");
+    assert.notEqual(n.reason, "shot-clock");
   });
 
   it("ninja lets a miss under the rim fall instead of jumping over", () => {
@@ -1020,7 +1093,7 @@ describe("ball AI registry", () => {
     });
     const d = decideShot(w, helpers);
     assert.equal(d.tap, false);
-    assert.ok(d.reason === "rim-swirl" || d.reason === "flight-scores");
+    assert.ok(d.reason === "rim-swirl" || d.reason === "flight-scores" || d.reason === "commit-glass");
     assert.notEqual(d.reason, "let-drop");
   });
 
@@ -1262,7 +1335,12 @@ describe("ball AI registry", () => {
     });
     const d = decideShot(w, helpers);
     assert.equal(d.tap, false);
-    assert.ok(d.reason === "let-rattle" || d.reason === "wait-spacing" || d.reason === "flight-scores");
+    assert.ok(
+      d.reason === "let-rattle" ||
+        d.reason === "wait-spacing" ||
+        d.reason === "flight-scores" ||
+        d.reason === "commit-glass",
+    );
 
     const sky = world({
       hoop,

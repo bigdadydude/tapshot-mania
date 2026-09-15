@@ -79,6 +79,7 @@ function guess(over: Partial<FlightGuess> & Pick<FlightGuess, "minHoopDist" | "c
     scores: false,
     swish: false,
     bank: false,
+    willBoard: false,
     hitFloor: false,
     ...over,
   };
@@ -172,7 +173,14 @@ export function simulateFlight(world: AiWorld, vx0: number, vy0: number): Flight
 
     const wrapped = wrapFlight(world, x, vx);
     if (wrapped.grounded) {
-      return guess({ ...stats, minHoopDist: minHoop, collectedAnti, minAntiDist: minAnti, hitFloor: true });
+      return guess({
+        ...stats,
+        minHoopDist: minHoop,
+        collectedAnti,
+        minAntiDist: minAnti,
+        hitFloor: true,
+        willBoard: banked,
+      });
     }
     x = wrapped.x;
     vx = wrapped.vx;
@@ -205,6 +213,7 @@ export function simulateFlight(world: AiWorld, vx0: number, vy0: number): Flight
         scores: true,
         swish: !grazed && !banked,
         bank: banked,
+        willBoard: banked,
         minHoopDist: minHoop,
         collectedAnti,
         minAntiDist: minAnti,
@@ -224,6 +233,7 @@ export function simulateFlight(world: AiWorld, vx0: number, vy0: number): Flight
           scores: true,
           swish: !grazed && !banked,
           bank: banked,
+          willBoard: banked,
           minHoopDist: minHoop,
           collectedAnti,
           minAntiDist: minAnti,
@@ -234,6 +244,7 @@ export function simulateFlight(world: AiWorld, vx0: number, vy0: number): Flight
     if (y >= floor) {
       return guess({
         hitFloor: true,
+        willBoard: banked,
         minHoopDist: minHoop,
         collectedAnti,
         minAntiDist: minAnti,
@@ -243,7 +254,7 @@ export function simulateFlight(world: AiWorld, vx0: number, vy0: number): Flight
     prevY = y;
   }
 
-  return guess({ minHoopDist: minHoop, collectedAnti, minAntiDist: minAnti });
+  return guess({ minHoopDist: minHoop, collectedAnti, minAntiDist: minAnti, willBoard: banked });
 }
 
 export function predictCurrent(world: AiWorld): FlightGuess {

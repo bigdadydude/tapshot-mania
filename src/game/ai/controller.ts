@@ -27,6 +27,7 @@ const SNAPPY = new Set([
     "glass-launch",
     "commit-make",
     "seek-swish",
+    "bank-cut",
 ]);
 
 const LEGIT_WAIT = new Set([

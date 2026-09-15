@@ -113,6 +113,57 @@ function flyingAtHoop(world: AiWorld): boolean {
   return toward > 24 && Math.abs(world.ball.vx) > 50;
 }
 
+/** Positive = closing on the court-facing glass. */
+function closingOnBoard(world: AiWorld): number {
+  const face = boardFaceX(world);
+  const toFace = face - world.ball.x;
+  if (Math.abs(toFace) < 0.5) return 0;
+  return world.ball.vx * Math.sign(toFace);
+}
+
+/**
+ * Already on a glass/rim-pocket flight. tapJump writes full jumpVx — that's
+ * the overshoot past the backboard.
+ */
+function inboundGlass(
+  world: AiWorld,
+  current: { scores: boolean; bank: boolean; swish: boolean; willBoard: boolean },
+): boolean {
+  if (onFloor(world) || pastBoard(world) || world.onApproachSide) return false;
+  if (world.hitRim && onInnerRim(world)) return false;
+  if (current.willBoard) return true;
+  if (current.scores && (current.bank || current.swish)) return true;
+  if (!nearBoard(world) && !atHalfBoard(world)) return false;
+  const close = closingOnBoard(world);
+  if (bounceOpening(world) && close < 24) return false;
+  if (nearBoard(world) && close > 18 && world.ball.vy > -80) return true;
+  if (atHalfBoard(world) && close > 70 && !bounceOpening(world)) return true;
+  return false;
+}
+
+/**
+ * In the bank window but NOT kissing — a tap can still cut into half-board /
+ * a steep glass hit. Too-close + already closing is an overshoot (see inbound).
+ */
+function wantsBankCut(
+  world: AiWorld,
+  current: { scores: boolean; bank: boolean; swish: boolean; willBoard: boolean },
+  next: { scores: boolean; bank: boolean; willBoard: boolean },
+): boolean {
+  if (onFloor(world) || pastBoard(world) || world.onApproachSide) return false;
+  if (world.hitRim || world.rimHits >= 1) return false;
+  if (inboundGlass(world, current)) return false;
+  if (!inBankBand(world) && !atHalfBoard(world)) return false;
+  const dist = Math.abs(boardFaceX(world) - world.ball.x);
+  if (dist > world.world.w * 0.38) return false;
+  if (next.willBoard || (next.scores && next.bank)) return true;
+  const close = closingOnBoard(world);
+  if ((atHalfBoard(world) || inBankBand(world)) && close < 36 && dist < world.hoop.inner * 3.6) {
+    return true;
+  }
+  return false;
+}
+
 /** Parked / dying under the rim — the ninja freeze. */
 function stalledNearHoop(world: AiWorld): boolean {
   if (onFloor(world) || world.onApproachSide) return false;
@@ -243,19 +294,24 @@ function sameJumpAngle(world: AiWorld): boolean {
 }
 
 /**
- * Commit 擦板 only in the glass pocket. A tap here resets to full jumpVx —
- * that's how long-travel kits bank-spam and fly past the board. Committing
- * means holding the current flight into the glass.
+ * Commit 擦板 in the glass pocket.
+ * Hold when the current flight already hits glass/rim — tapJump writes full
+ * jumpVx and flies past the board. Tap a bank-cut when we're in the window
+ * but drifting (would otherwise freeze and miss a makeable kiss).
  */
 function bankCommit(world: AiWorld, helpers: AiHelpers): AiVote | null {
-  if (onFloor(world) || !inBankBand(world)) return null;
-  if (!nearBoard(world) || pastBoard(world)) return null;
+  if (onFloor(world) || pastBoard(world)) return null;
+  if (!inBankBand(world) && !atHalfBoard(world)) return null;
 
   const current = helpers.predictCurrent(world);
-  if (current.scores && (current.bank || current.swish)) return hold("flight-scores");
+  const next = helpers.predictTap(world);
+  if (inboundGlass(world, current)) {
+    if (current.scores) return hold("flight-scores");
+    return hold(steepIntoBoard(world) ? "bank-steep" : "commit-glass");
+  }
   if (world.hitBoard && world.ball.vy > 8) return hold("let-drop");
-  if (movingTowardBoard(world) || world.ball.vy > 12) return hold("commit-glass");
-  return hold("let-drop");
+  if (wantsBankCut(world, current, next)) return tap("bank-cut");
+  return null;
 }
 
 function floorRecover(world: AiWorld, next: { scores: boolean; bank: boolean; swish: boolean }): AiVote {
@@ -297,6 +353,9 @@ export const defaultPolicy: BallAiPolicy = {
 
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
+    if (inboundGlass(world, current)) {
+      return hold(current.scores ? "flight-scores" : "commit-glass");
+    }
 
     const bank = bankCommit(world, helpers);
     if (bank) return bank;
@@ -358,6 +417,9 @@ export const defaultPolicy: BallAiPolicy = {
     }
 
     const next = helpers.predictTap(world);
+    if (inboundGlass(world, current)) {
+      return hold(current.scores ? "flight-scores" : "commit-glass");
+    }
     if (next.scores && next.swish) return tap("predicted-make");
     if (next.scores && next.bank && nearBoard(world) && inBankBand(world)) {
       return hold("commit-glass");
@@ -522,6 +584,9 @@ export const glassPolicy: BallAiPolicy = {
     if (next.scores && next.swish && !(droppingIn && current.swish)) {
       return tap("seek-swish");
     }
+    if (!fragile && current.willBoard && !onFloor(world)) {
+      return hold("commit-glass");
+    }
     // Do NOT commit-make a rim. tapJump writes full jumpVx — that's 打铁 −2
     // and is why the first commit pass shattered at combo 25. Human finishes
     // by dropping (settle) after the approach taps. Rim finishes still
@@ -578,6 +643,10 @@ export const wrapHeightPolicy: BallAiPolicy = {
 
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
+    const rattledEarly = world.hitRim || world.rimHits >= 1;
+    if (inboundGlass(world, current) && !rattledEarly) {
+      return hold(current.scores ? "flight-scores" : "commit-glass");
+    }
 
     const bank = bankCommit(world, helpers);
     if (bank) return bank;
@@ -666,6 +735,20 @@ export const physPolicy: BallAiPolicy = {
     const feel = shotFeel(world);
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
+    if (
+      world.hitRim &&
+      onInnerRim(world) &&
+      !onFloor(world) &&
+      (current.scores || world.ball.vy > 18)
+    ) {
+      return hold("rim-swirl");
+    }
+    if (inboundGlass(world, current)) {
+      return hold(current.scores ? "flight-scores" : "commit-glass");
+    }
+    if (wantsBankCut(world, current, helpers.predictTap(world))) {
+      return tap("bank-cut");
+    }
 
     const under = underCylinder(world);
     const longOrSlip = feel.longJump || feel.slipperyGlass;
@@ -784,6 +867,9 @@ export const physPolicy: BallAiPolicy = {
     // 1. Bank: half-board or steep cut into the glass.
     if (nearBoard(world) && inBankBand(world) && !pastBoard(world) && !onFloor(world)) {
       if (current.scores && (current.bank || current.swish)) return hold("flight-scores");
+      if (inboundGlass(world, current)) {
+        return hold(steepIntoBoard(world) ? "bank-steep" : "bank-half");
+      }
       if (steepIntoBoard(world) || (atHalfBoard(world) && movingTowardBoard(world))) {
         return hold(steepIntoBoard(world) ? "bank-steep" : "bank-half");
       }
