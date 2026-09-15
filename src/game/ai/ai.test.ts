@@ -1736,4 +1736,35 @@ describe("AI controller", () => {
     assert.equal(ai.lastDecision()?.tap, false);
     assert.equal(ai.lastDecision()?.reason, "protect-finish");
   });
+
+  it("classic can still chain a bank-cut near the board (cool is ninja-only)", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "force-cut-classic",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "tap", reason: "bank-cut" }),
+    });
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const pocket = world({
+      dt: 0.2,
+      kit: flags(),
+      jumpVx: 390 * 0.76 * 0.95,
+      hoop,
+      ball: { x: hoop.x - 40, y: hoop.y - 20, vx: 90, vy: 90, r: 19.5 },
+    });
+    assert.equal(ai.tick(pocket), true);
+    assert.equal(ai.lastDecision()?.reason, "bank-cut");
+    assert.equal(ai.tick(pocket), true);
+    assert.equal(ai.lastDecision()?.reason, "bank-cut");
+    assert.notEqual(ai.lastDecision()?.reason, "overshoot-cool");
+  });
 });

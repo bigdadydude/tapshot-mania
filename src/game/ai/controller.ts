@@ -1,6 +1,7 @@
 import { predictCurrent, predictTap } from "./predict.ts";
 import { decideShot } from "./registry.ts";
 import { comboPaceLimit, finishPocketLocked, installBuiltInBallAiPolicies } from "./policies.ts";
+import { shotFeel } from "./feel.ts";
 import type { AiDecision, AiWorld } from "./types.ts";
 
 const helpers = { predictCurrent, predictTap };
@@ -134,6 +135,7 @@ export function createAiController(): AiController {
       const snappy = SNAPPY.has(decision.reason);
       const wait = panic ? PANIC_INTERVAL : snappy ? CHAIN_INTERVAL : AI_TAP_INTERVAL;
       const locked = finishPocketLocked(world);
+      const longJump = shotFeel(world).longJump;
       // Pocket lock: only floor chain + too-low recatch. wrap-escape stays
       // OUT — tapping wrap in the pocket re-aims jumpVx at the glass.
       const pocketExtra =
@@ -143,6 +145,7 @@ export function createAiController(): AiController {
         decision.reason === "chain-next" ||
         decision.reason === "early-jump" ||
         decision.reason === "wrap-escape";
+      const nearBoardX = Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36;
       if (decision.tap) {
         if (cooldown > 0) return false;
         // Long jumpFwd near glass/rim: ZERO extra taps. bank-cut / apex /
@@ -152,17 +155,14 @@ export function createAiController(): AiController {
           idle = 0;
           return false;
         }
-        if (
-          boardCool > 0 &&
-          !recoverTap &&
-          Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36
-        ) {
+        // Cool only on ninja-class jumpFwd — classic bank-cuts need to chain.
+        if (longJump && boardCool > 0 && !recoverTap && nearBoardX) {
           last = { tap: false, reason: "overshoot-cool", policyId: decision.policyId };
           idle = 0;
           return false;
         }
         const fired = fire(decision, wait);
-        if (!recoverTap && Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36) {
+        if (longJump && !recoverTap && nearBoardX) {
           boardCool = 0.55;
         }
         return fired;
@@ -192,7 +192,7 @@ export function createAiController(): AiController {
           idle = 0;
           return false;
         }
-        if (locked || boardCool > 0) {
+        if (locked || (longJump && boardCool > 0)) {
           idle = 0;
           return false;
         }
