@@ -293,10 +293,10 @@ function ninjaBandRecatch(
   if (!tooLowApex(world) || onFloor(world)) return false;
   if (current.scores || current.willBoard) return false;
   const dx = Math.abs(world.ball.x - world.hoop.x);
-  // Apex travel ~129px: recatch near |dx| ~110–140 so the reset peaks on
-  // the court side of the rim. 0.34w (~133) missed the live too-low frame
-  // and the 2nd jump peaked past the hoop into a rim graze.
-  return dx > world.world.w * 0.28 && dx < world.world.w * 0.36;
+  // Apex travel ~129px: recatch in ~110–133 so the reset peaks at the rim.
+  // The live too-low frame is ~121 after a 230 launch; 0.36w tapped at 133
+  // and the 2nd jump hit iron on the way up.
+  return dx > world.world.w * 0.28 && dx < world.world.w * 0.34;
 }
 
 /**

@@ -263,7 +263,7 @@ export function createAiController(): AiController {
         recoverTap &&
         !airSpam &&
         dx > world.world.w * 0.28 &&
-        dx < world.world.w * 0.36;
+        dx < world.world.w * 0.34;
       // Break-glass only: off-screen / identical pose / extra jump-speed tap.
       // Demo-band launch + too-low recatch stay the attack, even after a graze.
       let wrapLoop =
@@ -320,7 +320,8 @@ export function createAiController(): AiController {
         !inbound.willBoard &&
         !inbound.scores &&
         nextShot.willBoard &&
-        (wrapLoop || wrapEscapeSpam || stranded || dx < world.world.w * 0.42);
+        dx < world.world.w * 0.42 &&
+        (wrapLoop || wrapEscapeSpam || stranded || fruitless);
       const thaw = grounded && sitHold > 2.4 && !farRestart;
       if (thaw && (wantBoardTap || !persistShot)) wrapLoop = false;
       const forceBank = wantBoardTap;

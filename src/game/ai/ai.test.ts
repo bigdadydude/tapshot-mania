@@ -908,29 +908,6 @@ describe("ball AI registry", () => {
     assert.equal(d.reason, "early-jump");
   });
 
-  it("ninja recatches at the outer too-low edge so the reset peaks at the rim", () => {
-    const hoop = {
-      x: 390 - 28 - 390 * 0.1,
-      y: 330,
-      inner: 28,
-      side: 1 as const,
-      tube: 4.3,
-      moving: false,
-    };
-    const edge = world({
-      hoop,
-      kit: flags({ ninja: true }),
-      jumpVx: 390 * 0.76 * 1.2,
-      hoopMul: 0.8,
-      boardFric: 0.7,
-      shotOpen: true,
-      ball: { x: hoop.x - 137, y: hoop.y + 155, vx: 300, vy: -180, r: 19.5 },
-    });
-    const d = decideShot(edge, helpers);
-    assert.equal(d.tap, true);
-    assert.equal(d.reason, "early-jump");
-  });
-
   it("ninja does not recatch while still in the launch band (peaks early, falls under)", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
