@@ -193,6 +193,11 @@ function nearFinishPocket(world: AiWorld): boolean {
  * ZERO taps: current flight already makes, or is clearly inbound to glass/rim.
  * Long jumpFwd prefers a missed cut over an overshoot tap.
  */
+/**
+ * ZERO taps: current flight already makes, or is clearly inbound to glass/rim.
+ * Long jumpFwd prefers a missed cut over an overshoot tap.
+ * Classic only freezes a live make here — inbound misses still bank-cut.
+ */
 function mustHoldFinish(
   world: AiWorld,
   current: { scores: boolean; bank: boolean; swish: boolean; willBoard: boolean },
@@ -200,19 +205,16 @@ function mustHoldFinish(
   if (onFloor(world) || world.shotMade) return false;
   if (pastBoard(world) || world.onApproachSide) return false;
   const pocket = nearFinishPocket(world) || nearBoard(world);
-  if (current.scores && pocket) return true;
-  if (
-    current.scores &&
-    closeToHoop(world, 0.4) &&
+  const inY =
     world.ball.y < world.hoop.y + world.hoop.inner * 1.15 &&
-    world.ball.y > world.hoop.y - world.world.h * 0.22
-  ) {
-    return true;
-  }
+    world.ball.y > world.hoop.y - world.world.h * 0.22;
+  if (current.scores && pocket) return true;
+  if (current.scores && closeToHoop(world, 0.4) && inY) return true;
+  // Classic: do not freeze a miss/rattle. Ninja overshoot is the longJump path.
+  if (!longJumpFwd(world)) return false;
   if (!pocket) return false;
   if (current.willBoard || current.bank || current.swish) return true;
   if (world.hitRim || world.hitBoard) return true;
-  if (world.hitRim && onInnerRim(world)) return true;
   if (longJumpFwd(world) && flyingAtHoop(world) && !bounceOpening(world)) return true;
   if (longJumpFwd(world) && movingTowardBoard(world) && (nearBoard(world) || inBankBand(world))) {
     return true;
