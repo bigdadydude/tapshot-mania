@@ -1020,32 +1020,19 @@ export const physPolicy: BallAiPolicy = {
         const spd = Math.hypot(world.ball.vx, world.ball.vy);
         if (spd < 78 && !comboLive(world)) return tap("wrap-escape");
       }
-      // After a wrap the ball rolls in from ~0.76w. Wait until the demo
-      // band (~260). Live combo after a wrap: jump as soon as on-court
-      // (<0.76w) so the 4s streak can still chain (~1.3–1.7s human gap).
-      const postWrapCombo = world.wraps > 0 && comboLive(world);
-      const waitDx = postWrapCombo
-        ? world.world.w * 0.76
-        : world.world.w * NINJA_OPENER.launchMax;
+      // After a wrap the ball rolls in from ~0.76w. Wait until |dx| ≲260
+      // (human chain band). Do not sit past that — first make never arms.
       if (
         feel.longJump &&
         onFloor(world) &&
         !world.onApproachSide &&
         !world.ballHidden &&
-        dx >= waitDx &&
+        dx >= world.world.w * NINJA_OPENER.launchMax &&
         crawlingIn
       ) {
         return hold("wait-window");
       }
       if (feel.longJump && onFloor(world) && launchFar) {
-        return tap("early-jump");
-      }
-      if (
-        postWrapCombo &&
-        onFloor(world) &&
-        dx > world.world.w * NINJA_OPENER.launchMin &&
-        dx < world.world.w * 0.76
-      ) {
         return tap("early-jump");
       }
       if (ninjaClimbTap(world)) return tap("early-jump");
