@@ -84,7 +84,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 ### Oral tactics kept (demos agree)
 
 - Half-board / steep **holds** when the current path already hits glass (`holdInboundBank`)
-- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap, do not wrap-escape the same pose or full-jump from off-screen (`wrap-loop`). Prefer one `wrap-bank` when that wrap-escape would kiss glass. Demo-band launch + too-low recatch remain the attack.
+- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap, do not wrap-escape the same pose or full-jump from off-screen (`wrap-loop`). A parked ball *inside* the launch band still wrap-escapes to the far side (blocking that froze classic at 0). Prefer one `wrap-bank` when a *close* reset would kiss glass. Demo-band launch + too-low recatch remain the attack. After wrap, wait for the 195–265 band before the next floor jump so recatch geometry still works.
 - `hole-spam` / `hole-ride` after the hole opens (anti packs)
 - `pop-away` on a hot bounce
 - Glass `seek-swish` (+4 HP) and drop-finish (10156 / 5992)
@@ -96,15 +96,15 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `bank-half` | Contact around half board height, moving into glass — **hold** | board geom + vy |
 | `bank-steep` | Steeper cut into the board (`\|vy\| > 0.52·\|vx\|`) — **hold** | velocity vs board |
 | `protect-finish` | Long jumpFwd in the glass/rim pocket — ZERO extra taps (overshoot loop) | `finishPocketLocked` |
-| `wrap-loop` | Break-glass only: off-screen / identical last tap pose / extra jump-speed recatch / wrap-escape after a fruitless wrap. Not the demo-band launch or too-low recatch (including after a rim graze) | recent poses + jump vel |
-| `wrap-bank` | Break-glass: wrap-escape (or a close reset) after a fruitless wrap whose tap would kiss glass, then ride | `predictTap.willBoard` once |
+| `wrap-loop` | Break-glass only: off-screen / identical last tap pose / extra jump-speed recatch / wrap-escape after a fruitless wrap. Not the demo-band launch, too-low recatch, or a parked recover under the hoop | recent poses + jump vel |
+| `wrap-bank` | Break-glass close kiss after a fruitless wrap/rim when the reset would hit glass — not the 195–290 launch | `predictTap.willBoard` once |
 | `bank-cut` | Classic only (demo `bankCutTap`): current path misses glass, jump-reset would kiss | `demoPriors.bankCutTap` |
 | `rim-swirl` | Inner-rim rattle (刷马桶) — hold, don't reset `jumpVx` | `hitRim` + inner side |
 | `tube-up` | Climbing through the net from below, then drop | under cylinder + `vy < 0` |
 | `exit-space` | Under-rim but opening court — let spacing grow, then jump back | under + bounce away |
 | `pop-away` | Elastic pop near the rim — let spacing open, then re-attack | `hotBounce` / `hoopRest` |
 | `wrap-escape` | Stuck under the rim: tap/wrap to the far side (穿屏) | `longJump` or `slipperyGlass` |
-| `early-jump` | Far floor launch (`|dx|` ≳ 195), then recatch near a too-low apex after flying in (`|dx|` ~110–133) so the reset peaks at the rim | `longJump` + dx / vy |
+| `early-jump` | Far floor launch (`|dx|` ~195–265; wait while crawling in from farther), then recatch near a too-low apex after flying in (`|dx|` ~110–133) so the reset peaks at the rim | `longJump` + dx / vy |
 | `far-climb` | Distant rapid taps so the ball falls near **90°** | far + rising, not `longJump` |
 | `ride-flight` | Descending live arc on a long jump — don't poke | `longJump` + `vy > 0` |
 | `carry-flight` | Already flying at the hoop while still rising at jump speed — don't reset `jumpVx` | `longJump` + `flyingAtHoop` |

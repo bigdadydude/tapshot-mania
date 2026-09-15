@@ -860,6 +860,31 @@ describe("ball AI registry", () => {
     assert.equal(d.reason, "early-jump");
   });
 
+  it("ninja waits on the floor while crawling into the demo band", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const floorY = 844 * 0.765;
+    const r = 19.5;
+    const far = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      ball: { x: hoop.x - 280, y: floorY - r, vx: 44, vy: 0, r },
+    });
+    const d = decideShot(far, helpers);
+    assert.equal(d.tap, false);
+    assert.equal(d.reason, "wait-window");
+    assert.notEqual(d.reason, "early-jump");
+  });
+
   it("ninja recatches mid-climb after flying in (human 2nd tap)", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
@@ -2380,6 +2405,53 @@ describe("AI controller", () => {
     assert.equal(decideShot(apex, helpers).reason, "early-jump");
     assert.equal(ai.tick(apex), true, ai.lastDecision()?.reason);
     assert.equal(ai.lastDecision()?.reason, "early-jump");
+    assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
+  });
+
+  it("unsticks a parked under-hoop freeze after a fruitless wrap", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "force-stranded-wrap",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "tap", reason: "wrap-escape" }),
+    });
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const floorY = 844 * 0.765;
+    const r = 19.5;
+    const ninja = {
+      dt: 1 / 60,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      hoop,
+    };
+    const seed = world({
+      ...ninja,
+      ball: { x: hoop.x - 50, y: hoop.y + 110, vx: -40, vy: 20, r },
+    });
+    ai.tick(seed);
+    const parked = world({
+      ...ninja,
+      dt: 1.7,
+      wraps: 1,
+      ball: { x: hoop.x - 90, y: floorY - r, vx: 8, vy: 10, r },
+    });
+    assert.equal(Math.abs(parked.ball.x - parked.hoop.x) < 390 * 0.5, true);
+    assert.equal(ai.tick(parked), true, ai.lastDecision()?.reason);
+    assert.ok(
+      ai.lastDecision()?.reason === "wrap-escape" || ai.lastDecision()?.reason === "wrap-bank",
+      ai.lastDecision()?.reason,
+    );
     assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
   });
 });

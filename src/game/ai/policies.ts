@@ -894,7 +894,12 @@ export const physPolicy: BallAiPolicy = {
     const far = feel.longJump
       ? dx > world.world.w * 0.5
       : dx > world.world.w * 0.38 * hangScale;
-    const launchFar = feel.longJump ? dx > world.world.w * 0.5 : dx > world.world.w * 0.48;
+    // Human p25–p75 |dx| ≈ 195–290. Apex travel ~129px: jump from ≳0.68w
+    // (~265) peaks too far for the 110–133 recatch, then only rims/wraps.
+    const launchFar = feel.longJump
+      ? dx > world.world.w * 0.5 && dx < world.world.w * 0.68
+      : dx > world.world.w * 0.48;
+    const crawlingIn = (world.hoop.x - world.ball.x) * world.ball.vx > 12;
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
     const launched =
       flyingAtHoop(world) && Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55;
@@ -979,6 +984,31 @@ export const physPolicy: BallAiPolicy = {
           }
           return hold("let-drop");
         }
+      }
+      // Inside the 195 band after a miss: wrap to the far side, then the
+      // demo-band launch. A floor poke from here sails through the cylinder.
+      if (
+        feel.longJump &&
+        onFloor(world) &&
+        !world.onApproachSide &&
+        !current.scores &&
+        dx < world.world.w * 0.5 &&
+        !under
+      ) {
+        const spd = Math.hypot(world.ball.vx, world.ball.vy);
+        if (spd < 78) return tap("wrap-escape");
+      }
+      // After a wrap the ball rolls in from ~0.76w. Wait until the 195–265
+      // band so the 2nd tap can still recatch at the too-low apex.
+      if (
+        feel.longJump &&
+        onFloor(world) &&
+        !world.onApproachSide &&
+        !world.ballHidden &&
+        dx >= world.world.w * 0.68 &&
+        crawlingIn
+      ) {
+        return hold("wait-window");
       }
       if (feel.longJump && onFloor(world) && launchFar) {
         return tap("early-jump");

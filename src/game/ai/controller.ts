@@ -248,9 +248,12 @@ export function createAiController(): AiController {
         sawContact = false;
       }
       const fruitless = fruitlessWraps > 0 || fruitlessContact > 0;
+      // Only the launch-band floor attack repeats. Persist under the hoop
+      // (dx < 0.5w) was a crawl of empty wrap-escapes after lastTap.
       const persistShot =
         !!lastTap &&
         lastTap.side === world.hoop.side &&
+        dx >= world.world.w * 0.5 &&
         Math.hypot(world.ball.x - lastTap.x, world.ball.y - lastTap.y) < POSE_MATCH &&
         Math.hypot(world.jumpVx - lastTap.jvx, world.jumpVy - lastTap.jvy) < JUMP_VEL_MATCH;
       const airSpam = launched && !grounded && airTaps >= 1;
@@ -287,21 +290,37 @@ export function createAiController(): AiController {
       }
       const inbound = helpers.predictCurrent(world);
       const nextShot = helpers.predictTap(world);
+      // Parked inside the launch band after a miss: wrap-escape is the
+      // recover to the far side, not the empty loop. Blocking it froze
+      // classic ninja at 0 until the 150s timeout.
+      const stranded =
+        grounded &&
+        !farRestart &&
+        !world.onApproachSide &&
+        !world.ballHidden &&
+        dx < world.world.w * 0.5;
       const wrapEscapeSpam =
-        longJump && fruitlessWraps > 0 && decision.reason === "wrap-escape";
-      const closeForBank = dx < world.world.w * 0.28;
+        longJump &&
+        fruitlessWraps > 0 &&
+        decision.reason === "wrap-escape" &&
+        !stranded;
+      if (stranded && (decision.reason === "wrap-escape" || decision.reason === "floor-launch")) {
+        wrapLoop = false;
+      }
       // Break-glass board-kiss: empty wrap-escape, or a close reset after a
       // wrap whose tap would kiss glass. Demo-band / recatch stay the attack.
+      // hitRim stays true after a graze and used to block this forever.
       const wantBoardTap =
         longJump &&
         !boardTapUsed &&
         !farRestart &&
         contactCool <= 0 &&
-        (!airSpam || fruitless) &&
+        fruitless &&
+        !recoverTap &&
         !inbound.willBoard &&
         !inbound.scores &&
         nextShot.willBoard &&
-        (wrapLoop || wrapEscapeSpam || (fruitless && closeForBank && !recoverTap));
+        (wrapLoop || wrapEscapeSpam || stranded || dx < world.world.w * 0.42);
       const thaw = grounded && sitHold > 2.4 && !farRestart;
       if (thaw && (wantBoardTap || !persistShot)) wrapLoop = false;
       const forceBank = wantBoardTap;
@@ -373,7 +392,19 @@ export function createAiController(): AiController {
       // resets jumpVx and is how ninja/heat wrap instead of finishing.
       const staleDrop = decision.reason === "let-drop" && below && sitting;
       const staleBounce = decision.reason === "floor-bounce" && sitting;
-      if (world.scored || (LEGIT_WAIT.has(decision.reason) && !staleDrop && !staleBounce)) {
+      const crawlWait =
+        longJump &&
+        grounded &&
+        !farRestart &&
+        !world.onApproachSide &&
+        !world.ballHidden &&
+        dx >= world.world.w * 0.68 &&
+        (world.hoop.x - world.ball.x) * world.ball.vx > 12;
+      if (
+        world.scored ||
+        crawlWait ||
+        (LEGIT_WAIT.has(decision.reason) && !staleDrop && !staleBounce)
+      ) {
         idle = 0;
         return false;
       }
