@@ -71,18 +71,20 @@ export function shotFeel(world: Pick<AiWorld, "world" | "jumpVx" | "jumpVy" | "g
 
 /**
  * Combo window is 4s. Human ninja 1-min 310: median make gap ~1.05s,
- * ~2 taps in 1.6s before a make, first-tap |dx| ~237. Classic 360 was
- * ~1.35s. Stretching pace with jumpFwd sat under the rim; ride holds
- * still block live-arc mash.
+ * ~2 taps in 1.6s before a make, first-tap |dx| ~237. Elite classic
+ * 2641 / combo 138 was ~0.64s/make — still ride a live arc, but don't
+ * sit a 1.12s let-drop after a miss. Classic 360 was ~1.35s.
+ * Heat/frost jumpFwd 1.0: human lava 678 / 28 and frost 1339 / 36 —
+ * stretching pace with jumpFwd sat idle (~1.77s).
  */
 export function comboPaceLimit(world: Parameters<typeof shotFeel>[0]): number {
   const f = shotFeel(world);
-  if (f.longJump) return clamp(1.12, 1.05, 1.28);
-  // Glass (bounce 0): human classic 10156 / combo 117, median gap ~1.29s,
-  // ~3.6 taps before a make. The 1.72s classic wait is hover.
+  if (f.longJump) return clamp(1.08, 1.05, 1.22);
+  // Glass (bounce 0): human classic 10156 / 117 and 5992 / 88, gap ~1.29s.
   if (f.bounce < 0.15) return clamp(1.24, 1.12, 1.38);
+  // Lava / frost (jumpFwd ~1.0): tighter than classic 1.72 — not longer.
+  if (f.jumpFwd >= 0.98) return clamp(1.48, 1.38, 1.62);
   let pace = 1.72;
-  pace += Math.max(0, f.jumpFwd - 0.95) * 1.1;
   if (f.slipperyGlass) pace += 0.12;
   if (f.hotBounce) pace -= 0.08;
   return clamp(pace, 1.35, 2.2);

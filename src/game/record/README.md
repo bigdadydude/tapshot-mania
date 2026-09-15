@@ -76,11 +76,12 @@ original one-file-per-run export). Old v1 files (top-level `samples` / `taps` /
 | `s` | Score at this sample |
 | `c` | Combo / streak shown in HUD |
 | `am` | Antimatter orb if present: `{ id, x, y, r, pct }` |
+| `orbs` | Pack alias: `[am]`. Some captures only have this array; analyzer reads either |
 | `ac` | Antimatter charge 0–100 (omitted when idle at 0) |
 | `ho` | Black hole if open: `{ x, y, r, left }` (`left` = seconds remaining) |
 
-`am` / `ac` / `ho` appear only on anti-gravity / antimatter games. Reconstruct
-orb paths by interpolating `am.x, am.y` over `t`. `id` is unique within the
+`am` / `orbs` / `ac` / `ho` appear only on anti-gravity / antimatter games. Reconstruct
+orb paths by interpolating `am.x, am.y` (or `orbs[0]`) over `t`. `id` is unique within the
 session (increments on each spawn).
 
 ### `taps[]`

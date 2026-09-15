@@ -51,7 +51,7 @@ import {
 import { createAiController, flagsFromKit } from "./ai";
 import { createPlayRecorder } from "./record";
 
-export const GAME_REV = 357;
+export const GAME_REV = 358;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -5074,6 +5074,9 @@ export function createGame(
         autoPlay: autoPlay.enabled(),
         autoPlayReason: autoPlay.lastDecision()?.reason ?? null,
         autoPlayPolicy: autoPlay.lastDecision()?.policyId ?? null,
+        holeOn,
+        antiCharge,
+        glassBase,
         recording: recorder.enabled(),
         recordingLive: recorder.live(),
         recordingSessions: recorder.sessionCount(),

@@ -2,7 +2,7 @@
  * Offline summary of a hand-play JSON (`src/game/record` schema).
  * Same metrics we mined from the ninja classic 360 demo.
  */
-import type { PlayEvent, PlayRecording, PlayRecordingPack, PlaySample, PlayTap } from "../record/types.ts";
+import type { PlayAntiOrb, PlayEvent, PlayRecording, PlayRecordingPack, PlaySample, PlayTap } from "../record/types.ts";
 
 export type RecordingSummary = {
   mode: string;
@@ -72,6 +72,22 @@ function boardYRatio(s: PlaySample): number | null {
   if (!(s.bh > 1)) return null;
   const bottom = s.by + s.bh;
   return (bottom - s.y) / s.bh;
+}
+
+/** Engine writes `am`; some packs store the same orb as `orbs: [am]`. */
+function sampleOrbs(s: PlaySample): PlayAntiOrb[] {
+  const out: PlayAntiOrb[] = [];
+  const seen = new Set<number>();
+  const add = (o?: PlayAntiOrb) => {
+    if (!o || seen.has(o.id)) return;
+    seen.add(o.id);
+    out.push(o);
+  };
+  add(s.am);
+  if (Array.isArray(s.orbs)) {
+    for (const o of s.orbs) add(o);
+  }
+  return out;
 }
 
 export function summarizePlayRecording(
@@ -164,8 +180,10 @@ export function summarizePlayRecording(
     antiCollects: rec.events.filter((e) => e.kind === "anti-collect").length,
     holeOpens: rec.events.filter((e) => e.kind === "hole-open").length,
     holeCloses: rec.events.filter((e) => e.kind === "hole-close").length,
-    antiOrbSamples: rec.samples.filter((s) => s.am).length,
-    antiIds: [...new Set(rec.samples.filter((s) => s.am).map((s) => s.am!.id))],
+    antiOrbSamples: rec.samples.filter((s) => sampleOrbs(s).length > 0).length,
+    antiIds: [
+      ...new Set(rec.samples.flatMap((s) => sampleOrbs(s).map((o) => o.id))),
+    ],
   };
 }
 

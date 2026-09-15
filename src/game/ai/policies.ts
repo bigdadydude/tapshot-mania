@@ -208,6 +208,31 @@ function scoreTapReason(next: { scores: boolean; bank: boolean; swish: boolean }
   return "predicted-make";
 }
 
+/** Already falling into the black hole — don't reset jumpVx. */
+function headingIntoHole(world: AiWorld): boolean {
+  const hole = world.hole;
+  if (!hole) return false;
+  const dx = hole.x - world.ball.x;
+  const dy = hole.y - world.ball.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const spd = Math.hypot(world.ball.vx, world.ball.vy);
+  const toward = (world.ball.vx * dx + world.ball.vy * dy) / dist;
+  return spd > 120 && toward > 80;
+}
+
+/**
+ * Far orb that a tap would not collect. Human anti 775 / combo 1 broke
+ * farming a detour; 1185 / 33 and 996 / 36 kept scoring while gathering.
+ */
+function antiDetour(world: AiWorld, nextCollects: boolean): boolean {
+  const orb = world.antiMatter;
+  if (!orb || nextCollects) return false;
+  if (world.antiCharge >= 70) return false;
+  const hoopDist = Math.hypot(world.ball.x - world.hoop.x, world.ball.y - world.hoop.y);
+  const orbDist = Math.hypot(world.ball.x - orb.x, world.ball.y - orb.y);
+  return orbDist > hoopDist * 0.85 && orbDist > world.world.w * 0.28;
+}
+
 /** Same jump reset as the last tap — rubber spam after a rim rattle. */
 function sameJumpAngle(world: AiWorld): boolean {
   const sp = Math.hypot(world.ball.vx, world.ball.vy);
@@ -416,15 +441,24 @@ export const antiPolicy: BallAiPolicy = {
     if (world.holeOn) {
       const current = helpers.predictCurrent(world);
       if (confidentMake(world, current.scores)) return hold("hole-flight-scores");
+      // Human anti: after hole-open, ride gravity when already inbound;
+      // otherwise spam taps so hole pull + hoop-aimed jumps thread the rim.
+      if (headingIntoHole(world)) return hold("hole-ride");
       return tap("hole-spam");
     }
 
     if (world.antiMatter) {
       if (clockPanic(world, 1.6) || comboPressure(world)) return abstain("clock-over-pickup");
       const current = helpers.predictCurrent(world);
-      if (confidentMake(world, current.scores)) return abstain("score-over-pickup");
-      if (current.collectedAnti) return hold("gather-path");
       const next = helpers.predictTap(world);
+      // Collect *while* scoring: a flight that both scores and gathers is the play.
+      if (current.scores && current.collectedAnti) return hold("gather-path");
+      if (confidentMake(world, current.scores)) return abstain("score-over-pickup");
+      // Live combo: don't over-farm a far orb (775 / combo 1).
+      if (world.comboCounting && world.streak >= 1 && antiDetour(world, next.collectedAnti)) {
+        return abstain("score-over-pickup");
+      }
+      if (current.collectedAnti) return hold("gather-path");
       if (next.collectedAnti) return tap("gather-tap");
       if (next.minAntiDist + 18 < current.minAntiDist) return tap("gather-closer");
       if (onFloor(world)) return tap("gather-launch");
@@ -440,7 +474,8 @@ export const antiPolicy: BallAiPolicy = {
  * board-top −3, land −4, swish +4. Human classic 10156 / combo 117 lasted
  * 171s on rim 52 / swish 40 / bank 25 (net ≈ +31 HP) and 1 miss. Prior AI
  * hovered; the first commit pass went 60% rim / 17% swish and shattered
- * around combo 25. Prefer swish, don't settle a miss, rim-commit only with HP.
+ * around combo 25. Human 5992 / 88 (+ short 394) is the same mix — drop
+ * for the finish, skip banks when HP is low.
  */
 export const glassPolicy: BallAiPolicy = {
   id: "glass",
@@ -474,6 +509,11 @@ export const glassPolicy: BallAiPolicy = {
       return tap("seek-swish");
     }
     if (droppingIn && current.scores) return hold("protect-finish");
+    // Fragile HP: a live bank still finishes if we don't tap. Slamming
+    // jumpVx here is 打铁 −2 (5992 / 88 shatter-avoidance).
+    if (fragile && current.scores && current.bank && !current.swish && !onFloor(world)) {
+      return hold("glass-settle");
+    }
 
     // jumpVy from above the rim is the hover loop: fall → tap → climb → repeat.
     if (aboveRim(world) && !onFloor(world)) return hold("glass-settle");
@@ -669,6 +709,8 @@ export const physPolicy: BallAiPolicy = {
         if (lowBounce(world)) {
           const spd = Math.hypot(world.ball.vx, world.ball.vy);
           if (spd < 90 && bounceOpening(world)) return hold("exit-space");
+          // Combo dying on the floor-bounce: wrap, don't sit a let-drop.
+          if (comboPressure(world) && !current.scores) return tap("wrap-escape");
           return hold("let-drop");
         }
         // Too-low apex under the cylinder: recatch for height. Tube-up only
@@ -682,13 +724,22 @@ export const physPolicy: BallAiPolicy = {
         ) {
           return hold("tube-up");
         }
-        // Falling well below the rim: hold. Default apex-boost from
-        // here is the jump-over. Stay out of inner-rim swirl (y near hoop.y).
+        // Falling well below the rim: hold a live attack. After a miss the
+        // 1.08s combo clock (elite 2641 / 138, 310 / 28) must wrap instead
+        // of sitting in let-drop — that was the 1–13 pt drought.
         if (world.ball.vy > 12 && world.ball.y > world.hoop.y + world.hoop.inner) {
+          if (comboPressure(world) && !current.scores && !flyingAtHoop(world)) {
+            return tap("wrap-escape");
+          }
           return hold("let-drop");
         }
         const tooLow = world.ball.y > world.hoop.y + world.hoop.inner * 2.2;
-        if (tooLow) return hold("let-drop");
+        if (tooLow) {
+          if (comboPressure(world) && !current.scores && !flyingAtHoop(world)) {
+            return tap("wrap-escape");
+          }
+          return hold("let-drop");
+        }
       }
       if (feel.longJump && onFloor(world) && launchFar) {
         return tap("early-jump");
@@ -746,6 +797,7 @@ export const physPolicy: BallAiPolicy = {
     }
 
     // Slightly long jumpFwd (heat 1.0): last apex in a wider pocket wraps.
+    // Human lava 678 / 28 — don't sit that hold after combo pace elapses.
     if (
       feel.jumpFwd >= 0.98 &&
       !feel.longJump &&
@@ -755,6 +807,13 @@ export const physPolicy: BallAiPolicy = {
       dx < releasePocket(world, feel) &&
       (flyingAtHoop(world) || under || world.ball.vy > 18)
     ) {
+      if (
+        comboPressure(world) &&
+        !current.scores &&
+        world.ball.y > world.hoop.y + world.hoop.inner * 1.8
+      ) {
+        return tap("pace-boost");
+      }
       return hold("let-drop");
     }
 
@@ -781,7 +840,8 @@ export const frostPolicy: BallAiPolicy = {
       if (aboveRim(world) && !onFloor(world)) return hold("chain-wait");
       if (onFloor(world) || lowBounce(world)) {
         const spd = Math.hypot(world.ball.vx, world.ball.vy);
-        if (onFloor(world) && spd < 90) return tap("reset-boost");
+        // Frost 1339 / 36: don't idle a frozen stand after combo pace.
+        if (onFloor(world) && (spd < 90 || comboPressure(world))) return tap("reset-boost");
         return hold("floor-bounce");
       }
       return hold("let-drop");

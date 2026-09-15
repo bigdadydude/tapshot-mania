@@ -293,6 +293,7 @@ function compactSample(t: number, f: number, frame: PlayFrameInput): PlaySample 
       r: r1(frame.anti.r),
       pct: frame.anti.pct,
     };
+    sample.orbs = [sample.am];
   }
   const charge = frame.antiCharge ?? 0;
   if (charge > 0 || frame.anti || frame.hole) sample.ac = charge;

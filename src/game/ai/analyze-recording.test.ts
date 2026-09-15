@@ -103,4 +103,41 @@ describe("recording analyzer", () => {
     assert.equal(s.antiOrbSamples, 1);
     assert.deepEqual(s.antiIds, [1]);
   });
+
+  it("counts orbs[] when am is missing (pack alias)", () => {
+    const s = summarizePlayRecording(
+      rec({
+        ballId: "anti",
+        samples: [
+          {
+            t: 0.5,
+            f: 30,
+            x: 80,
+            y: 400,
+            vx: 10,
+            vy: -20,
+            hs: -1,
+            hx: 48,
+            hy: 280,
+            hi: 28,
+            ht: 8,
+            hm: false,
+            bx: 8,
+            by: 120,
+            bw: 14,
+            bh: 200,
+            s: 0,
+            c: 0,
+            orbs: [{ id: 7, x: 140, y: 400, r: 16, pct: 18 }],
+          },
+        ],
+        events: [
+          { t: 0, f: 0, kind: "start" },
+          { t: 0.4, f: 24, kind: "anti-spawn", antiId: 7, pct: 18, x: 140, y: 400 },
+        ],
+      }),
+    );
+    assert.equal(s.antiOrbSamples, 1);
+    assert.deepEqual(s.antiIds, [7]);
+  });
 });

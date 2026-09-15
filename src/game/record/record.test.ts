@@ -213,6 +213,8 @@ describe("play recorder", () => {
     assert.equal(withOrb.am.id, 1);
     assert.equal(withOrb.am.x, 140);
     assert.equal(withOrb.am.pct, 12);
+    assert.ok(withOrb.orbs);
+    assert.equal(withOrb.orbs[0]?.id, 1);
     const withHole = file.samples.find((s) => s.ho);
     assert.ok(withHole?.ho);
     assert.equal(withHole.ho.x, 195);

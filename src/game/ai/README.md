@@ -41,14 +41,18 @@ those numbers (and elasticity), not `ballId`. `shotFeel(world)` derives:
 | `pMul("floor")` | `floorMul` | Floor pop energy |
 | `kit.wrap` | `groundWrap` | 44 px/s crawl after an overshoot |
 
-**Combo pace** (window is 4s): classic ~1.72; heat slightly longer. **Long
-jumpFwd (ninja)** is **tighter** (~1.12s) — a human 1-min 310 (combo 28,
-~5.0 pts/s) had a median make gap of ~1.05s, first-tap |dx| ~237
-(p25–p75 ≈ 195–290), ~2 taps before a make, and **no swishes** (bank 29 /
-rim 17). Classic 360 was ~1.35s. The old 2.6s ninja wait sat under the rim.
-`carry-flight` / `ride-flight` still block combo-clock mash on a live arc.
+**Combo pace** (window is 4s): classic ~1.72; **heat / frost** ~1.48 (human lava
+678 / 28, frost 1339 / 36). **Long jumpFwd (ninja)** is **tighter** (~1.08s) —
+a human 1-min 310 (combo 28, ~5.0 pts/s) had a median make gap of ~1.05s,
+first-tap |dx| ~237 (p25–p75 ≈ 195–290), ~2 taps before a make, and **no
+swishes** (bank 29 / rim 17). Elite classic 2641 / 138 (~0.64s/make, rim+bank)
+and 1324 / 97 (almost all banks) are the decaying-clock bar. Classic 360 was
+~1.35s. The old 2.6s ninja wait sat under the rim. `carry-flight` / `ride-flight`
+still block combo-clock mash on a live arc; a dying combo on a parked miss
+under the rim is `wrap-escape`, not a 1–13 pt drought.
 **Glass (bounce 0)** is also tight (~1.24s) — human classic 10156 / combo 117
-had a ~1.29s gap and ~3.6 short taps from |dx| ~296 (rim 52 / swish 40 / bank 25).
+and 5992 / 88 had a ~1.29s gap and ~3.6 short taps from |dx| ~296 (rim / swish /
+bank mix).
 
 **Release pocket:** slightly wide `jumpFwd` (1.0, lava/frost) holds let-drop
 sooner so the last apex does not wrap. `longJump` (ninja 1.2) does **not**
@@ -74,11 +78,15 @@ Ball-id / skill-flag votes are only for skills that are not a number:
 | `ride-flight` | Descending live arc on a long jump — don't poke | `longJump` + `vy > 0` |
 | `carry-flight` | Already flying at the hoop while still rising at jump speed — don't reset `jumpVx` | `longJump` + `flyingAtHoop` |
 | `hole-spam` | Black hole open — tap; gravity pulls it in | `kit.anti` / `holeOn` |
+| `hole-ride` | Already inbound to the hole — hold, don't reset `jumpVx` | `kit.anti` / `holeOn` |
 | `gather-tap` | Antimatter pickup, but shot clock beats farming | `kit.anti` |
 
-Antimatter later: keep gathering **while scoring** (`score-over-pickup` defers a
-make); `clock-over-pickup` drops the farm when the shot/combo clock is short.
-Once `holeOn`, `hole-spam` is snappy.
+Antimatter playbook #8 (human classic 1185 / 33, 996 / 36, 775 / 1): gather
+**while scoring**. `score-over-pickup` defers a far-orb detour during a live
+combo (775 broke combo farming); a flight that both scores and collects holds
+`gather-path`. `clock-over-pickup` drops the farm when the shot/combo clock is
+short. Once `holeOn`, `hole-spam` is snappy; `hole-ride` if velocity already
+points into the hole.
 
 Playbook mapping (PO):
 
@@ -88,11 +96,11 @@ Playbook mapping (PO):
 4. High bounce → `pop-away`
 5. Stuck 穿屏 → `wrap-escape`
 6. Distant 90° taps → `far-climb`
-7. Long jumpFwd: floor/far `early-jump` (band `|dx|` 195–290) → `carry-flight` until near apex → one recatch (`tooLowApex`, including under the cylinder when the first apex is still ~150px low) → `ride-flight` / `rim-swirl` / upper `bank-half`. A recatch at vy ~-270 overshoots into a wrap. Wrap past glass is `wrap-escape` (310 demo: 4/8 wraps scored in 2.5s). Do not start a shot late under the rim. Do not `carry-flight` the whole first climb — one floor tap peaks ~150px under the rim. `tube-up` only through the net, not from a too-low rise.
+7. Long jumpFwd: floor/far `early-jump` (band `|dx|` 195–290) → `carry-flight` until near apex → one recatch (`tooLowApex`, including under the cylinder when the first apex is still ~150px low) → `ride-flight` / `rim-swirl` / upper `bank-half`. A recatch at vy ~-270 overshoots into a wrap. Wrap past glass is `wrap-escape` (310 demo: 4/8 wraps scored in 2.5s). Dying combo on a parked miss under the rim is also `wrap-escape` (not a let-drop drought). Do not start a shot late under the rim. Do not `carry-flight` the whole first climb — one floor tap peaks ~150px under the rim. `tube-up` only through the net, not from a too-low rise.
+8. Black hole → gather while scoring (no over-farm); `hole-spam` / `hole-ride` once open
 
-Human ninja **1-min 310** (62s, combo 28, ~5.0 pts/s): bank 29 / rim 17 / swish 0. Summarize more demos with `node --experimental-strip-types scripts/summarize-recording.mjs <file.json>`.
+Human ninja **1-min 310** (62s, combo 28, ~5.0 pts/s): bank 29 / rim 17 / swish 0. Elite classic **2641 / 138** (88s, rim+bank) and **1324 / 97** (79s, mostly banks). Summarize more demos with `node --experimental-strip-types scripts/summarize-recording.mjs <file.json>`.
 Human ninja classic 360 (101.9s, 3.5 pts/s): bank ~58% / rim ~33% / swish ~9%.
-8. Black hole → `gather-tap` while scoring; `hole-spam` once open
 
 ## Adding a new ball policy
 
@@ -145,15 +153,16 @@ bounce / glass grip make a tap dangerous or a playbook tactic applies.
 - **Banks:** 擦板 only in the **glass pocket**. Prefer **half-board** and **steep** cuts (`bank-half` / `bank-steep`). A tap resets to full `jumpVx`.
 - **Floor bounce / pop-away:** after a messy miss or a hot bounce, hold while velocity is **opening spacing**. Sitting idle under the rim is `wrap-escape`, not a hover.
 - **Climb / release:** far + rising → tap-climb for a near-vertical drop; release in the pocket; let-drop above the rim. Long jumpFwd **jumps early** then **rides** the descent.
-- **Frost:** freeze can keep the scored stand (`nextHoop` does not always flip). After a make still next to that stand, **let-drop** instead of `chain-next` into the glass. Frozen +2 is in-engine.
-- **Heat / ninja clones / fire extras:** combo-driven in-engine. AI only sees their phys (jumpFwd 1.0 / 1.2, hoop 0.8, boardFric 0.7).
+- **Frost:** freeze can keep the scored stand (`nextHoop` does not always flip). After a make still next to that stand, **let-drop** instead of `chain-next` into the glass. Frozen +2 is in-engine. Human classic 1339 / 36: combo pace ~1.48s, floor `reset-boost` when the freeze clock is dying.
+- **Heat / ninja clones / fire extras:** combo-driven in-engine. AI only sees their phys (jumpFwd 1.0 / 1.2, hoop 0.8, boardFric 0.7). Lava classic 678 / 28 uses the 1.48s heat pace.
 
 `glass` (priority 70) climbs from far (`|dx|` ~296, ~3.6 taps) then **drops**
 for the finish. `seek-swish` (+4 HP) is the only scoring tap in the pocket —
 `commit-make` slams `jumpVx` into the rim (−2) and shattered the first commit
 pass at combo 25. Aligned drops `glass-settle` (rim finishes still count from
 a held drop). Off-center / too-low / floor → `glass-launch`. `glassBase` ≤ 10
-skips banks (board −1 / top −3). `wrap-height` (rubber) lets rattles resolve
+skips banks (board −1 / top −3); a live bank at low HP `glass-settle`s so we
+don't slam iron. `wrap-height` (rubber) lets rattles resolve
 and only banks in the glass pocket.
 
 ## Formal menu later

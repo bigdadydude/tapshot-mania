@@ -48,6 +48,7 @@ const LEGIT_WAIT = new Set([
   "commit-glass",
   "rim-swirl",
   "pop-away",
+  "hole-ride",
   "tube-up",
   "bank-steep",
   "bank-half",

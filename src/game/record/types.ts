@@ -66,6 +66,11 @@ export type PlaySample = {
   c: number;
   /** Active antimatter orb (anti ball only). */
   am?: PlayAntiOrb;
+  /**
+   * Pack alias used by some captures: `orbs: [am]`. Analyzer reads this
+   * when `am` is missing. Engine export writes both.
+   */
+  orbs?: PlayAntiOrb[];
   /** Antimatter charge 0–100 (omitted when 0 and idle). */
   ac?: number;
   /** Black hole while open. */

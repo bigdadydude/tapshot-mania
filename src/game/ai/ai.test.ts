@@ -517,6 +517,33 @@ describe("ball AI registry", () => {
     assert.ok(ride.reason === "ride-flight" || ride.reason === "let-drop");
   });
 
+  it("ninja wraps a combo-dying parked miss under the rim instead of sitting", () => {
+    const w = 390;
+    const hoop = {
+      x: w - 28 - w * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const dying = world({
+      hoop,
+      jumpVx: w * 0.76 * 1.2,
+      ballMul: 1,
+      kit: flags({ ninja: true }),
+      combo: 18,
+      streak: 18,
+      comboClock: 1.4,
+      comboCounting: true,
+      ball: { x: hoop.x - 55, y: hoop.y + 110, vx: 8, vy: 20, r: 19.5 },
+    });
+    const d = decideShot(dying, helpers);
+    assert.equal(d.policyId, "phys");
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "wrap-escape");
+  });
+
   it("ninja launches from far on the floor (human first-tap |dx| ~237)", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
@@ -706,6 +733,24 @@ describe("ball AI registry", () => {
     assert.equal(d.reason, "carry-flight");
     assert.notEqual(d.reason, "early-jump");
     assert.notEqual(d.reason, "apex-boost");
+
+    const dying = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx,
+      jumpVy,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      combo: 12,
+      streak: 12,
+      comboClock: 1.5,
+      comboCounting: true,
+      ball: { x: hoop.x - 237, y: hoop.y + 200, vx: jumpVx, vy: jumpVy, r: 19.5 },
+    });
+    const holdClimb = decideShot(dying, helpers);
+    assert.equal(holdClimb.reason, "carry-flight");
+    assert.equal(holdClimb.tap, false);
   });
 
   it("ninja early-jumps a rising far shot that is not yet flying at the hoop", () => {
@@ -910,8 +955,10 @@ describe("ball AI registry", () => {
     const heat = world({ jumpVx: 390 * 0.76 * 1.0 });
     const plain = world({ jumpVx: 390 * 0.76 * 0.95 });
     assert.ok(comboPaceLimit(ninja) < comboPaceLimit(plain));
-    assert.ok(comboPaceLimit(heat) >= comboPaceLimit(plain) - 0.01);
-    assert.ok(comboPaceLimit(ninja) <= 1.28);
+    assert.ok(comboPaceLimit(heat) < comboPaceLimit(plain));
+    assert.ok(comboPaceLimit(heat) <= 1.62);
+    assert.ok(comboPaceLimit(heat) >= 1.38);
+    assert.ok(comboPaceLimit(ninja) <= 1.22);
     assert.ok(comboPaceLimit(ninja) >= 1.05);
 
     const glass = world({
@@ -1017,6 +1064,44 @@ describe("ball AI registry", () => {
     assert.equal(d.policyId, "anti");
     assert.equal(d.tap, true);
     assert.equal(d.reason, "hole-spam");
+  });
+
+  it("anti rides gravity when already heading into the hole", () => {
+    const d = decideShot(
+      world({
+        kit: flags({ anti: true }),
+        holeOn: true,
+        hole: { x: 200, y: 300, r: 80 },
+        ball: { x: 160, y: 420, vx: 90, vy: -160, r: 19.5 },
+      }),
+      helpers,
+    );
+    assert.equal(d.policyId, "anti");
+    assert.equal(d.tap, false);
+    assert.equal(d.reason, "hole-ride");
+  });
+
+  it("anti does not over-farm a far orb during a live combo", () => {
+    const hoop = { x: 66, y: 330, inner: 28, side: -1 as const, tube: 4.3, moving: false };
+    const d = decideShot(
+      world({
+        hoop,
+        kit: flags({ anti: true }),
+        combo: 12,
+        streak: 12,
+        comboClock: 0.4,
+        comboCounting: true,
+        antiCharge: 20,
+        antiMatter: { x: 340, y: 520, r: 16 },
+        ball: { x: 90, y: 480, vx: -40, vy: 30, r: 19.5 },
+      }),
+      helpers,
+    );
+    assert.notEqual(d.reason, "gather-tap");
+    assert.notEqual(d.reason, "gather-closer");
+    assert.notEqual(d.reason, "gather-launch");
+    assert.notEqual(d.reason, "gather-path");
+    assert.notEqual(d.reason, "gather-wait");
   });
 
   it("anti does not farm a pickup over a dropping make", () => {
