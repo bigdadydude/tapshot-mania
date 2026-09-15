@@ -392,6 +392,40 @@ describe("ball AI registry", () => {
     );
     assert.equal(short.tap, true);
     assert.notEqual(short.reason, "glass-settle");
+
+    // Rim contact −2. Low HP must not slam iron — hunt a swish instead.
+    const fragile = decideShot(
+      world({
+        hoop,
+        glassBase: 6,
+        ball: { x: hoop.x + 110, y: 420, vx: -40, vy: 30, r: 16 },
+        jumpVx: -80,
+        jumpVy: -900,
+        kit: flags({ glass: true, wrap: "height" }),
+      }),
+      helpers,
+    );
+    assert.equal(fragile.policyId, "glass");
+    assert.notEqual(fragile.reason, "commit-make");
+    assert.notEqual(fragile.reason, "commit-glass");
+
+    // Off-center in the pocket: realign, don't settle a miss into 打铁/落地.
+    const missPocket = decideShot(
+      world({
+        hoop,
+        ball: { x: hoop.x + 70, y: hoop.y + 48, vx: 10, vy: 50, r: 16 },
+        jumpVx: -80,
+        jumpVy: -900,
+        kit: flags({ glass: true, wrap: "height" }),
+      }),
+      helpers,
+    );
+    assert.equal(missPocket.tap, true);
+    assert.ok(
+      missPocket.reason === "glass-launch" ||
+        missPocket.reason === "seek-swish" ||
+        missPocket.reason === "commit-make",
+    );
   });
 
   it("commits a bank in the glass pocket and does not wrap-boost past the board", () => {

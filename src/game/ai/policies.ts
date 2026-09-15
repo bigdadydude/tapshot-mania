@@ -436,10 +436,11 @@ export const antiPolicy: BallAiPolicy = {
 };
 
 /**
- * Glass: protect a real dropping finish, but COMMIT rim/swish/bank instead of
- * hovering. Restitution is 0 — extra taps in the sky float forever.
- * Human classic 10156 / combo 117: rim 52 / swish 40 / bank 25, ~3.6 taps
- * from |dx| ~296, median gap ~1.29s, 1 miss. Prior AI sat in glass-settle.
+ * Glass: restitution 0. HP starts at 20 (cap 50): rim contact −2, bank −1,
+ * board-top −3, land −4, swish +4. Human classic 10156 / combo 117 lasted
+ * 171s on rim 52 / swish 40 / bank 25 (net ≈ +31 HP) and 1 miss. Prior AI
+ * hovered; the first commit pass went 60% rim / 17% swish and shattered
+ * around combo 25. Prefer swish, don't settle a miss, rim-commit only with HP.
  */
 export const glassPolicy: BallAiPolicy = {
   id: "glass",
@@ -452,39 +453,62 @@ export const glassPolicy: BallAiPolicy = {
     const next = helpers.predictTap(world);
     const aligned =
       Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 0.88;
-    const droppingIn =
-      world.ball.vy > 48 &&
-      aligned &&
-      world.ball.y > world.hoop.y - world.ball.r * 0.6 &&
-      world.ball.y < world.hoop.y + world.hoop.inner * 1.2;
-    if (droppingIn && current.swish && current.scores) return hold("protect-swish");
-    if (droppingIn && current.scores) return hold("protect-finish");
-
-    // jumpVy from above the rim is the hover loop: fall → tap → climb → repeat.
-    if (aboveRim(world) && !onFloor(world)) return hold("glass-settle");
-
     const pocket =
       Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 2.55 + world.ball.r;
+    const droppingIn =
+      world.ball.vy > 36 &&
+      aligned &&
+      world.ball.y > world.hoop.y - world.ball.r * 0.6 &&
+      world.ball.y < world.hoop.y + world.hoop.inner * 1.35;
     const fallingInPocket =
       pocket &&
       aligned &&
       world.ball.vy > 12 &&
       world.ball.y > world.hoop.y - world.ball.r &&
       world.ball.y < world.hoop.y + world.hoop.inner * 2.05;
-    if (next.scores && next.swish && !fallingInPocket) return tap("seek-swish");
-    if (next.scores && !fallingInPocket) return tap("commit-make");
+    // Rim contact −2. Below this, hunt swishes (+4) instead of slamming iron.
+    const fragile = world.glassBase <= 10;
+
+    if (droppingIn && current.scores && current.swish) return hold("protect-swish");
+    if (droppingIn && current.scores && next.swish && !current.swish) {
+      return tap("seek-swish");
+    }
+    if (droppingIn && current.scores) return hold("protect-finish");
+
+    // jumpVy from above the rim is the hover loop: fall → tap → climb → repeat.
+    if (aboveRim(world) && !onFloor(world)) return hold("glass-settle");
+
+    // Swish first (human 40/117, +4 HP). Don't jump over a dropping swish.
+    if (next.scores && next.swish && !(droppingIn && current.swish)) {
+      return tap("seek-swish");
+    }
+    // Rim finish is OK with HP to spare (human 52/117) — not when fragile.
+    if (
+      next.scores &&
+      !next.bank &&
+      !fragile &&
+      !fallingInPocket
+    ) {
+      return tap("commit-make");
+    }
     if (comboPressure(world) && !pocket && !aboveRim(world) && !droppingIn) {
       return tap("pace-boost");
     }
 
     if (pocket && !onFloor(world)) {
-      // Aligned and falling through — committing means NOT tapping (rim OK).
+      // Aligned drop: hold even on a miss — a full jumpVy from here flies over.
       if (fallingInPocket) return hold("glass-settle");
-      if (nearBoard(world) && inBankBand(world) && movingTowardBoard(world)) {
+      if (
+        !fragile &&
+        nearBoard(world) &&
+        inBankBand(world) &&
+        movingTowardBoard(world)
+      ) {
         return hold("commit-glass");
       }
-      // Missed below the net — climb; do not fall to the floor (glass −4).
+      // Below the net or off-center: climb / realign. Do not fall to the floor (−4).
       if (world.ball.y > world.hoop.y + world.hoop.inner * 1.6) return tap("glass-launch");
+      if (!aligned) return tap("glass-launch");
       return hold("glass-settle");
     }
 

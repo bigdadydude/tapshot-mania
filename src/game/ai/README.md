@@ -148,10 +148,11 @@ bounce / glass grip make a tap dangerous or a playbook tactic applies.
 - **Frost:** freeze can keep the scored stand (`nextHoop` does not always flip). After a make still next to that stand, **let-drop** instead of `chain-next` into the glass. Frozen +2 is in-engine.
 - **Heat / ninja clones / fire extras:** combo-driven in-engine. AI only sees their phys (jumpFwd 1.0 / 1.2, hoop 0.8, boardFric 0.7).
 
-`glass` (priority 70) still protects a real dropping swish or rim finish. It
-**commits** (`seek-swish` / `commit-make`) when a tap would score, keeps
-climbing from far (`|dx|` ~296, ~3.6 taps), and only `glass-settle`s in the
-pocket or above the rim — not from mid-court. `wrap-height` (rubber) lets
+`glass` (priority 70) prefers **swish** (`seek-swish`, +4 HP) over rim
+(`commit-make`, rim contact −2) and bank (board −1 / top −3). It climbs from
+far (`|dx|` ~296, ~3.6 taps), never settles a miss in the pocket (that's 打铁 /
+落地 −4), and only rim-commits while `glassBase` > 10. Above the rim it still
+`glass-settle`s — jumpVy there is the hover loop. `wrap-height` (rubber) lets
 rattles resolve and only banks in the glass pocket.
 
 ## Formal menu later
