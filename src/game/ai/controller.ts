@@ -108,6 +108,8 @@ export function createAiController(): AiController {
   let fruitlessContact = 0;
   let lastLaunchDx = -1;
   let boardTapUsed = false;
+  let sitHold = 0;
+  let lastTap: LoopPose | null = null;
   let recentTaps: LoopPose[] = [];
 
   function clearLoop() {
@@ -120,6 +122,8 @@ export function createAiController(): AiController {
     fruitlessContact = 0;
     lastLaunchDx = -1;
     boardTapUsed = false;
+    sitHold = 0;
+    lastTap = null;
     recentTaps = [];
   }
 
@@ -233,16 +237,27 @@ export function createAiController(): AiController {
       const fruitless = fruitlessWraps > 0 || fruitlessContact > 0;
       const sameLaunch =
         lastLaunchDx >= 0 && Math.abs(dx - lastLaunchDx) < LAUNCH_SPACING;
+      const persistShot =
+        !!lastTap &&
+        lastTap.side === world.hoop.side &&
+        Math.hypot(world.ball.x - lastTap.x, world.ball.y - lastTap.y) < POSE_MATCH &&
+        Math.hypot(world.jumpVx - lastTap.jvx, world.jumpVy - lastTap.jvy) < JUMP_VEL_MATCH;
       // Same pose+jump vector stays a loop after wrap-cool expires (stuck-1/2
-      // replayed the identical (vx,vy) chain). New attempts need spacing or a
-      // different pose — not another full jump from the same band.
-      const wrapLoop =
+      // replayed the identical (vx,vy) chain). Ban the last tap pose, not the
+      // whole climb corridor (that froze ninja at 0). Sitting too long thaws
+      // one attempt so wrap-bank / a spaced launch can fire.
+      let wrapLoop =
         longJump &&
         (farRestart ||
-          (sameShot && (wrapCool > 0 || poseFresh > 0 || fruitless)) ||
-          (fruitless && sameLaunch && grounded) ||
-          (contactCool > 0 && (!grounded || sameLaunch || sameShot)) ||
+          (sameShot && (wrapCool > 0 || poseFresh > 0)) ||
+          (fruitless && persistShot) ||
+          (fruitless && sameLaunch) ||
+          (contactCool > 0 && (!grounded || sameLaunch || persistShot)) ||
           (launched && !grounded && airTaps >= 1));
+      if (wrapLoop && grounded && !farRestart) sitHold += world.dt;
+      else if (!wrapLoop) sitHold = 0;
+      const thaw = grounded && sitHold > 2.4 && !farRestart;
+      if (thaw) wrapLoop = false;
       if (decision.tap) {
         // Long jumpFwd near glass/rim: ZERO extra taps. bank-cut / apex /
         // combo-pressure / wrap-in-pocket / watchdog is the ninja death loop.
@@ -299,7 +314,16 @@ export function createAiController(): AiController {
           });
           if (recentTaps.length > 8) recentTaps.shift();
           poseFresh = 0.45;
-          lastLaunchDx = dx;
+          lastTap = {
+            x: world.ball.x,
+            y: world.ball.y,
+            side: world.hoop.side,
+            jvx: world.jumpVx,
+            jvy: world.jumpVy,
+            dx,
+          };
+          if (grounded || !launched) lastLaunchDx = dx;
+          sitHold = 0;
           // Only a tap that already has jump speed counts as the recatch.
           // A first tap from rest/crawl (title leftover vx, wrap roll) is the launch.
           airTaps = grounded || !launched ? 0 : airTaps + 1;

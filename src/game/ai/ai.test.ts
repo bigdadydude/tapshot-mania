@@ -1998,6 +1998,16 @@ describe("AI controller", () => {
     });
     assert.equal(ai.tick(sameBand), false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    // Parked in that band: after a sit thaw, one new attempt may fire.
+    const thawed = world({
+      ...ninja,
+      dt: 2.5,
+      wraps: 1,
+      ball: { x: hoop.x - 224, y: floorY - r, vx: 8, vy: 10, r },
+    });
+    assert.equal(ai.tick(thawed), true);
+    assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
   });
 
   it("breaks full-jump spam after bank/rim without a score (stuck-2)", () => {
