@@ -541,7 +541,7 @@ describe("ball AI registry", () => {
       hoopMul: 0.8,
       boardFric: 0.7,
       shotOpen: true,
-      ball: { x: hoop.x - 224, y: hoop.y + 180, vx: 280, vy: -520, r: 19.5 },
+      ball: { x: hoop.x - 224, y: hoop.y + 20, vx: 280, vy: -200, r: 19.5 },
     });
     const d = decideShot(rising, helpers);
     assert.equal(d.tap, false);
@@ -586,11 +586,25 @@ describe("ball AI registry", () => {
       jumpVx: 390 * 0.76 * 1.2,
       hoopMul: 0.8,
       boardFric: 0.7,
-      ball: { x: 430, y: hoop.y + 40, vx: 90, vy: 40, r: 19.5 },
+      ball: { x: 430, y: hoop.y + 40, vx: -90, vy: 40, r: 19.5 },
     });
     const d = decideShot(past, helpers);
     assert.equal(d.tap, true);
     assert.equal(d.reason, "wrap-escape");
+
+    const headingOut = decideShot(
+      world({
+        hoop,
+        kit: flags({ ninja: true }),
+        jumpVx: 390 * 0.76 * 1.2,
+        hoopMul: 0.8,
+        boardFric: 0.7,
+        ball: { x: 430, y: hoop.y + 40, vx: 90, vy: 40, r: 19.5 },
+      }),
+      helpers,
+    );
+    assert.equal(headingOut.tap, false);
+    assert.equal(headingOut.reason, "let-drop");
   });
 
   it("ninja rides a live arc instead of combo-pace poking", () => {

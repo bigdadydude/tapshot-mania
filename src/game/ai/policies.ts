@@ -113,30 +113,6 @@ function flyingAtHoop(world: AiWorld): boolean {
   return toward > 24 && Math.abs(world.ball.vx) > 50;
 }
 
-/**
- * First long-jump from the floor dies ~150px under the rim (ninja demo:
- * 2–3 taps before a make). Recatch only at that low apex — a rising
- * tap every frame is spam and wraps.
- */
-function tooLowApex(world: AiWorld): boolean {
-  const belowFinish = world.ball.y > world.hoop.y + world.hoop.inner * 1.2;
-  const nearApex = world.ball.vy > -90 && world.ball.vy < 55;
-  return belowFinish && nearApex;
-}
-
-/**
- * Mid-climb recatch: wait until jumpVy has decayed (~0.19s) so we do
- * not spam, but tap before the dead apex so the next arc clears the
- * near-side rim. Demo: 2–3 taps, first |dx| ~224.
- */
-function climbRecatch(world: AiWorld): boolean {
-  const dx = Math.abs(world.ball.x - world.hoop.x);
-  const farEnough = dx > world.hoop.inner * 3.4;
-  const below = world.ball.y > world.hoop.y + world.hoop.inner * 1.6;
-  const dyingClimb = world.ball.vy > -380 && world.ball.vy < -80;
-  return farEnough && below && dyingClimb;
-}
-
 /** Parked / dying under the rim — the ninja freeze. */
 function stalledNearHoop(world: AiWorld): boolean {
   if (onFloor(world) || world.onApproachSide) return false;
@@ -351,20 +327,16 @@ export const defaultPolicy: BallAiPolicy = {
       return tap(scoreTapReason(next));
     }
 
-    // tapJump writes full jumpVx. After the first long-jump launch, ride
-    // the arc — a second reset wraps. Rubber is longTravel via ballMul.
+    // tapJump writes full jumpVx. Ride only a *descending* long-jump
+    // arc — rising still needs apex-boost or the 1.2 jump tunnels under.
     if (
       longJumpFwd(world) &&
       flyingAtHoop(world) &&
       !onFloor(world) &&
       !world.onApproachSide &&
-      !nearBoard(world) &&
-      !underCylinder(world)
+      world.ball.vy > 12
     ) {
-      // One floor tap peaks ~150px below the rim. Human adds 1–2
-      // taps at that low apex (2–3 total), then rides — not spam.
-      if (tooLowApex(world) || climbRecatch(world)) return tap("early-jump");
-      return hold(world.ball.vy > 12 ? "ride-flight" : "carry-flight");
+      return hold("ride-flight");
     }
 
     if (clockPanic(world, 1.6) || comboPressure(world)) return tap("shot-clock");
@@ -627,6 +599,8 @@ export const physPolicy: BallAiPolicy = {
     // starts lose. Banks/swirls run after so they cannot freeze the launch.
     if (longOrSlip) {
       if (!world.onApproachSide && !current.scores && pastBoard(world)) {
+        const headingOut = world.hoop.side * world.ball.vx > 12;
+        if (headingOut) return hold("let-drop");
         return tap("wrap-escape");
       }
       if (!world.onApproachSide && under && !current.scores) {
@@ -645,16 +619,18 @@ export const physPolicy: BallAiPolicy = {
           if (away) return hold("exit-space");
           return tap("wrap-escape");
         }
-        // Airborne dump beside the hoop: do not wrap-tap (that is the
-        // late under-rim start). Too low / climbing: let-drop. Near-rim
-        // descent falls through to toilet / bank (~58% / ~33%).
         if (lowBounce(world)) {
           const spd = Math.hypot(world.ball.vx, world.ball.vy);
           if (spd < 90 && bounceOpening(world)) return hold("exit-space");
           return hold("let-drop");
         }
+        // Rising through the net — hold (old 144-pt tube-up). Too low
+        // beside the hoop: don't jump over. Near-rim descent → swirl/bank.
+        if (world.ball.vy < -12 && world.ball.y > world.hoop.y) {
+          return hold("tube-up");
+        }
         const tooLow = world.ball.y > world.hoop.y + world.hoop.inner * 2.2;
-        if (tooLow || world.ball.vy < -12) return hold("let-drop");
+        if (tooLow) return hold("let-drop");
       }
       if (
         flyingAtHoop(world) &&
@@ -662,10 +638,16 @@ export const physPolicy: BallAiPolicy = {
         !nearBoard(world) &&
         !under
       ) {
-        if (feel.longJump && (tooLowApex(world) || climbRecatch(world))) {
+        if (world.ball.vy > 12) return hold("ride-flight");
+        // Rising: tap until we clear the near rim, then carry. A floor
+        // hold here is how the 1.2 jump tunnels under (0-pt benches).
+        if (
+          feel.longJump &&
+          world.ball.y > world.hoop.y + world.hoop.inner * 1.4
+        ) {
           return tap("early-jump");
         }
-        return hold(world.ball.vy > 12 ? "ride-flight" : "carry-flight");
+        return hold("carry-flight");
       }
       if (feel.longJump && onFloor(world) && launchFar) {
         return tap("early-jump");
