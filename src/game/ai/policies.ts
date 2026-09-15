@@ -280,6 +280,20 @@ function tooLowApex(world: AiWorld): boolean {
 }
 
 /**
+ * Demo 2nd tap: too-low recatch while still in the |dx| ~195–290 band.
+ * Inside ~0.5w a full jumpVx sails through the pocket (classic ninja 0-pt).
+ */
+function ninjaBandRecatch(
+  world: AiWorld,
+  current: { scores: boolean; willBoard: boolean },
+): boolean {
+  if (!shotFeel(world).longJump) return false;
+  if (!tooLowApex(world) || onFloor(world)) return false;
+  if (current.scores || current.willBoard) return false;
+  return Math.abs(world.ball.x - world.hoop.x) > world.world.w * 0.5;
+}
+
+/**
  * Mid/upper glass — human ninja banks cluster near board-Y ratio ~0.89
  * from the bottom (`(by+bh−y)/bh`). Board top is ~`hoop.y − 0.182·h`.
  */
@@ -879,7 +893,6 @@ export const physPolicy: BallAiPolicy = {
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
     const launched =
       flyingAtHoop(world) && Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55;
-    const wantRecatch = feel.longJump && !onFloor(world) && belowRim && tooLowApex(world);
 
     // Long jumpFwd / slippery glass. 310 demo: launch from the 195–290 band,
     // 2 taps, bank+rim (no swish), wrap is a next-shot (4/8 scored <2.5s).
@@ -924,7 +937,7 @@ export const physPolicy: BallAiPolicy = {
         // Too-low apex under the cylinder: recatch for height. Tube-up only
         // when actually climbing through the net — holding it from 150px
         // under was the 0-pt tunnel (carry/let-drop ate the 2nd tap).
-        if (wantRecatch) return tap("early-jump");
+        if (ninjaBandRecatch(world, current)) return tap("early-jump");
         if (
           world.ball.vy < -12 &&
           world.ball.y > world.hoop.y &&
@@ -965,7 +978,7 @@ export const physPolicy: BallAiPolicy = {
       if (feel.longJump && onFloor(world) && launchFar) {
         return tap("early-jump");
       }
-      if (wantRecatch) return tap("early-jump");
+      if (ninjaBandRecatch(world, current)) return tap("early-jump");
       if (flyingAtHoop(world) && world.ball.vy > 12 && !onFloor(world)) {
         return hold("ride-flight");
       }

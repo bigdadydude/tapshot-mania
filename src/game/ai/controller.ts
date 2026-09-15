@@ -256,7 +256,7 @@ export function createAiController(): AiController {
       const demoRecatch =
         recoverTap &&
         !airSpam &&
-        dx > world.world.w * 0.4 &&
+        dx > world.world.w * 0.5 &&
         dx <= world.world.w * 0.76;
       // Break-glass only: off-screen / identical pose / extra jump-speed tap.
       // Demo-band launch + too-low recatch stay the attack, even after a graze.

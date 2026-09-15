@@ -104,7 +104,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `exit-space` | Under-rim but opening court — let spacing grow, then jump back | under + bounce away |
 | `pop-away` | Elastic pop near the rim — let spacing open, then re-attack | `hotBounce` / `hoopRest` |
 | `wrap-escape` | Stuck under the rim: tap/wrap to the far side (穿屏) | `longJump` or `slipperyGlass` |
-| `early-jump` | Far floor launch (`|dx|` ≳ 195), then recatch near a too-low apex (human 2 taps; mid-climb recatch overshoots) | `longJump` + dx / vy |
+| `early-jump` | Far floor launch (`|dx|` ≳ 195), then recatch near a too-low apex **while still in that band** (inside ~0.5w a 2nd full jump sails through) | `longJump` + dx / vy |
 | `far-climb` | Distant rapid taps so the ball falls near **90°** | far + rising, not `longJump` |
 | `ride-flight` | Descending live arc on a long jump — don't poke | `longJump` + `vy > 0` |
 | `carry-flight` | Already flying at the hoop while still rising at jump speed — don't reset `jumpVx` | `longJump` + `flyingAtHoop` |

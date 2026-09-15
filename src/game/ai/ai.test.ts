@@ -930,7 +930,7 @@ describe("ball AI registry", () => {
     assert.equal(d.reason, "early-jump");
   });
 
-  it("ninja recatches after the ball has flown in (2nd tap is closer than 237)", () => {
+  it("ninja does not recatch inside 0.5w (that 2nd jump sails through)", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
       y: 330,
@@ -949,11 +949,11 @@ describe("ball AI registry", () => {
       ball: { x: hoop.x - 120, y: hoop.y + 150, vx: 280, vy: -150, r: 19.5 },
     });
     const d = decideShot(mid, helpers);
-    assert.equal(d.tap, true);
-    assert.equal(d.reason, "early-jump");
+    assert.equal(d.tap, false);
+    assert.notEqual(d.reason, "early-jump");
   });
 
-  it("ninja recatches a too-low apex even under the cylinder", () => {
+  it("ninja does not recatch under the cylinder (2nd jump sails through)", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
       y: 330,
@@ -972,8 +972,8 @@ describe("ball AI registry", () => {
       ball: { x: hoop.x - 70, y: hoop.y + 150, vx: 220, vy: -40, r: 19.5 },
     });
     const d = decideShot(under, helpers);
-    assert.equal(d.tap, true);
-    assert.equal(d.reason, "early-jump");
+    assert.equal(d.tap, false);
+    assert.notEqual(d.reason, "early-jump");
   });
 
   it("ninja does not spam early-jump after the launch is already flying", () => {
