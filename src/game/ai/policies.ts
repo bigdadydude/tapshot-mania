@@ -136,13 +136,16 @@ function inboundGlass(
 ): boolean {
   if (onFloor(world) || pastBoard(world) || world.onApproachSide) return false;
   if (world.hitRim && onInnerRim(world)) return false;
+  // Long-range willBoard is a guess — holding it from mid-court freezes
+  // ninja recatch / far-climb. Only commit in the glass pocket.
+  if (!nearBoard(world) && !atHalfBoard(world)) return false;
   if (current.willBoard) return true;
   if (current.scores && (current.bank || current.swish)) return true;
   const dist = Math.abs(boardFaceX(world) - world.ball.x);
   const close = closingOnBoard(world);
   if (bounceOpening(world)) return false;
   // Already overlapping the face — a tap writes through the glass.
-  if (nearBoard(world) && dist < world.ball.r * 1.25 && close > 8) return true;
+  if (dist < world.ball.r * 1.25 && close > 8) return true;
   return false;
 }
 
@@ -585,7 +588,7 @@ export const glassPolicy: BallAiPolicy = {
     if (next.scores && next.swish && !(droppingIn && current.swish)) {
       return tap("seek-swish");
     }
-    if (!fragile && current.willBoard && !onFloor(world)) {
+    if (!fragile && current.willBoard && !onFloor(world) && (nearBoard(world) || atHalfBoard(world))) {
       return hold("commit-glass");
     }
     if (!fragile && wantsBankCut(world, current, next)) {
