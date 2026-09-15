@@ -2235,4 +2235,43 @@ describe("AI controller", () => {
     assert.equal(ai.lastDecision()?.reason, "early-jump");
     assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
   });
+
+  it("still recatches a too-low apex after a fruitless wrap", () => {
+    const ai = createAiController();
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const floorY = 844 * 0.765;
+    const r = 19.5;
+    const ninja = {
+      dt: 1 / 60,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      hoop,
+    };
+    const seed = world({
+      ...ninja,
+      ball: { x: hoop.x - 224, y: floorY - r, vx: 8, vy: 10, r },
+    });
+    assert.equal(ai.tick(seed), true);
+    const apex = world({
+      ...ninja,
+      dt: 0.2,
+      wraps: 1,
+      shotOpen: true,
+      ball: { x: hoop.x - 200, y: hoop.y + 150, vx: 280, vy: -40, r },
+    });
+    assert.equal(decideShot(apex, helpers).reason, "early-jump");
+    assert.equal(ai.tick(apex), true, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "early-jump");
+    assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
+  });
 });

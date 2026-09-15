@@ -92,7 +92,6 @@ type LoopPose = {
 
 const POSE_MATCH = 48;
 const JUMP_VEL_MATCH = 28;
-const LAUNCH_SPACING = 56;
 
 function ballOnFloor(world: AiWorld): boolean {
   const floor = world.world.floorY - world.ball.r;
@@ -116,7 +115,6 @@ export function createAiController(): AiController {
   let sawContact = false;
   let fruitlessWraps = 0;
   let fruitlessContact = 0;
-  let lastLaunchDx = -1;
   let boardTapUsed = false;
   let sitHold = 0;
   let lastTap: LoopPose | null = null;
@@ -130,7 +128,6 @@ export function createAiController(): AiController {
     sawContact = false;
     fruitlessWraps = 0;
     fruitlessContact = 0;
-    lastLaunchDx = -1;
     boardTapUsed = false;
     sitHold = 0;
     lastTap = null;
@@ -194,7 +191,6 @@ export function createAiController(): AiController {
         if (!world.shotMade && !world.scored) {
           wrapCool = Math.max(wrapCool, 1.65);
           fruitlessWraps += 1;
-          lastLaunchDx = -1;
         }
       }
 
@@ -247,48 +243,31 @@ export function createAiController(): AiController {
         sawContact = false;
       }
       const fruitless = fruitlessWraps > 0 || fruitlessContact > 0;
-      const sameLaunch =
-        lastLaunchDx >= 0 && Math.abs(dx - lastLaunchDx) < LAUNCH_SPACING;
       const persistShot =
         !!lastTap &&
         lastTap.side === world.hoop.side &&
         Math.hypot(world.ball.x - lastTap.x, world.ball.y - lastTap.y) < POSE_MATCH &&
         Math.hypot(world.jumpVx - lastTap.jvx, world.jumpVy - lastTap.jvy) < JUMP_VEL_MATCH;
-      // Same pose+jump vector stays a loop after wrap-cool expires (stuck-1/2
-      // replayed the identical (vx,vy) chain). Ban the last tap pose, not the
-      // whole climb corridor (that froze ninja at 0). Sitting too long thaws
-      // one attempt so wrap-bank / a spaced launch can fire.
+      const airSpam = launched && !grounded && airTaps >= 1;
+      // Break-glass only: off-screen / identical pose spam / extra jump-speed
+      // recatch. Do NOT hold the demo-band launch or the too-low recatch.
       let wrapLoop =
         longJump &&
         (farRestart ||
           (sameShot && (wrapCool > 0 || poseFresh > 0)) ||
           (fruitless && persistShot) ||
-          (fruitless && sameLaunch) ||
-          (contactCool > 0 && (!grounded || sameLaunch || persistShot)) ||
-          (launched && !grounded && airTaps >= 1));
+          (contactCool > 0 && !grounded) ||
+          airSpam);
       if (wrapLoop && grounded && !farRestart) sitHold += world.dt;
       else if (!wrapLoop) sitHold = 0;
       const inbound = helpers.predictCurrent(world);
       const nextShot = helpers.predictTap(world);
-      const airSpam = launched && !grounded && airTaps >= 1;
-      const stuck = wrapLoop || fruitlessWraps > 0 || fruitlessContact > 0;
-      // After a wrap, empty wrap-escape is the stuck loop. Demo-band
-      // early-jump is still a human re-attack (lastLaunchDx cleared on wrap).
-      const fruitlessFarJump =
-        longJump &&
-        fruitlessWraps > 0 &&
-        (decision.reason === "wrap-escape" ||
-          (decision.reason === "early-jump" && dx < world.world.w * 0.4));
-      // One board-kiss when stuck: inbound glass still holds. Jump-speed
-      // recatch is the overshoot death loop — don't wrap-bank that.
-      // Parked under the rim: tap once for a rebound chance even if the
-      // predictor is unsure — better than empty wrap or sitting forever.
-      const closePark =
-        grounded &&
-        dx < world.world.w * 0.22 &&
-        world.ball.y + world.ball.r * 0.15 >= world.hoop.y;
+      const wrapEscapeSpam =
+        longJump && fruitlessWraps > 0 && decision.reason === "wrap-escape";
+      const closeForBank = dx < world.world.w * 0.28;
+      // Break-glass board-kiss: empty wrap-escape, or a close reset after a
+      // wrap whose tap would kiss glass. Demo-band / recatch stay the attack.
       const wantBoardTap =
-        stuck &&
         longJump &&
         !boardTapUsed &&
         !farRestart &&
@@ -297,14 +276,15 @@ export function createAiController(): AiController {
         !airSpam &&
         !inbound.willBoard &&
         !inbound.scores &&
-        (nextShot.willBoard || closePark);
+        nextShot.willBoard &&
+        (wrapLoop || wrapEscapeSpam || (fruitlessWraps > 0 && closeForBank && !recoverTap));
       const thaw = grounded && sitHold > 2.4 && !farRestart;
-      if (thaw && (wantBoardTap || !sameLaunch)) wrapLoop = false;
-      const forceBank = wantBoardTap && stuck;
+      if (thaw && (wantBoardTap || !persistShot)) wrapLoop = false;
+      const forceBank = wantBoardTap;
       if (decision.tap || forceBank) {
         // Long jumpFwd near glass/rim: ZERO extra taps. bank-cut / apex /
         // combo-pressure / wrap-in-pocket / watchdog is the ninja death loop.
-        // Exception: one wrap-bank when stuck and the reset would kiss glass.
+        // Exception: one wrap-bank when wrap-escape is the empty cycle.
         if (locked && pocketExtra && !forceBank) {
           last = { tap: false, reason: "protect-finish", policyId: decision.policyId };
           idle = 0;
@@ -315,7 +295,7 @@ export function createAiController(): AiController {
           boardTapUsed = true;
           toFire = { tap: true, reason: "wrap-bank", policyId: decision.policyId };
         } else if (
-          (wrapLoop || fruitlessFarJump) &&
+          (wrapLoop || wrapEscapeSpam) &&
           decision.reason !== "chain-next"
         ) {
           last = { tap: false, reason: "wrap-loop", policyId: decision.policyId };
@@ -352,7 +332,6 @@ export function createAiController(): AiController {
             jvy: world.jumpVy,
             dx,
           };
-          if (grounded || !launched) lastLaunchDx = dx;
           sitHold = 0;
           // Only a tap that already has jump speed counts as the recatch.
           // A first tap from rest/crawl (title leftover vx, wrap roll) is the launch.
@@ -388,9 +367,9 @@ export function createAiController(): AiController {
         if (
           locked ||
           wrapLoop ||
-          fruitlessFarJump ||
+          wrapEscapeSpam ||
           (longJump && fruitlessContact > 0 && FAR_JUMP.has(decision.reason)) ||
-          (longJump && (boardCool > 0 || wrapCool > 0 || contactCool > 0))
+          (longJump && (boardCool > 0 || contactCool > 0))
         ) {
           idle = 0;
           return false;
