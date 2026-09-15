@@ -876,7 +876,7 @@ describe("ball AI registry", () => {
       hoopMul: 0.8,
       boardFric: 0.7,
       shotOpen: true,
-      ball: { x: hoop.x - 145, y: hoop.y + 170, vx: 280, vy: -150, r: 19.5 },
+      ball: { x: hoop.x - 125, y: hoop.y + 170, vx: 280, vy: -150, r: 19.5 },
     });
     const d = decideShot(mid, helpers);
     assert.equal(d.tap, true);
@@ -946,7 +946,7 @@ describe("ball AI registry", () => {
       hoopMul: 0.8,
       boardFric: 0.7,
       shotOpen: true,
-      ball: { x: hoop.x - 160, y: hoop.y + 150, vx: 280, vy: -40, r: 19.5 },
+      ball: { x: hoop.x - 125, y: hoop.y + 150, vx: 280, vy: -40, r: 19.5 },
     });
     const d = decideShot(apex, helpers);
     assert.equal(d.tap, true);
@@ -2336,7 +2336,7 @@ describe("AI controller", () => {
       dt: 0.2,
       wraps: 1,
       shotOpen: true,
-      ball: { x: hoop.x - 160, y: hoop.y + 150, vx: 280, vy: -40, r },
+      ball: { x: hoop.x - 125, y: hoop.y + 150, vx: 280, vy: -40, r },
     });
     assert.equal(decideShot(apex, helpers).reason, "early-jump");
     assert.equal(ai.tick(apex), true, ai.lastDecision()?.reason);
@@ -2375,7 +2375,7 @@ describe("AI controller", () => {
       dt: 0.2,
       hitRim: true,
       shotOpen: true,
-      ball: { x: hoop.x - 160, y: hoop.y + 150, vx: 280, vy: -40, r },
+      ball: { x: hoop.x - 125, y: hoop.y + 150, vx: 280, vy: -40, r },
     });
     assert.equal(decideShot(apex, helpers).reason, "early-jump");
     assert.equal(ai.tick(apex), true, ai.lastDecision()?.reason);

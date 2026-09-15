@@ -293,7 +293,9 @@ function ninjaBandRecatch(
   if (!tooLowApex(world) || onFloor(world)) return false;
   if (current.scores || current.willBoard) return false;
   const dx = Math.abs(world.ball.x - world.hoop.x);
-  return dx > world.world.w * 0.28 && dx < world.world.w * 0.5;
+  // Apex travel ~129px: recatch in ~110–133 so the reset peaks at the rim.
+  // Upper 0.5w recaught at ~141 from a 230 launch — rim graze, not a make.
+  return dx > world.world.w * 0.28 && dx < world.world.w * 0.34;
 }
 
 /**
