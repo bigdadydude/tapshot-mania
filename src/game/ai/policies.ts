@@ -156,27 +156,16 @@ function onInnerRim(world: AiWorld): boolean {
 /**
  * First jump from the floor peaks ~150px under the rim (ninja jumpH).
  * Recatch near that dead apex so the second jump can still bank/rim.
+ * A mid-climb recatch (vy ~-270) overshoots into a wrap — keep this
+ * window to ~0.1s around the apex (~2 AI ticks).
  */
 function tooLowApex(world: AiWorld): boolean {
   const belowFinish = world.ball.y > world.hoop.y + world.hoop.inner * 1.2;
-  const nearApex = world.ball.vy > -90 && world.ball.vy < 55;
+  const nearApex = world.ball.vy > -200 && world.ball.vy < 55;
   if (!belowFinish || !nearApex) return false;
   // Parked / dying under the rim — a full jumpVy from here flies over.
   if (Math.abs(world.ball.vx) < 50) return false;
   return true;
-}
-
-/**
- * 310 demo: ~2 taps, 2nd while climb is dying — not at full jumpVy
- * (that overshoots into a wrap) and not after the apex (too-low tunnel).
- * `inner*3.4` ≈ 95px still fires after the ball has flown in from |dx| 237.
- */
-function climbRecatch(world: AiWorld): boolean {
-  const dx = Math.abs(world.ball.x - world.hoop.x);
-  const farEnough = dx > world.hoop.inner * 3.4;
-  const below = world.ball.y > world.hoop.y + world.hoop.inner * 1.6;
-  const dyingClimb = world.ball.vy > -380 && world.ball.vy < -80;
-  return farEnough && below && dyingClimb;
 }
 
 /**
@@ -631,8 +620,7 @@ export const physPolicy: BallAiPolicy = {
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
     const launched =
       flyingAtHoop(world) && Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55;
-    const wantRecatch =
-      feel.longJump && !onFloor(world) && belowRim && (tooLowApex(world) || climbRecatch(world));
+    const wantRecatch = feel.longJump && !onFloor(world) && belowRim && tooLowApex(world);
 
     // Long jumpFwd / slippery glass. 310 demo: launch from the 195–290 band,
     // 2 taps, bank+rim (no swish), wrap is a next-shot (4/8 scored <2.5s).
@@ -640,8 +628,7 @@ export const physPolicy: BallAiPolicy = {
     // freeze the launch.
     if (longOrSlip) {
       if (!world.onApproachSide && !current.scores && pastBoard(world)) {
-        const headingOut = world.hoop.side * world.ball.vx > 12;
-        if (headingOut) return hold("let-drop");
+        // 310 demo: 4/8 wraps scored within 2.5s — wrap is a next shot, not a hover.
         return tap("wrap-escape");
       }
       if (!world.onApproachSide && under && !current.scores) {
@@ -675,6 +662,11 @@ export const physPolicy: BallAiPolicy = {
           world.ball.y < world.hoop.y + world.hoop.inner * 1.8
         ) {
           return hold("tube-up");
+        }
+        // Falling well below the rim: hold. Default apex-boost from
+        // here is the jump-over. Stay out of inner-rim swirl (y near hoop.y).
+        if (world.ball.vy > 12 && world.ball.y > world.hoop.y + world.hoop.inner) {
+          return hold("let-drop");
         }
         const tooLow = world.ball.y > world.hoop.y + world.hoop.inner * 2.2;
         if (tooLow) return hold("let-drop");

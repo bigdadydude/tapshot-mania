@@ -530,6 +530,30 @@ describe("ball AI registry", () => {
     assert.equal(d.reason, "early-jump");
   });
 
+  it("ninja does not recatch at full-speed mid-climb (that overshoots into a wrap)", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const jumpVx = 390 * 0.76 * 1.2;
+    const early = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 210, y: hoop.y + 180, vx: jumpVx, vy: -280, r: 19.5 },
+    });
+    const d = decideShot(early, helpers);
+    assert.equal(d.tap, false);
+    assert.equal(d.reason, "carry-flight");
+  });
+
   it("ninja recatches a too-low apex instead of riding under the rim", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
@@ -705,8 +729,8 @@ describe("ball AI registry", () => {
       }),
       helpers,
     );
-    assert.equal(headingOut.tap, false);
-    assert.equal(headingOut.reason, "let-drop");
+    assert.equal(headingOut.tap, true);
+    assert.equal(headingOut.reason, "wrap-escape");
   });
 
   it("ninja rides a live arc instead of combo-pace poking", () => {

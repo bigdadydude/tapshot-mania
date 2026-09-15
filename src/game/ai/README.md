@@ -69,7 +69,7 @@ Ball-id / skill-flag votes are only for skills that are not a number:
 | `exit-space` | Under-rim but opening court — let spacing grow, then jump back | under + bounce away |
 | `pop-away` | Elastic pop near the rim — let spacing open, then re-attack | `hotBounce` / `hoopRest` |
 | `wrap-escape` | Stuck under the rim: tap/wrap to the far side (穿屏) | `longJump` or `slipperyGlass` |
-| `early-jump` | Far floor launch (`|dx|` ≳ 195), then recatch near a too-low apex / dying climb (human 2 taps) | `longJump` + dx / vy |
+| `early-jump` | Far floor launch (`|dx|` ≳ 195), then recatch near a too-low apex (human 2 taps; mid-climb recatch overshoots) | `longJump` + dx / vy |
 | `far-climb` | Distant rapid taps so the ball falls near **90°** | far + rising, not `longJump` |
 | `ride-flight` | Descending live arc on a long jump — don't poke | `longJump` + `vy > 0` |
 | `carry-flight` | Already flying at the hoop while still rising at jump speed — don't reset `jumpVx` | `longJump` + `flyingAtHoop` |
@@ -88,7 +88,7 @@ Playbook mapping (PO):
 4. High bounce → `pop-away`
 5. Stuck 穿屏 → `wrap-escape`
 6. Distant 90° taps → `far-climb`
-7. Long jumpFwd: floor/far `early-jump` (band `|dx|` 195–290) → `carry-flight` until climb dies → one recatch (`tooLowApex` / `climbRecatch`, including under the cylinder when the first apex is still ~150px low) → `ride-flight` / `rim-swirl` / upper `bank-half`. Wrap past glass is `wrap-escape` (310 demo: 4/8 wraps scored in 2.5s). Do not start a shot late under the rim. Do not `carry-flight` the whole first climb — one floor tap peaks ~150px under the rim. `tube-up` only through the net, not from a too-low rise.
+7. Long jumpFwd: floor/far `early-jump` (band `|dx|` 195–290) → `carry-flight` until near apex → one recatch (`tooLowApex`, including under the cylinder when the first apex is still ~150px low) → `ride-flight` / `rim-swirl` / upper `bank-half`. A recatch at vy ~-270 overshoots into a wrap. Wrap past glass is `wrap-escape` (310 demo: 4/8 wraps scored in 2.5s). Do not start a shot late under the rim. Do not `carry-flight` the whole first climb — one floor tap peaks ~150px under the rim. `tube-up` only through the net, not from a too-low rise.
 
 Human ninja **1-min 310** (62s, combo 28, ~5.0 pts/s): bank 29 / rim 17 / swish 0. Summarize more demos with `node --experimental-strip-types scripts/summarize-recording.mjs <file.json>`.
 Human ninja classic 360 (101.9s, 3.5 pts/s): bank ~58% / rim ~33% / swish ~9%.
