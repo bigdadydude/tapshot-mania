@@ -463,13 +463,20 @@ describe("ball AI registry", () => {
     const hold = decideShot(overfly, helpers);
     assert.notEqual(hold.reason, "wrap-boost");
     assert.notEqual(hold.reason, "predicted-bank");
-    assert.ok(
-      hold.reason === "flight-scores" ||
-        hold.reason === "let-drop" ||
-        hold.reason === "commit-glass" ||
-        hold.reason === "bank-steep" ||
-        hold.reason === "bank-half",
-    );
+    const overflyCur = predictCurrent(overfly);
+    const overflyNext = predictTap(overfly);
+    if (overflyNext.willBoard && !overflyCur.willBoard) {
+      assert.equal(hold.tap, true);
+      assert.equal(hold.reason, "bank-cut");
+    } else {
+      assert.ok(
+        hold.reason === "flight-scores" ||
+          hold.reason === "let-drop" ||
+          hold.reason === "commit-glass" ||
+          hold.reason === "bank-steep" ||
+          hold.reason === "bank-half",
+      );
+    }
 
     // Over the rim / glass, still on court — fall into the bank window.
     const skyPast = world({
@@ -504,6 +511,55 @@ describe("ball AI registry", () => {
     const d = decideShot(drift, helpers);
     assert.equal(d.tap, true);
     assert.equal(d.reason, "bank-cut");
+  });
+
+  it("taps a steep miss when the jump-reset would kiss glass", () => {
+    const w = 390;
+    const hoop = {
+      x: w - 28 - w * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    // Closing on the pocket but the current arc misses the face. Holding
+    // commit-glass here was freeze-and-miss; tapJump's full vx kisses.
+    const steep = world({
+      hoop,
+      jumpVx: w * 0.76,
+      ball: { x: hoop.x + hoop.inner * 0.4, y: hoop.y + 20, vx: 90, vy: 140, r: 19.5 },
+    });
+    const cur = predictCurrent(steep);
+    const nxt = predictTap(steep);
+    assert.equal(cur.willBoard, false);
+    assert.equal(nxt.willBoard, true);
+    const d = decideShot(steep, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "bank-cut");
+  });
+
+  it("does not speculative-tap a bank window when the reset would miss glass", () => {
+    const w = 390;
+    const hoop = {
+      x: w - 28 - w * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const miss = world({
+      hoop,
+      jumpVx: w * 0.76,
+      ball: { x: hoop.x + hoop.inner * 1.2, y: hoop.y + 40, vx: 8, vy: 160, r: 19.5 },
+    });
+    const cur = predictCurrent(miss);
+    const nxt = predictTap(miss);
+    if (!cur.willBoard && !nxt.willBoard) {
+      const d = decideShot(miss, helpers);
+      assert.notEqual(d.reason, "bank-cut");
+    }
   });
 
   it("does not reset jumpVx on a flight already hitting the glass", () => {
