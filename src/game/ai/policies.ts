@@ -270,14 +270,12 @@ function onInnerRim(world: AiWorld): boolean {
  * too-low-apex window (vy > -250, |dx| 110–133) skipped those taps and
  * classic never chained.
  */
-function ninjaClimbTap(
-  world: AiWorld,
-  current: { scores: boolean },
-): boolean {
+function ninjaClimbTap(world: AiWorld): boolean {
   if (!shotFeel(world).longJump) return false;
   if (onFloor(world)) return false;
-  if (current.scores) return false;
-  // Falling: ride into the bank. Humans do not tap a 4th after the climb.
+  if (world.onApproachSide || pastBoard(world) || !onLaunchSide(world)) return false;
+  // Falling: ride into the bank. Speculative make-guesses while still
+  // rising used to skip HQ taps 3–4 at |dx| 96 / 118.
   if (world.ball.vy >= -12) return false;
   const dx = Math.abs(world.ball.x - world.hoop.x);
   return (
@@ -866,6 +864,10 @@ export const physPolicy: BallAiPolicy = {
     const feel = shotFeel(world);
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
+    // HQ gold 9806: tap 3–4 at |dx| 96 / 118 while still rising. Those x
+    // values sit inside nearFinishPocket (~0.32w) — holding them skipped
+    // the 4-tap opener and the post-rim recatch.
+    if (ninjaClimbTap(world)) return tap("early-jump");
     if (mustHoldFinish(world, current)) {
       return hold(current.scores ? "flight-scores" : "protect-finish");
     }
@@ -948,7 +950,7 @@ export const physPolicy: BallAiPolicy = {
         // Too-low apex under the cylinder: recatch for height. Tube-up only
         // when actually climbing through the net — holding it from 150px
         // under was the 0-pt tunnel (carry/let-drop ate the 2nd tap).
-        if (ninjaClimbTap(world, current)) return tap("early-jump");
+        if (ninjaClimbTap(world)) return tap("early-jump");
         if (
           world.ball.vy < -12 &&
           world.ball.y > world.hoop.y &&
@@ -1014,7 +1016,7 @@ export const physPolicy: BallAiPolicy = {
       if (feel.longJump && onFloor(world) && launchFar) {
         return tap("early-jump");
       }
-      if (ninjaClimbTap(world, current)) return tap("early-jump");
+      if (ninjaClimbTap(world)) return tap("early-jump");
       if (flyingAtHoop(world) && world.ball.vy > 12 && !onFloor(world)) {
         return hold("ride-flight");
       }

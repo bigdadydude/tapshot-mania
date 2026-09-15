@@ -2,7 +2,8 @@
  * Human-demo priors for auto-play. Hierarchy:
  *   1. Physics hard limits (tapJump full reset, finishPocketLocked)
  *   2. These mined JSON stats (ninja 310 / 2641 / 1324, glass 10156 / 5992,
- *      sep15 gold classic: ninja 1411/97 + 1196/85, frost 1985/50, lava 1264/43)
+ *      sep15 gold classic: ninja 1411/97 + 1196/85 + HQ 9806/277, frost 1985/50,
+ *      lava 1264/43)
  *   3. Oral 8-tactic playbook — soft hints only
  *
  * Re-mine with:
@@ -27,7 +28,7 @@ export type DemoPriors = {
   bankCutTap: boolean;
   /**
    * Oral apex-boost mash (default policy). Sep15 ninja climb is *not* this —
-   * it is three spaced `early-jump` taps in physPolicy (`NINJA_OPENER`).
+   * it is 3–4 spaced `early-jump` taps in physPolicy (`NINJA_OPENER`).
    */
   extraClimbTaps: boolean;
   /** Oral combo-clock poke near the hoop. Conflicts with the 2-tap ride. */
@@ -68,9 +69,9 @@ export const NINJA_OPENER = {
   maxAirTaps: 3,
 } as const;
 
-/** Ninja 1-min 310 + elite classic 2641/1324 + sep15 gold 1411/97, 1196/85. */
+/** Ninja 1-min 310 + elite classic 2641/1324 + sep15 gold 1411/97, 1196/85, HQ 9806/277. */
 const NINJA: DemoPriors = {
-  medianTapsBeforeMake: 3,
+  medianTapsBeforeMake: 2,
   huntSwish: false,
   bankCutTap: false,
   extraClimbTaps: false,

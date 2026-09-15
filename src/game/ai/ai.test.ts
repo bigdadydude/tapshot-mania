@@ -682,6 +682,7 @@ describe("ball AI registry", () => {
     assert.equal(n.bankCutTap, false);
     assert.equal(n.huntSwish, false);
     assert.equal(n.extraClimbTaps, false);
+    assert.equal(n.medianTapsBeforeMake, 2);
     assert.equal(n.comboPokeNearHoop, false);
     assert.equal(n.holdInboundBank, true);
     assert.equal(n.wrapRecovery, true);
@@ -1002,6 +1003,46 @@ describe("ball AI registry", () => {
     const d = decideShot(tap4, helpers);
     assert.equal(d.tap, true);
     assert.equal(d.reason, "early-jump");
+  });
+
+  it("ninja climb-taps HQ 96/118 even inside the finish-pocket x band", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const jumpVx = 390 * 0.76 * 1.2;
+    const tap3Pocket = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 96, y: hoop.y + 20, vx: jumpVx, vy: -480, r: 19.5 },
+    });
+    const d3 = decideShot(tap3Pocket, helpers);
+    assert.equal(d3.tap, true);
+    assert.equal(d3.reason, "early-jump");
+    assert.notEqual(d3.reason, "protect-finish");
+
+    const tap4Rim = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      hitRim: true,
+      ball: { x: hoop.x - 118, y: hoop.y + 24, vx: jumpVx, vy: -400, r: 19.5 },
+    });
+    const d4 = decideShot(tap4Rim, helpers);
+    assert.equal(d4.tap, true);
+    assert.equal(d4.reason, "early-jump");
+    assert.notEqual(d4.reason, "protect-finish");
   });
 
   it("ninja recatches a too-low apex even if the first arc is guessed to bank", () => {
