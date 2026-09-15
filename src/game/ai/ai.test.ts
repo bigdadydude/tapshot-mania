@@ -1273,6 +1273,66 @@ describe("ball AI registry", () => {
     assert.equal(headingOut.reason, "wrap-escape");
   });
 
+  it("ninja does not wrap-escape while still climbing past the glass", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const climbPast = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      ball: { x: 430, y: hoop.y - 10, vx: 90, vy: -400, r: 19.5 },
+    });
+    const d = decideShot(climbPast, helpers);
+    assert.equal(d.tap, false);
+    assert.notEqual(d.reason, "wrap-escape");
+  });
+
+  it("ninja waits after a make until the chain band (~190–260), not a 400px sail", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const far = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotMade: true,
+      scored: true,
+      ball: { x: hoop.x - 413, y: hoop.y + 40, vx: 80, vy: 40, r: 19.5 },
+    });
+    const wait = decideShot(far, helpers);
+    assert.equal(wait.tap, false);
+    assert.ok(wait.reason === "carry-flight" || wait.reason === "wait-window", wait.reason);
+
+    const band = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotMade: true,
+      scored: true,
+      ball: { x: hoop.x - 240, y: hoop.y + 80, vx: 80, vy: 40, r: 19.5 },
+    });
+    const go = decideShot(band, helpers);
+    assert.equal(go.tap, true);
+    assert.equal(go.reason, "chain-next");
+  });
+
   it("ninja rides a live arc instead of combo-pace poking", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,

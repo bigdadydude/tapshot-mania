@@ -424,6 +424,19 @@ export const defaultPolicy: BallAiPolicy = {
       if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
         return hold("chain-wait");
       }
+      // HQ gold: after a make, next tap is |dx| ~259, not a full jump from
+      // the old hoop (~400) that sails through and wrap-escapes.
+      if (
+        longJumpFwd(world) &&
+        !world.onApproachSide &&
+        !world.ballHidden
+      ) {
+        const chainDx = Math.abs(world.ball.x - world.hoop.x);
+        if (chainDx >= world.world.w * NINJA_OPENER.launchMax) {
+          if (onFloor(world)) return hold("wait-window");
+          return hold("carry-flight");
+        }
+      }
       return tap("chain-next");
     }
     if (world.scored) return hold("already-scored");
@@ -896,8 +909,10 @@ export const physPolicy: BallAiPolicy = {
     // into bank (0 wraps before first make). Wrap is a next shot, not a hover.
     if (longOrSlip) {
       if (!world.onApproachSide && !current.scores && pastBoard(world)) {
-        // 310 demo: 4/8 wraps scored within 2.5s — wrap is a next shot, not a hover.
-        return tap("wrap-escape");
+        // Climbing just behind the glass can still fall into a bank.
+        // Wrapping at jump speed from here is the post-make chain killer.
+        if (world.ball.vy > 8) return tap("wrap-escape");
+        return hold("let-drop");
       }
       if (!world.onApproachSide && under && !current.scores) {
         if (onFloor(world)) {
