@@ -325,7 +325,21 @@ export function createAiController(): AiController {
       const thaw = grounded && sitHold > 2.4 && !farRestart;
       if (thaw && (wantBoardTap || !persistShot)) wrapLoop = false;
       const forceBank = wantBoardTap;
-      if (decision.tap || forceBank) {
+      // After two empty wraps, or once classic clock is live, don't spend
+      // the shot sitting in wait-window on a dying far-side crawl.
+      const clockLive = world.timerArmed && !world.buzzer && !world.timeUp;
+      const forceLaunch =
+        longJump &&
+        grounded &&
+        !farRestart &&
+        !world.onApproachSide &&
+        !world.ballHidden &&
+        dx > world.world.w * 0.5 &&
+        (fruitlessWraps >= 2 || clockLive) &&
+        (decision.reason === "wait-window" ||
+          (!decision.tap && dx >= world.world.w * 0.68));
+      if (forceLaunch) wrapLoop = false;
+      if (decision.tap || forceBank || forceLaunch) {
         // Long jumpFwd near glass/rim: ZERO extra taps. bank-cut / apex /
         // combo-pressure / wrap-in-pocket / watchdog is the ninja death loop.
         // Exception: one wrap-bank when wrap-escape is the empty cycle.
@@ -338,6 +352,8 @@ export function createAiController(): AiController {
         if (forceBank) {
           boardTapUsed = true;
           toFire = { tap: true, reason: "wrap-bank", policyId: decision.policyId };
+        } else if (forceLaunch && !decision.tap) {
+          toFire = { tap: true, reason: "early-jump", policyId: decision.policyId };
         } else if (
           (wrapLoop || wrapEscapeSpam) &&
           decision.reason !== "chain-next"

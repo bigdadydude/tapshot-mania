@@ -2454,4 +2454,62 @@ describe("AI controller", () => {
     );
     assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
   });
+
+  it("launches from a far crawl after two fruitless wraps instead of waiting out classic", () => {
+    const ai = createAiController();
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const floorY = 844 * 0.765;
+    const r = 19.5;
+    const ninja = {
+      dt: 1.0,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      hoop,
+    };
+    ai.tick(
+      world({
+        ...ninja,
+        ball: { x: hoop.x - 224, y: floorY - r, vx: 8, vy: 10, r },
+      }),
+    );
+    ai.tick(
+      world({
+        ...ninja,
+        dt: 0.02,
+        wraps: 1,
+        onApproachSide: true,
+        ballHidden: true,
+        ball: { x: 432, y: 378, vx: 44, vy: 0, r },
+      }),
+    );
+    ai.tick(
+      world({
+        ...ninja,
+        dt: 0.02,
+        wraps: 2,
+        onApproachSide: true,
+        ballHidden: true,
+        ball: { x: 432, y: 378, vx: 44, vy: 0, r },
+      }),
+    );
+    const crawl = world({
+      ...ninja,
+      dt: 0.2,
+      wraps: 2,
+      ball: { x: hoop.x - 280, y: floorY - r, vx: 44, vy: 0, r },
+    });
+    assert.equal(decideShot(crawl, helpers).reason, "wait-window");
+    assert.equal(ai.tick(crawl), true, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "early-jump");
+  });
 });
