@@ -47,6 +47,8 @@ jumpFwd (ninja)** is **tighter** (~1.12s) — a human 1-min 310 (combo 28,
 (p25–p75 ≈ 195–290), ~2 taps before a make, and **no swishes** (bank 29 /
 rim 17). Classic 360 was ~1.35s. The old 2.6s ninja wait sat under the rim.
 `carry-flight` / `ride-flight` still block combo-clock mash on a live arc.
+**Glass (bounce 0)** is also tight (~1.24s) — human classic 10156 / combo 117
+had a ~1.29s gap and ~3.6 short taps from |dx| ~296 (rim 52 / swish 40 / bank 25).
 
 **Release pocket:** slightly wide `jumpFwd` (1.0, lava/frost) holds let-drop
 sooner so the last apex does not wrap. `longJump` (ninja 1.2) does **not**
@@ -67,7 +69,7 @@ Ball-id / skill-flag votes are only for skills that are not a number:
 | `exit-space` | Under-rim but opening court — let spacing grow, then jump back | under + bounce away |
 | `pop-away` | Elastic pop near the rim — let spacing open, then re-attack | `hotBounce` / `hoopRest` |
 | `wrap-escape` | Stuck under the rim: tap/wrap to the far side (穿屏) | `longJump` or `slipperyGlass` |
-| `early-jump` | Far floor launch (`|dx|` ≳ 195), then one recatch after `vy` decays (human 2 taps / too-low apex) | `longJump` + dx / vy |
+| `early-jump` | Far floor launch (`|dx|` ≳ 195), then recatch near a too-low apex / dying climb (human 2 taps) | `longJump` + dx / vy |
 | `far-climb` | Distant rapid taps so the ball falls near **90°** | far + rising, not `longJump` |
 | `ride-flight` | Descending live arc on a long jump — don't poke | `longJump` + `vy > 0` |
 | `carry-flight` | Already flying at the hoop while still rising at jump speed — don't reset `jumpVx` | `longJump` + `flyingAtHoop` |
@@ -86,7 +88,7 @@ Playbook mapping (PO):
 4. High bounce → `pop-away`
 5. Stuck 穿屏 → `wrap-escape`
 6. Distant 90° taps → `far-climb`
-7. Long jumpFwd: floor/far `early-jump` (band `|dx|` 195–290) → `carry-flight` until `vy` decays → one recatch → `ride-flight` / `rim-swirl` / upper `bank-half`. Wrap past glass is `wrap-escape` (310 demo: 4/8 wraps scored in 2.5s). Do not start a shot late under the rim.
+7. Long jumpFwd: floor/far `early-jump` (band `|dx|` 195–290) → `carry-flight` until climb dies → one recatch (`tooLowApex` / `climbRecatch`, including under the cylinder when the first apex is still ~150px low) → `ride-flight` / `rim-swirl` / upper `bank-half`. Wrap past glass is `wrap-escape` (310 demo: 4/8 wraps scored in 2.5s). Do not start a shot late under the rim. Do not `carry-flight` the whole first climb — one floor tap peaks ~150px under the rim. `tube-up` only through the net, not from a too-low rise.
 
 Human ninja **1-min 310** (62s, combo 28, ~5.0 pts/s): bank 29 / rim 17 / swish 0. Summarize more demos with `node --experimental-strip-types scripts/summarize-recording.mjs <file.json>`.
 Human ninja classic 360 (101.9s, 3.5 pts/s): bank ~58% / rim ~33% / swish ~9%.
@@ -146,7 +148,11 @@ bounce / glass grip make a tap dangerous or a playbook tactic applies.
 - **Frost:** freeze can keep the scored stand (`nextHoop` does not always flip). After a make still next to that stand, **let-drop** instead of `chain-next` into the glass. Frozen +2 is in-engine.
 - **Heat / ninja clones / fire extras:** combo-driven in-engine. AI only sees their phys (jumpFwd 1.0 / 1.2, hoop 0.8, boardFric 0.7).
 
-`glass` (priority 70) still protects a real dropping swish. `wrap-height` (rubber) lets rattles resolve and only banks in the glass pocket.
+`glass` (priority 70) still protects a real dropping swish or rim finish. It
+**commits** (`seek-swish` / `commit-make`) when a tap would score, keeps
+climbing from far (`|dx|` ~296, ~3.6 taps), and only `glass-settle`s in the
+pocket or above the rim — not from mid-court. `wrap-height` (rubber) lets
+rattles resolve and only banks in the glass pocket.
 
 ## Formal menu later
 

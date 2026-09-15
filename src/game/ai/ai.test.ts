@@ -354,7 +354,7 @@ describe("ball AI registry", () => {
     const under = decideShot(
       world({
         hoop,
-        ball: { x: 310, y: 380, vx: 90, vy: 40, r: 16 },
+        ball: { x: 208, y: 360, vx: 20, vy: 40, r: 16 },
         jumpVx: -80,
         jumpVy: -900,
         kit: flags({ glass: true, wrap: "height" }),
@@ -364,6 +364,34 @@ describe("ball AI registry", () => {
     assert.equal(under.policyId, "glass");
     assert.equal(under.tap, false);
     assert.equal(under.reason, "glass-settle");
+
+    // Human first-tap |dx| ~296: keep climbing — closeToHoop (~125) is still short.
+    const approach = decideShot(
+      world({
+        hoop,
+        ball: { x: hoop.x + 250, y: 500, vx: -40, vy: 20, r: 16 },
+        jumpVx: -80,
+        jumpVy: -900,
+        kit: flags({ glass: true, wrap: "height" }),
+      }),
+      helpers,
+    );
+    assert.equal(approach.tap, true);
+    assert.ok(approach.reason === "glass-launch" || approach.reason === "commit-make" || approach.reason === "seek-swish");
+
+    // Prior AI settled at closeToHoop (~125px) — still a jump short of the pocket.
+    const short = decideShot(
+      world({
+        hoop,
+        ball: { x: hoop.x + 110, y: 480, vx: -30, vy: 20, r: 16 },
+        jumpVx: -80,
+        jumpVy: -900,
+        kit: flags({ glass: true, wrap: "height" }),
+      }),
+      helpers,
+    );
+    assert.equal(short.tap, true);
+    assert.notEqual(short.reason, "glass-settle");
   });
 
   it("commits a bank in the glass pocket and does not wrap-boost past the board", () => {
@@ -544,6 +572,29 @@ describe("ball AI registry", () => {
       ball: { x: hoop.x - 120, y: hoop.y + 150, vx: 280, vy: -150, r: 19.5 },
     });
     const d = decideShot(mid, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "early-jump");
+  });
+
+  it("ninja recatches a too-low apex even under the cylinder", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const under = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 70, y: hoop.y + 150, vx: 220, vy: -40, r: 19.5 },
+    });
+    const d = decideShot(under, helpers);
     assert.equal(d.tap, true);
     assert.equal(d.reason, "early-jump");
   });
@@ -804,6 +855,15 @@ describe("ball AI registry", () => {
     assert.ok(comboPaceLimit(heat) >= comboPaceLimit(plain) - 0.01);
     assert.ok(comboPaceLimit(ninja) <= 1.28);
     assert.ok(comboPaceLimit(ninja) >= 1.05);
+
+    const glass = world({
+      jumpVx: 390 * 0.76 * 0.8,
+      ballMul: 0,
+      kit: flags({ glass: true, wrap: "height" }),
+    });
+    assert.ok(comboPaceLimit(glass) < comboPaceLimit(plain));
+    assert.ok(comboPaceLimit(glass) <= 1.38);
+    assert.ok(comboPaceLimit(glass) >= 1.12);
   });
 
   it("frost does not chain-next into a freeze that kept the same hoop", () => {

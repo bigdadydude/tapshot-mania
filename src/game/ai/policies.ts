@@ -154,6 +154,32 @@ function onInnerRim(world: AiWorld): boolean {
 }
 
 /**
+ * First jump from the floor peaks ~150px under the rim (ninja jumpH).
+ * Recatch near that dead apex so the second jump can still bank/rim.
+ */
+function tooLowApex(world: AiWorld): boolean {
+  const belowFinish = world.ball.y > world.hoop.y + world.hoop.inner * 1.2;
+  const nearApex = world.ball.vy > -90 && world.ball.vy < 55;
+  if (!belowFinish || !nearApex) return false;
+  // Parked / dying under the rim — a full jumpVy from here flies over.
+  if (Math.abs(world.ball.vx) < 50) return false;
+  return true;
+}
+
+/**
+ * 310 demo: ~2 taps, 2nd while climb is dying — not at full jumpVy
+ * (that overshoots into a wrap) and not after the apex (too-low tunnel).
+ * `inner*3.4` ≈ 95px still fires after the ball has flown in from |dx| 237.
+ */
+function climbRecatch(world: AiWorld): boolean {
+  const dx = Math.abs(world.ball.x - world.hoop.x);
+  const farEnough = dx > world.hoop.inner * 3.4;
+  const below = world.ball.y > world.hoop.y + world.hoop.inner * 1.6;
+  const dyingClimb = world.ball.vy > -380 && world.ball.vy < -80;
+  return farEnough && below && dyingClimb;
+}
+
+/**
  * Mid/upper glass — human ninja banks cluster near board-Y ratio ~0.89
  * from the bottom (`(by+bh−y)/bh`). Board top is ~`hoop.y − 0.182·h`.
  */
@@ -421,8 +447,10 @@ export const antiPolicy: BallAiPolicy = {
 };
 
 /**
- * Glass: protect a real dropping swish, but COMMIT a finish instead of hovering.
- * Restitution is 0 — extra taps in the sky float forever.
+ * Glass: protect a real dropping finish, but COMMIT rim/swish/bank instead of
+ * hovering. Restitution is 0 — extra taps in the sky float forever.
+ * Human classic 10156 / combo 117: rim 52 / swish 40 / bank 25, ~3.6 taps
+ * from |dx| ~296, median gap ~1.29s, 1 miss. Prior AI sat in glass-settle.
  */
 export const glassPolicy: BallAiPolicy = {
   id: "glass",
@@ -448,28 +476,36 @@ export const glassPolicy: BallAiPolicy = {
 
     const pocket =
       Math.abs(world.ball.x - world.hoop.x) < world.hoop.inner * 2.55 + world.ball.r;
+    const fallingInPocket =
+      pocket &&
+      aligned &&
+      world.ball.vy > 12 &&
+      world.ball.y > world.hoop.y - world.ball.r &&
+      world.ball.y < world.hoop.y + world.hoop.inner * 2.05;
+    if (next.scores && next.swish && !fallingInPocket) return tap("seek-swish");
+    if (next.scores && !fallingInPocket) return tap("commit-make");
+    if (comboPressure(world) && !pocket && !aboveRim(world) && !droppingIn) {
+      return tap("pace-boost");
+    }
+
     if (pocket && !onFloor(world)) {
-      // Already falling through the pocket — committing means NOT tapping.
-      if (world.ball.vy > 22 && world.ball.y < world.hoop.y + world.hoop.inner * 1.15) {
-        return hold("glass-settle");
+      // Aligned and falling through — committing means NOT tapping (rim OK).
+      if (fallingInPocket) return hold("glass-settle");
+      if (nearBoard(world) && inBankBand(world) && movingTowardBoard(world)) {
+        return hold("commit-glass");
       }
-      if (next.scores && next.swish) return tap("seek-swish");
-      if (next.scores && world.ball.y > world.hoop.y) return tap("commit-make");
-      // Missed below the net — climb; do not fall to the floor.
+      // Missed below the net — climb; do not fall to the floor (glass −4).
       if (world.ball.y > world.hoop.y + world.hoop.inner * 1.6) return tap("glass-launch");
       return hold("glass-settle");
     }
 
     if (onFloor(world)) return tap("glass-launch");
-    // Default withholds apex-boost after rim/board mess so ground balls can
-    // floor-bounce. Glass cannot land — keep climbing *until* we're close,
-    // then fall into the pocket instead of jumping over the glass.
+    // Human first-tap |dx| ~296, ~3.6 short jumps. Keep climbing until the
+    // pocket — closeToHoop (0.32·w ≈ 125) is still a jump short of the rim.
     if (!aboveRim(world)) {
       const floor = world.world.floorY - world.ball.r;
       const nearFloor = world.ball.y >= floor - Math.max(80, world.world.h * 0.14);
-      if (next.scores && next.swish) return tap("seek-swish");
-      if (next.scores && world.ball.y > world.hoop.y) return tap("commit-make");
-      if (nearFloor || world.onApproachSide || !closeToHoop(world)) {
+      if (nearFloor || world.onApproachSide || !pocket) {
         return tap("glass-launch");
       }
       return hold("glass-settle");
@@ -592,15 +628,11 @@ export const physPolicy: BallAiPolicy = {
       ? dx > world.world.w * 0.5
       : dx > world.world.w * 0.38 * hangScale;
     const launchFar = feel.longJump ? dx > world.world.w * 0.5 : dx > world.world.w * 0.48;
-    const recatchFar = feel.longJump ? dx > world.world.w * 0.28 : far;
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
-    // 2nd tap is near apex (human ~2 taps). Half-jumpVy recatch was too
-    // early: the extra jump then overshot the rim into a wrap. Near-apex
-    // from ~dx 110–160 lands in the glass pocket for a bank.
-    const climbSlowing =
-      world.ball.vy < -12 && world.ball.vy > world.jumpVy * 0.22;
     const launched =
       flyingAtHoop(world) && Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55;
+    const wantRecatch =
+      feel.longJump && !onFloor(world) && belowRim && (tooLowApex(world) || climbRecatch(world));
 
     // Long jumpFwd / slippery glass. 310 demo: launch from the 195–290 band,
     // 2 taps, bank+rim (no swish), wrap is a next-shot (4/8 scored <2.5s).
@@ -633,24 +665,24 @@ export const physPolicy: BallAiPolicy = {
           if (spd < 90 && bounceOpening(world)) return hold("exit-space");
           return hold("let-drop");
         }
-        // Rising through the net — hold (old 144-pt tube-up). Too low
-        // beside the hoop: don't jump over. Near-rim descent → swirl/bank.
-        if (world.ball.vy < -12 && world.ball.y > world.hoop.y) {
+        // Too-low apex under the cylinder: recatch for height. Tube-up only
+        // when actually climbing through the net — holding it from 150px
+        // under was the 0-pt tunnel (carry/let-drop ate the 2nd tap).
+        if (wantRecatch) return tap("early-jump");
+        if (
+          world.ball.vy < -12 &&
+          world.ball.y > world.hoop.y &&
+          world.ball.y < world.hoop.y + world.hoop.inner * 1.8
+        ) {
           return hold("tube-up");
         }
         const tooLow = world.ball.y > world.hoop.y + world.hoop.inner * 2.2;
         if (tooLow) return hold("let-drop");
       }
-      // Floor launch, then one recatch after vy decays (~2 taps). A single
-      // floor tap peaks ~150px under the rim — carry-flight for the whole
-      // rise was the 0-pt tunnel. Recatch uses a closer band because the
-      // ball has already flown in (human 2nd tap is not still at |dx| 237).
       if (feel.longJump && onFloor(world) && launchFar) {
         return tap("early-jump");
       }
-      if (recatchFar && belowRim && climbSlowing && !onFloor(world) && !under) {
-        return tap("early-jump");
-      }
+      if (wantRecatch) return tap("early-jump");
       if (flyingAtHoop(world) && world.ball.vy > 12 && !onFloor(world)) {
         return hold("ride-flight");
       }

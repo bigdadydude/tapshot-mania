@@ -78,6 +78,9 @@ export function shotFeel(world: Pick<AiWorld, "world" | "jumpVx" | "jumpVy" | "g
 export function comboPaceLimit(world: Parameters<typeof shotFeel>[0]): number {
   const f = shotFeel(world);
   if (f.longJump) return clamp(1.12, 1.05, 1.28);
+  // Glass (bounce 0): human classic 10156 / combo 117, median gap ~1.29s,
+  // ~3.6 taps before a make. The 1.72s classic wait is hover.
+  if (f.bounce < 0.15) return clamp(1.24, 1.12, 1.38);
   let pace = 1.72;
   pace += Math.max(0, f.jumpFwd - 0.95) * 1.1;
   if (f.slipperyGlass) pace += 0.12;

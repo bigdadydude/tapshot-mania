@@ -21,9 +21,12 @@ const SNAPPY = new Set([
   "keep-air",
   "floor-launch",
   "pace-boost",
-  "early-jump",
-  "far-climb",
-  "hole-spam",
+    "early-jump",
+    "far-climb",
+    "hole-spam",
+    "glass-launch",
+    "commit-make",
+    "seek-swish",
 ]);
 
 const LEGIT_WAIT = new Set([
