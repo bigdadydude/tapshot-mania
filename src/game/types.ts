@@ -157,6 +157,8 @@ export type HudState = {
   autoPlay: boolean;
   /** Session-only hand-play recording. Default false; not persisted. */
   recording: boolean;
+  /** Games already in the open recording pack (including the live take). */
+  recordingSessions: number;
 };
 
 export type World = {

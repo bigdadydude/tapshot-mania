@@ -19,9 +19,10 @@ The toggle does not start a match. Title still needs a real start tap.
 
 ## Hand-play recording
 
-**录制** lives in `src/game/record/` (chip next to 代打). Default OFF, session-only,
-JSON download on stop / game over. Field docs: `src/game/record/README.md`.
-Does not change how 代打 decides — capture now, fit tactics later.
+**录制** lives in `src/game/record/` (chip next to 代打). Default OFF, session-only.
+Leave it on across games — one v2 pack (`sessions[]`) downloads when you turn
+it off. Anti-gravity orbs / black hole are on samples + events. Field docs:
+`src/game/record/README.md`. Does not change how 代打 decides.
 
 ## Physics feel → decisions (`feel.ts`)
 

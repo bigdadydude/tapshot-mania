@@ -2,7 +2,7 @@
  * Offline summary of a hand-play JSON (`src/game/record` schema).
  * Same metrics we mined from the ninja classic 360 demo.
  */
-import type { PlayEvent, PlayRecording, PlaySample, PlayTap } from "../record/types.ts";
+import type { PlayEvent, PlayRecording, PlayRecordingPack, PlaySample, PlayTap } from "../record/types.ts";
 
 export type RecordingSummary = {
   mode: string;
@@ -164,14 +164,30 @@ export function formatRecordingSummary(s: RecordingSummary): string {
   return lines.join("\n");
 }
 
-/** Narrow unknown JSON to the fields we read. */
-export function parseRecordingJson(raw: unknown): PlayRecording {
-  if (!raw || typeof raw !== "object") throw new Error("recording is not an object");
+function isSession(raw: unknown): raw is PlayRecording {
+  if (!raw || typeof raw !== "object") return false;
   const r = raw as PlayRecording;
-  if (!Array.isArray(r.samples) || !Array.isArray(r.taps) || !Array.isArray(r.events)) {
-    throw new Error("recording missing samples/taps/events");
-  }
-  return r;
+  return Array.isArray(r.samples) && Array.isArray(r.taps) && Array.isArray(r.events);
 }
 
-export type { PlayEvent, PlayRecording, PlaySample, PlayTap };
+/** v1 file or last session of a v2 pack. */
+export function parseRecordingJson(raw: unknown): PlayRecording {
+  const sessions = parseRecordingSessions(raw);
+  const last = sessions[sessions.length - 1];
+  if (!last) throw new Error("recording has no sessions");
+  return last;
+}
+
+/** v1 → one session; v2 pack → every session. */
+export function parseRecordingSessions(raw: unknown): PlayRecording[] {
+  if (!raw || typeof raw !== "object") throw new Error("recording is not an object");
+  const r = raw as PlayRecording | PlayRecordingPack;
+  if ("sessions" in r && Array.isArray(r.sessions)) {
+    if (!r.sessions.every(isSession)) throw new Error("pack session missing samples/taps/events");
+    return r.sessions;
+  }
+  if (!isSession(r)) throw new Error("recording missing samples/taps/events");
+  return [r];
+}
+
+export type { PlayEvent, PlayRecording, PlayRecordingPack, PlaySample, PlayTap };

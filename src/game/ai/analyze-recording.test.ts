@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { summarizePlayRecording } from "./analyze-recording.ts";
+import { parseRecordingJson, parseRecordingSessions, summarizePlayRecording } from "./analyze-recording.ts";
 import type { PlayRecording } from "../record/types.ts";
 
 function rec(over: Partial<PlayRecording> = {}): PlayRecording {
@@ -49,5 +49,14 @@ describe("recording analyzer", () => {
     assert.equal(s.tapsInWindowBeforeMake[0], 2);
     assert.ok(s.medianBoardYRatio != null && s.medianBoardYRatio > 0.8);
     assert.equal(s.playerTaps, 2);
+  });
+
+  it("reads a v2 pack as its last session and lists every game", () => {
+    const first = rec({ score: 4, combo: 1 });
+    const second = rec({ score: 18, combo: 5, ballId: "anti" });
+    const pack = { version: 2 as const, recordedAt: first.recordedAt, sessions: [first, second] };
+    assert.equal(parseRecordingSessions(pack).length, 2);
+    assert.equal(parseRecordingJson(pack).score, 18);
+    assert.equal(parseRecordingJson(first).score, 4);
   });
 });

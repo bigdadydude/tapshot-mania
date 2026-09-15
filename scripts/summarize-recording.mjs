@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   formatRecordingSummary,
-  parseRecordingJson,
+  parseRecordingSessions,
   summarizePlayRecording,
 } from "../src/game/ai/analyze-recording.ts";
 
@@ -16,7 +16,11 @@ if (!path) {
   console.error("usage: node --experimental-strip-types scripts/summarize-recording.mjs <recording.json>");
   process.exit(2);
 }
-const rec = parseRecordingJson(JSON.parse(readFileSync(resolve(path), "utf8")));
-const sum = summarizePlayRecording(rec);
-console.log(formatRecordingSummary(sum));
-if (process.argv.includes("--json")) console.log(JSON.stringify(sum, null, 2));
+const sessions = parseRecordingSessions(JSON.parse(readFileSync(resolve(path), "utf8")));
+if (sessions.length > 1) console.log(`${sessions.length} sessions\n`);
+for (let i = 0; i < sessions.length; i++) {
+  if (sessions.length > 1) console.log(`--- session ${i + 1} ---`);
+  const sum = summarizePlayRecording(sessions[i]);
+  console.log(formatRecordingSummary(sum));
+  if (process.argv.includes("--json")) console.log(JSON.stringify(sum, null, 2));
+}

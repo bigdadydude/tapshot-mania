@@ -51,7 +51,7 @@ import {
 import { createAiController, flagsFromKit } from "./ai";
 import { createPlayRecorder } from "./record";
 
-export const GAME_REV = 345;
+export const GAME_REV = 346;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -131,7 +131,7 @@ export type GameHandle = {
   devBackFromSettle: () => void;
   /** Session-only auto-play (demo / AFK). Default off; not persisted. */
   setAutoPlay: (on: boolean) => void;
-  /** Session-only hand-play recording. Default off; JSON download on stop / over. */
+  /** Session-only hand-play recording. Default off; pack JSON download when toggled off. */
   setRecording: (on: boolean) => void;
   /** Re-download the last (or live) recording, if any. */
   downloadRecording: () => void;
@@ -769,7 +769,8 @@ export function createGame(
   let champFinishing = false;
   /** Anti ball: antimatter charge 0–100, pickups, timed black hole. */
   let antiCharge = 0;
-  let antiMatter: { x: number; y: number; r: number; pct: number; age: number } | null =
+  let antiSpawnSeq = 0;
+  let antiMatter: { id: number; x: number; y: number; r: number; pct: number; age: number } | null =
     null;
   /** Sum of antimatter field linger this charge cycle (cuts hole duration). */
   let antiLingerAcc = 0;
@@ -914,6 +915,7 @@ export function createGame(
       rogue: toRogueHud(isRogueMode() ? rogueRun : null),
       autoPlay: autoPlay.enabled(),
       recording: recorder.enabled(),
+      recordingSessions: recorder.sessionCount(),
     });
   }
 
@@ -966,6 +968,11 @@ export function createGame(
       combo: comboShown(),
       hitRim: ball.hitRim,
       hitBoard: ball.hitBoard,
+      anti: antiMatter
+        ? { id: antiMatter.id, x: antiMatter.x, y: antiMatter.y, r: antiMatter.r, pct: antiMatter.pct }
+        : null,
+      antiCharge,
+      hole: holeOn ? { x: holeX, y: holeY, r: holeR, left: holeLeft } : null,
     });
   }
 
@@ -1156,6 +1163,7 @@ export function createGame(
 
   function resetAntiRun() {
     antiCharge = 0;
+    antiSpawnSeq = 0;
     antiMatter = null;
     antiLingerAcc = 0;
     holeOn = false;
@@ -1170,6 +1178,13 @@ export function createGame(
   }
 
   function closeAntiHole() {
+    if (recorder.live() && holeOn) {
+      recorder.noteEvent("hole-close", {
+        x: holeX,
+        y: holeY,
+        hole: { x: holeX, y: holeY, r: holeR, left: holeLeft },
+      });
+    }
     holeOn = false;
     holeLeft = 0;
     holeScoreAcc = 0;
@@ -1200,6 +1215,14 @@ export function createGame(
     holeTick = 0;
     antiCharge = 0;
     antiMatter = null;
+    if (recorder.live()) {
+      recorder.noteEvent("hole-open", {
+        x: holeX,
+        y: holeY,
+        hole: { x: holeX, y: holeY, r: holeR, left: holeLeft },
+        charge: 0,
+      });
+    }
     // Refill countdown bar when the hole opens (classic shot clock only).
     if (phase === "playing" && !isMinuteMode() && !isRogueMode()) {
       timer = timerMax;
@@ -1483,13 +1506,24 @@ export function createGame(
     }
     if (!ok) return;
     const pct = 1 + Math.floor(Math.random() * 15);
+    antiSpawnSeq += 1;
     antiMatter = {
+      id: antiSpawnSeq,
       x,
       y,
       r: Math.max(14, world.ballR * 0.7),
       pct,
       age: 0,
     };
+    if (recorder.live()) {
+      recorder.noteEvent("anti-spawn", {
+        x,
+        y,
+        antiId: antiMatter.id,
+        pct,
+        charge: antiCharge,
+      });
+    }
   }
 
   function tryCollectAntiMatter() {
@@ -1497,9 +1531,21 @@ export function createGame(
     const d = Math.hypot(ball.x - antiMatter.x, ball.y - antiMatter.y);
     if (d > ball.r + antiMatter.r) return;
     const got = antiMatter.pct;
+    const collectedId = antiMatter.id;
+    const collectedX = antiMatter.x;
+    const collectedY = antiMatter.y;
     antiLingerAcc += antiMatter.age;
     antiMatter = null;
     antiCharge = Math.min(100, antiCharge + got);
+    if (recorder.live()) {
+      recorder.noteEvent("anti-collect", {
+        x: collectedX,
+        y: collectedY,
+        antiId: collectedId,
+        pct: got,
+        charge: antiCharge,
+      });
+    }
     callouts.push({
       text: `+${got}%`,
       x: ball.x,
@@ -4955,10 +5001,10 @@ export function createGame(
             combo: comboShown(),
           });
           endRecordingRun("stop");
-        } else {
-          recorder.downloadLast();
         }
+        recorder.downloadLast();
         recorder.setEnabled(false);
+        recorder.clearArchived();
       }
       emitHud();
     },
@@ -5029,6 +5075,7 @@ export function createGame(
         autoPlayPolicy: autoPlay.lastDecision()?.policyId ?? null,
         recording: recorder.enabled(),
         recordingLive: recorder.live(),
+        recordingSessions: recorder.sessionCount(),
         recordingSamples: recorder.exportLive()?.samples.length ?? recorder.lastFile()?.samples.length ?? 0,
       };
     },
@@ -5046,7 +5093,7 @@ export function createGame(
     setRecording: (on: boolean) => {
       handle.setRecording(Boolean(on));
     },
-    exportRecording: () => recorder.exportLive() ?? recorder.lastFile(),
+    exportRecording: () => recorder.exportPack() ?? recorder.exportLive() ?? recorder.lastFile(),
     downloadRecording: () => recorder.downloadLast(),
     setBall: (id: BallId) => applyBall(id),
     setPlayMode: (mode: PlayMode) => handle.setPlayMode(mode),

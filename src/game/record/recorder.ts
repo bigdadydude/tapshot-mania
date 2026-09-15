@@ -7,6 +7,7 @@ import type {
   PlayFrameInput,
   PlayRecording,
   PlayRecordingMeta,
+  PlayRecordingPack,
   PlaySample,
   PlayTap,
   PlayTapSource,
@@ -29,16 +30,21 @@ export type PlayRecorder = {
     kind: PlayEventKind,
     extra?: Omit<PlayEvent, "t" | "f" | "kind">,
   ) => void;
-  /** Last exported (or live) file; null if nothing captured. */
+  /** Last archived session (v1), or the live take. */
   lastFile: () => PlayRecording | null;
+  /** Whole pack (v2), including a live take if one is open. */
+  exportPack: () => PlayRecordingPack | null;
+  sessionCount: () => number;
   exportLive: (reason?: PlayEndReason) => PlayRecording | null;
   downloadLast: () => boolean;
+  /** Drop archived sessions so the next ON starts a new pack. Keeps last export. */
+  clearArchived: () => void;
   reset: () => void;
 };
 
 export type PlayRecorderOpts = {
   sampleEvery?: number;
-  download?: (rec: PlayRecording, filename: string) => void;
+  download?: (file: PlayRecordingPack, filename: string) => void;
   nowIso?: () => string;
 };
 
@@ -52,15 +58,20 @@ export function createPlayRecorder(opts: PlayRecorderOpts = {}): PlayRecorder {
   let f = 0;
   let meta: PlayRecordingMeta | null = null;
   let recordedAt = "";
+  let packAt = "";
   let samples: PlaySample[] = [];
   let taps: PlayTap[] = [];
   let events: PlayEvent[] = [];
+  let sessions: PlayRecording[] = [];
   let lastFile: PlayRecording | null = null;
+  let lastPack: PlayRecordingPack | null = null;
   let lastScore = 0;
   let lastCombo = 0;
   let lastHs: -1 | 1 | null = null;
   let prevRim = false;
   let prevBoard = false;
+  let prevAntiId: number | null = null;
+  let prevHole = false;
   let lastEventAt: Partial<Record<PlayEventKind, number>> = {};
 
   function tNow() {
@@ -80,14 +91,23 @@ export function createPlayRecorder(opts: PlayRecorderOpts = {}): PlayRecorder {
     lastHs = null;
     prevRim = false;
     prevBoard = false;
+    prevAntiId = null;
+    prevHole = false;
     lastEventAt = {};
+  }
+
+  function clearPack() {
+    sessions = [];
+    packAt = "";
+    lastFile = null;
+    lastPack = null;
   }
 
   function hasLiveData() {
     return samples.length > 0 || taps.length > 0 || events.length > 0;
   }
 
-  function build(reason: PlayEndReason, tally?: { score: number; combo: number }): PlayRecording | null {
+  function buildSession(reason: PlayEndReason, tally?: { score: number; combo: number }): PlayRecording | null {
     if (!meta || !hasLiveData()) return null;
     const score = tally?.score ?? lastScore;
     const combo = tally?.combo ?? lastCombo;
@@ -110,9 +130,28 @@ export function createPlayRecorder(opts: PlayRecorderOpts = {}): PlayRecorder {
     };
   }
 
-  function emitDownload(rec: PlayRecording) {
-    lastFile = rec;
-    downloadFn(rec, playRecordingFilename(rec));
+  function archive(reason: PlayEndReason, tally?: { score: number; combo: number }): PlayRecording | null {
+    const rec = buildSession(reason, tally);
+    if (rec) {
+      sessions.push(rec);
+      lastFile = rec;
+    }
+    return rec;
+  }
+
+  function buildPack(includeLive: boolean, liveReason: PlayEndReason = "stop"): PlayRecordingPack | null {
+    const live = includeLive && running ? buildSession(liveReason) : null;
+    const list = live ? [...sessions, live] : sessions.slice();
+    if (!list.length) return null;
+    return {
+      version: 2,
+      recordedAt: packAt || list[0]!.recordedAt,
+      sessions: list,
+    };
+  }
+
+  function emitDownload(pack: PlayRecordingPack) {
+    downloadFn(pack, playPackFilename(pack));
   }
 
   return {
@@ -126,19 +165,18 @@ export function createPlayRecorder(opts: PlayRecorderOpts = {}): PlayRecorder {
     },
     beginRun(nextMeta) {
       if (!on) return;
+      if (running && hasLiveData()) archive("restart");
       clearLive();
       running = true;
       meta = nextMeta;
       recordedAt = nowIso();
-      lastFile = null;
+      if (!packAt) packAt = recordedAt;
       f = 0;
       noteStart();
     },
     endRun(reason, tally) {
       if (!on || !running) return lastFile;
-      const rec = build(reason, tally);
-      running = false;
-      if (rec) emitDownload(rec);
+      const rec = archive(reason, tally);
       clearLive();
       return rec;
     },
@@ -160,7 +198,13 @@ export function createPlayRecorder(opts: PlayRecorderOpts = {}): PlayRecorder {
       }
       prevRim = frame.hitRim;
       prevBoard = frame.hitBoard;
-      if (f === 1 || hoopChanged || f % sampleEvery === 0) {
+      const antiId = frame.anti?.id ?? null;
+      const holeOn = Boolean(frame.hole);
+      const antiChanged = antiId !== prevAntiId;
+      const holeChanged = holeOn !== prevHole;
+      prevAntiId = antiId;
+      prevHole = holeOn;
+      if (f === 1 || hoopChanged || antiChanged || holeChanged || f % sampleEvery === 0) {
         samples.push(compactSample(tNow(), f, frame));
       }
     },
@@ -180,21 +224,28 @@ export function createPlayRecorder(opts: PlayRecorderOpts = {}): PlayRecorder {
       if (!on || !running) return;
       pushEvent(kind, extra);
     },
-    lastFile: () => lastFile,
+    lastFile: () => (running && hasLiveData() ? buildSession("stop") : lastFile),
+    exportPack: () => buildPack(true) ?? lastPack,
+    sessionCount: () => sessions.length + (running && hasLiveData() ? 1 : 0),
     exportLive(reason = "stop") {
-      if (running && hasLiveData()) return build(reason);
+      if (running && hasLiveData()) return buildSession(reason);
       return lastFile;
     },
     downloadLast() {
-      const rec = running && hasLiveData() ? build("stop") : lastFile;
-      if (!rec) return false;
-      emitDownload(rec);
+      const pack = buildPack(true);
+      if (!pack) return false;
+      lastPack = pack;
+      emitDownload(pack);
       return true;
+    },
+    clearArchived() {
+      sessions = [];
+      packAt = "";
     },
     reset() {
       on = false;
-      lastFile = null;
       clearLive();
+      clearPack();
     },
   };
 
@@ -214,7 +265,7 @@ export function createPlayRecorder(opts: PlayRecorderOpts = {}): PlayRecorder {
 }
 
 function compactSample(t: number, f: number, frame: PlayFrameInput): PlaySample {
-  return {
+  const sample: PlaySample = {
     t,
     f,
     x: r1(frame.x),
@@ -234,6 +285,26 @@ function compactSample(t: number, f: number, frame: PlayFrameInput): PlaySample 
     s: frame.score,
     c: frame.combo,
   };
+  if (frame.anti) {
+    sample.am = {
+      id: frame.anti.id,
+      x: r1(frame.anti.x),
+      y: r1(frame.anti.y),
+      r: r1(frame.anti.r),
+      pct: frame.anti.pct,
+    };
+  }
+  const charge = frame.antiCharge ?? 0;
+  if (charge > 0 || frame.anti || frame.hole) sample.ac = charge;
+  if (frame.hole) {
+    sample.ho = {
+      x: r1(frame.hole.x),
+      y: r1(frame.hole.y),
+      r: r1(frame.hole.r),
+      left: round3(frame.hole.left),
+    };
+  }
+  return sample;
 }
 
 function r1(n: number) {
@@ -249,7 +320,15 @@ export function playRecordingFilename(rec: PlayRecording): string {
   return `tapshot-${rec.mode}-${rec.ballId}-${rec.score}-${stamp}.json`;
 }
 
-export function defaultDownloadPlayJson(rec: PlayRecording, filename: string) {
+export function playPackFilename(pack: PlayRecordingPack): string {
+  const stamp = pack.recordedAt.replace(/[:.]/g, "-");
+  const n = pack.sessions.length;
+  const last = pack.sessions[n - 1];
+  const tag = last ? `${last.mode}-${last.ballId}` : "pack";
+  return `tapshot-pack-${n}g-${tag}-${stamp}.json`;
+}
+
+export function defaultDownloadPlayJson(rec: PlayRecordingPack, filename: string) {
   if (typeof document === "undefined") return;
   const blob = new Blob([JSON.stringify(rec, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);

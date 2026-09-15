@@ -39,6 +39,7 @@ const idleHud: HudState = {
   rogue: null,
   autoPlay: false,
   recording: false,
+  recordingSessions: 0,
 };
 
 type Menu = "none" | "pause" | "settings" | "gfx" | "sound";
@@ -276,7 +277,11 @@ export function GameView() {
             >
               <CircleDot className="size-4" />
               <span className="text-xs font-medium tracking-wide">
-                {hud.recording ? "录制中" : "录制"}
+                {hud.recording
+                  ? hud.recordingSessions > 1
+                    ? `录制中 · ${hud.recordingSessions}局`
+                    : "录制中"
+                  : "录制"}
               </span>
             </button>
             ) : null}

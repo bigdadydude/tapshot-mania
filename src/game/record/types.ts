@@ -12,9 +12,30 @@ export type PlayEventKind =
   | "wrap"
   | "hoop"
   | "over"
-  | "stop";
+  | "stop"
+  | "anti-spawn"
+  | "anti-collect"
+  | "hole-open"
+  | "hole-close";
 
 export type PlayEndReason = "over" | "stop" | "restart";
+
+/** One antimatter pickup. `id` is unique within a session. */
+export type PlayAntiOrb = {
+  id: number;
+  x: number;
+  y: number;
+  r: number;
+  pct: number;
+};
+
+/** Black-hole geometry while open. `left` is seconds remaining. */
+export type PlayHoleState = {
+  x: number;
+  y: number;
+  r: number;
+  left: number;
+};
 
 /** Dense trajectory sample. Short keys — see README.md. */
 export type PlaySample = {
@@ -43,6 +64,12 @@ export type PlaySample = {
   bh: number;
   s: number;
   c: number;
+  /** Active antimatter orb (anti ball only). */
+  am?: PlayAntiOrb;
+  /** Antimatter charge 0–100 (omitted when 0 and idle). */
+  ac?: number;
+  /** Black hole while open. */
+  ho?: PlayHoleState;
 };
 
 export type PlayTap = {
@@ -67,6 +94,12 @@ export type PlayEvent = {
   ghost?: boolean;
   score?: number;
   combo?: number;
+  /** Antimatter orb id (spawn / collect). */
+  antiId?: number;
+  /** Charge added (collect) or charge after. */
+  pct?: number;
+  charge?: number;
+  hole?: PlayHoleState;
 };
 
 export type PlayRecordingMeta = {
@@ -75,6 +108,10 @@ export type PlayRecordingMeta = {
   world: { w: number; h: number; floorY: number };
 };
 
+/**
+ * One finished (or live) game. Same shape as the original v1 file.
+ * Packs wrap these in `sessions[]`.
+ */
 export type PlayRecording = {
   version: 1;
   recordedAt: string;
@@ -91,6 +128,13 @@ export type PlayRecording = {
   samples: PlaySample[];
   taps: PlayTap[];
   events: PlayEvent[];
+};
+
+/** Multi-game export. Version 2. */
+export type PlayRecordingPack = {
+  version: 2;
+  recordedAt: string;
+  sessions: PlayRecording[];
 };
 
 export type PlayFrameInput = {
@@ -112,4 +156,7 @@ export type PlayFrameInput = {
   combo: number;
   hitRim: boolean;
   hitBoard: boolean;
+  anti?: PlayAntiOrb | null;
+  antiCharge?: number;
+  hole?: PlayHoleState | null;
 };
