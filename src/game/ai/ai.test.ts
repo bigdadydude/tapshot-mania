@@ -525,6 +525,29 @@ describe("ball AI registry", () => {
     assert.equal(d.reason, "early-jump");
   });
 
+  it("ninja recatches after the ball has flown in (2nd tap is closer than 237)", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const mid = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 120, y: hoop.y + 150, vx: 280, vy: -300, r: 19.5 },
+    });
+    const d = decideShot(mid, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "early-jump");
+  });
+
   it("ninja does not spam early-jump after the launch is already flying", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,

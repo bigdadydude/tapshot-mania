@@ -592,11 +592,14 @@ export const physPolicy: BallAiPolicy = {
       ? dx > world.world.w * 0.5
       : dx > world.world.w * 0.38 * hangScale;
     const launchFar = feel.longJump ? dx > world.world.w * 0.5 : dx > world.world.w * 0.48;
+    const recatchFar = feel.longJump ? dx > world.world.w * 0.28 : far;
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
     // 2nd tap: climb has slowed (vy decayed from full jumpVy). Tapping at
     // full jumpVy every 80ms was a 3rd/4th reset that tunneled under the rim.
     const climbSlowing =
       world.ball.vy < -20 && world.ball.vy > world.jumpVy * 0.5;
+    const launched =
+      flyingAtHoop(world) && Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55;
 
     // Long jumpFwd / slippery glass. 310 demo: launch from the 195–290 band,
     // 2 taps, bank+rim (no swish), wrap is a next-shot (4/8 scored <2.5s).
@@ -637,25 +640,20 @@ export const physPolicy: BallAiPolicy = {
         const tooLow = world.ball.y > world.hoop.y + world.hoop.inner * 2.2;
         if (tooLow) return hold("let-drop");
       }
-      // Floor launch, then one recatch after vy decays (~2 taps). Holding
-      // carry-flight at full jumpVy stops the 80ms reset spam that tunneled
-      // under the rim. Descent still rides.
+      // Floor launch, then one recatch after vy decays (~2 taps). A single
+      // floor tap peaks ~150px under the rim — carry-flight for the whole
+      // rise was the 0-pt tunnel. Recatch uses a closer band because the
+      // ball has already flown in (human 2nd tap is not still at |dx| 237).
       if (feel.longJump && onFloor(world) && launchFar) {
         return tap("early-jump");
       }
-      if (far && belowRim && climbSlowing && !onFloor(world) && !under) {
+      if (recatchFar && belowRim && climbSlowing && !onFloor(world) && !under) {
         return tap("early-jump");
       }
       if (flyingAtHoop(world) && world.ball.vy > 12 && !onFloor(world)) {
         return hold("ride-flight");
       }
-      if (
-        feel.longJump &&
-        flyingAtHoop(world) &&
-        world.ball.vy < -12 &&
-        !onFloor(world) &&
-        Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55
-      ) {
+      if (feel.longJump && launched && world.ball.vy < -12 && !onFloor(world)) {
         return hold("carry-flight");
       }
     }
