@@ -78,9 +78,9 @@ export function shotFeel(world: Pick<AiWorld, "world" | "jumpVx" | "jumpVy" | "g
  */
 export function comboPaceLimit(world: Parameters<typeof shotFeel>[0]): number {
   const f = shotFeel(world);
-  // Sep15 ninja gaps 1.33–1.69s. 1.08s wrap-escaped every chain and capped
-  // classic at 1–7.
-  if (f.longJump) return clamp(1.42, 1.28, 1.55);
+  // Sep15 ninja gaps 1.33–1.69s. 1.08s wrap-escaped every chain; 1.42s
+  // still wrapped mid-streak. Ride through the human median, poke later.
+  if (f.longJump) return clamp(1.68, 1.48, 1.82);
   // Glass (bounce 0): human classic 10156 / 117 and 5992 / 88, gap ~1.29s.
   if (f.bounce < 0.15) return clamp(1.24, 1.12, 1.38);
   // Lava / frost (jumpFwd ~1.0): gold 1985/50 and 1264/43 need a tighter

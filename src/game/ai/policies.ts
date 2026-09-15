@@ -32,6 +32,21 @@ function comboPressure(world: AiWorld): boolean {
   return world.comboClock > comboPaceLimit(world);
 }
 
+/** Streak still has time to finish this shot (combo window is 4s). */
+function comboLive(world: AiWorld): boolean {
+  if (!world.comboCounting || world.streak < 1) return false;
+  return world.comboClock <= 2.35;
+}
+
+/**
+ * Last ~1.6s of the 4s window. Wrap/recover here — wrapping at comboPace
+ * (~1.4s) then rolling in from a ground wrap eats the rest of the streak.
+ */
+function comboDying(world: AiWorld): boolean {
+  if (!world.comboCounting || world.streak < 1) return false;
+  return world.comboClock > 2.35;
+}
+
 function onLaunchSide(world: AiWorld): boolean {
   return world.hoop.side < 0
     ? world.ball.x > world.hoop.x - world.hoop.inner
@@ -422,15 +437,16 @@ export const defaultPolicy: BallAiPolicy = {
       if (aboveRim(world) && !onFloor(world) && !world.onApproachSide) {
         return hold("chain-wait");
       }
-      // HQ gold: after a make, next tap is |dx| ~259, not a full jump from
-      // the old hoop (~400) that sails through and wrap-escapes.
+      // HQ gold: after a make, next tap is |dx| ~259 (~0.17s later), not a
+      // full jump from the old hoop (~400) that sails through and wraps.
+      // Chain as soon as we're inside 0.76w (on-court); only hold a true sail.
       if (
         longJumpFwd(world) &&
         !world.onApproachSide &&
         !world.ballHidden
       ) {
         const chainDx = Math.abs(world.ball.x - world.hoop.x);
-        if (chainDx >= world.world.w * NINJA_OPENER.launchMax) {
+        if (chainDx >= world.world.w * 0.76) {
           if (onFloor(world)) return hold("wait-window");
           return hold("carry-flight");
         }
@@ -549,7 +565,9 @@ export const defaultPolicy: BallAiPolicy = {
     }
 
     if (
-      (clockPanic(world, 1.6) || comboPressure(world)) &&
+      (clockPanic(world, 1.6) ||
+        (comboPressure(world) && !longJumpFwd(world)) ||
+        comboDying(world)) &&
       !(longJumpFwd(world) && closeToHoop(world) && !demoPriors(world).comboPokeNearHoop)
     ) {
       return tap("shot-clock");
@@ -909,7 +927,8 @@ export const physPolicy: BallAiPolicy = {
       if (!world.onApproachSide && !current.scores && pastBoard(world)) {
         // Climbing just behind the glass can still fall into a bank.
         // Wrapping at jump speed from here is the post-make chain killer.
-        if (world.ball.vy > 8) return tap("wrap-escape");
+        // Live combo: ride/drop — a wrap + 3s roll-in breaks the 4s streak.
+        if (world.ball.vy > 8 && !comboLive(world)) return tap("wrap-escape");
         return hold("let-drop");
       }
       if (!world.onApproachSide && under && !current.scores) {
@@ -919,16 +938,18 @@ export const physPolicy: BallAiPolicy = {
             away &&
             Math.abs(world.ball.vx) > 48 &&
             !clockPanic(world, 1.7) &&
-            !comboPressure(world)
+            !comboDying(world)
           ) {
             return hold("exit-space");
           }
           const spd = Math.hypot(world.ball.vx, world.ball.vy);
-          if (spd < 78) return tap("wrap-escape");
+          if (spd < 78 && !comboLive(world)) return tap("wrap-escape");
           if (away) return hold("exit-space");
           // Moving toward the hoop: a wrap-escape tap writes full jumpVx and
           // is the ninja-stuck-loop (under-hoop tap → wrap → far launch → repeat).
-          if (flyingAtHoop(world) || movingTowardBoard(world)) return hold("let-drop");
+          if (flyingAtHoop(world) || movingTowardBoard(world) || comboLive(world)) {
+            return hold("let-drop");
+          }
           return tap("wrap-escape");
         }
         if (lowBounce(world)) {
@@ -937,7 +958,9 @@ export const physPolicy: BallAiPolicy = {
           // Parked on the bounce with combo dying: wrap. A live bounce still drops.
           if (
             !current.scores &&
-            (world.comboClock > 2.4 || (comboPressure(world) && spd < 78))
+            comboDying(world) &&
+            !flyingAtHoop(world) &&
+            (spd < 78 || world.comboClock > 2.4)
           ) {
             return tap("wrap-escape");
           }
@@ -961,7 +984,7 @@ export const physPolicy: BallAiPolicy = {
         if (world.ball.vy > 12 && world.ball.y > world.hoop.y + world.hoop.inner) {
           const spd = Math.hypot(world.ball.vx, world.ball.vy);
           if (
-            comboPressure(world) &&
+            comboDying(world) &&
             !current.scores &&
             !flyingAtHoop(world) &&
             (spd < 78 || world.comboClock > 2.4)
@@ -974,7 +997,7 @@ export const physPolicy: BallAiPolicy = {
         if (tooLow) {
           const spd = Math.hypot(world.ball.vx, world.ball.vy);
           if (
-            comboPressure(world) &&
+            comboDying(world) &&
             !current.scores &&
             !flyingAtHoop(world) &&
             (spd < 78 || world.comboClock > 2.4)
@@ -995,21 +1018,34 @@ export const physPolicy: BallAiPolicy = {
         !under
       ) {
         const spd = Math.hypot(world.ball.vx, world.ball.vy);
-        if (spd < 78) return tap("wrap-escape");
+        if (spd < 78 && !comboLive(world)) return tap("wrap-escape");
       }
-      // After a wrap the ball rolls in from ~0.76w. Wait until |dx| ≲260
-      // (human chain band). Do not sit past that — first make never arms.
+      // After a wrap the ball rolls in from ~0.76w. Wait until the demo
+      // band (~260). Live combo after a wrap: jump as soon as on-court
+      // (<0.76w) so the 4s streak can still chain (~1.3–1.7s human gap).
+      const postWrapCombo = world.wraps > 0 && comboLive(world);
+      const waitDx = postWrapCombo
+        ? world.world.w * 0.76
+        : world.world.w * NINJA_OPENER.launchMax;
       if (
         feel.longJump &&
         onFloor(world) &&
         !world.onApproachSide &&
         !world.ballHidden &&
-        dx >= world.world.w * NINJA_OPENER.launchMax &&
+        dx >= waitDx &&
         crawlingIn
       ) {
         return hold("wait-window");
       }
       if (feel.longJump && onFloor(world) && launchFar) {
+        return tap("early-jump");
+      }
+      if (
+        postWrapCombo &&
+        onFloor(world) &&
+        dx > world.world.w * NINJA_OPENER.launchMin &&
+        dx < world.world.w * 0.76
+      ) {
         return tap("early-jump");
       }
       if (ninjaClimbTap(world)) return tap("early-jump");

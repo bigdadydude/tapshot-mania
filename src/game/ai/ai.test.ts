@@ -15,6 +15,7 @@ import {
   shotFeel,
   demoPriors,
   finishPocketLocked,
+  NINJA_OPENER,
 } from "./policies.ts";
 import { createAiController, AI_TAP_INTERVAL, AI_WATCHDOG } from "./controller.ts";
 import { predictCurrent, predictTap } from "./predict.ts";
@@ -795,7 +796,7 @@ describe("ball AI registry", () => {
       kit: flags({ ninja: true }),
       combo: 18,
       streak: 18,
-      comboClock: 1.55,
+      comboClock: 2.5,
       comboCounting: true,
       ball: { x: hoop.x - 55, y: hoop.y + 110, vx: 8, vy: 20, r: 19.5 },
     });
@@ -803,6 +804,21 @@ describe("ball AI registry", () => {
     assert.equal(d.policyId, "phys");
     assert.equal(d.tap, true);
     assert.equal(d.reason, "wrap-escape");
+
+    const stillLive = world({
+      hoop,
+      jumpVx: w * 0.76 * 1.2,
+      ballMul: 1,
+      kit: flags({ ninja: true }),
+      combo: 18,
+      streak: 18,
+      comboClock: 1.55,
+      comboCounting: true,
+      ball: { x: hoop.x - 55, y: hoop.y + 110, vx: 8, vy: 20, r: 19.5 },
+    });
+    const holdMid = decideShot(stillLive, helpers);
+    assert.equal(holdMid.tap, false);
+    assert.ok(holdMid.reason === "let-drop" || holdMid.reason === "ride-flight");
 
     const liveFall = world({
       hoop,
@@ -1302,6 +1318,24 @@ describe("ball AI registry", () => {
     assert.equal(d.tap, true);
     assert.equal(d.reason, "wrap-escape");
 
+    const liveCombo = decideShot(
+      world({
+        hoop,
+        kit: flags({ ninja: true }),
+        jumpVx: 390 * 0.76 * 1.2,
+        hoopMul: 0.8,
+        boardFric: 0.7,
+        combo: 12,
+        streak: 12,
+        comboClock: 0.8,
+        comboCounting: true,
+        ball: { x: 430, y: hoop.y + 40, vx: 90, vy: 40, r: 19.5 },
+      }),
+      helpers,
+    );
+    assert.equal(liveCombo.tap, false);
+    assert.equal(liveCombo.reason, "let-drop");
+
     const headingOut = decideShot(
       world({
         hoop,
@@ -1375,6 +1409,20 @@ describe("ball AI registry", () => {
     const go = decideShot(band, helpers);
     assert.equal(go.tap, true);
     assert.equal(go.reason, "chain-next");
+
+    const nearBand = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotMade: true,
+      scored: true,
+      ball: { x: hoop.x - 273, y: hoop.y + 80, vx: 80, vy: 40, r: 19.5 },
+    });
+    const chain = decideShot(nearBand, helpers);
+    assert.equal(chain.tap, true);
+    assert.equal(chain.reason, "chain-next");
   });
 
   it("ninja rides a live arc instead of combo-pace poking", () => {
@@ -1523,8 +1571,8 @@ describe("ball AI registry", () => {
     assert.ok(comboPaceLimit(heat) < comboPaceLimit(plain));
     assert.ok(comboPaceLimit(heat) <= 1.48);
     assert.ok(comboPaceLimit(heat) >= 1.24);
-    assert.ok(comboPaceLimit(ninja) <= 1.55);
-    assert.ok(comboPaceLimit(ninja) >= 1.28);
+    assert.ok(comboPaceLimit(ninja) <= 1.82);
+    assert.ok(comboPaceLimit(ninja) >= 1.48);
 
     const glass = world({
       jumpVx: 390 * 0.76 * 0.8,
@@ -2879,5 +2927,50 @@ describe("AI controller", () => {
     });
     assert.equal(ai.tick(spam), false, ai.lastDecision()?.reason);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+  });
+
+  it("after a wrap with a live combo, launches once on-court instead of waiting to 0.67w", () => {
+    const ai = createAiController();
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const floorY = 844 * 0.765;
+    const r = 19.5;
+    const ninja = {
+      dt: 0.2,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      hoop,
+    };
+    ai.tick(
+      world({
+        ...ninja,
+        ball: { x: hoop.x - 224, y: floorY - r, vx: 8, vy: 10, r },
+      }),
+    );
+    const onCourt = world({
+      ...ninja,
+      wraps: 1,
+      combo: 8,
+      streak: 8,
+      comboClock: 0.9,
+      comboCounting: true,
+      ball: { x: hoop.x - 290, y: floorY - r, vx: 44, vy: 0, r },
+    });
+    assert.ok(Math.abs(onCourt.ball.x - onCourt.hoop.x) > 390 * NINJA_OPENER.launchMax);
+    assert.ok(Math.abs(onCourt.ball.x - onCourt.hoop.x) < 390 * 0.76);
+    assert.equal(decideShot(onCourt, helpers).reason, "early-jump");
+    assert.equal(ai.tick(onCourt), true, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "early-jump");
+    assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
+    assert.notEqual(ai.lastDecision()?.reason, "wait-window");
   });
 });
