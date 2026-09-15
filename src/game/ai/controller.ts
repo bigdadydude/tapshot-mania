@@ -191,6 +191,9 @@ export function createAiController(): AiController {
         if (!world.shotMade && !world.scored) {
           wrapCool = Math.max(wrapCool, 1.65);
           fruitlessWraps += 1;
+          // Don't treat rolling through the last launch x as persistShot —
+          // that froze the demo-band floor attack for the rest of classic.
+          lastTap = null;
         }
       }
 
@@ -269,6 +272,19 @@ export function createAiController(): AiController {
           airSpam);
       if (wrapLoop && grounded && !farRestart) sitHold += world.dt;
       else if (!wrapLoop) sitHold = 0;
+      // After a wrap, lastTap is cleared. Rolling onto the previous launch
+      // x must still be allowed to jump — persistShot/sameShot froze classic.
+      if (
+        wrapLoop &&
+        grounded &&
+        !lastTap &&
+        !world.onApproachSide &&
+        !world.ballHidden &&
+        dx > world.world.w * 0.5 &&
+        dx <= world.world.w * 0.76
+      ) {
+        wrapLoop = false;
+      }
       const inbound = helpers.predictCurrent(world);
       const nextShot = helpers.predictTap(world);
       const wrapEscapeSpam =
