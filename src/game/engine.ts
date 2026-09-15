@@ -52,7 +52,7 @@ import { createAiController, flagsFromKit } from "./ai";
 import { predictCurrent, predictTap } from "./ai/predict.ts";
 import { createPlayRecorder } from "./record";
 
-export const GAME_REV = 372;
+export const GAME_REV = 373;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -132,10 +132,12 @@ export type GameHandle = {
   devBackFromSettle: () => void;
   /** Session-only auto-play (demo / AFK). Default off; not persisted. */
   setAutoPlay: (on: boolean) => void;
-  /** Session-only hand-play recording. Default off; pack JSON download when toggled off. */
+  /** Session-only hand-play recording. Default off; UI confirms save vs discard. */
   setRecording: (on: boolean) => void;
   /** Re-download the last (or live) recording, if any. */
   downloadRecording: () => void;
+  /** Drop the current pack without downloading. */
+  discardRecording: () => void;
   /** Activate inventory item / usable ornament from pause. */
   useRogue: (id: string) => void;
   /** Answer连击保护 prompt. */
@@ -5009,14 +5011,16 @@ export function createGame(
           });
           endRecordingRun("stop");
         }
-        recorder.downloadLast();
         recorder.setEnabled(false);
-        recorder.clearArchived();
       }
       emitHud();
     },
     downloadRecording() {
       recorder.downloadLast();
+    },
+    discardRecording() {
+      recorder.discard();
+      emitHud();
     },
     dev(cmd) {
       applyDev(cmd);
@@ -5125,6 +5129,7 @@ export function createGame(
     },
     exportRecording: () => recorder.exportPack() ?? recorder.exportLive() ?? recorder.lastFile(),
     downloadRecording: () => recorder.downloadLast(),
+    discardRecording: () => handle.discardRecording(),
     setBall: (id: BallId) => applyBall(id),
     setPlayMode: (mode: PlayMode) => handle.setPlayMode(mode),
     goTitle: () => goTitle(),

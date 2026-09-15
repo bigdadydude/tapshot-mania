@@ -37,6 +37,8 @@ export type PlayRecorder = {
   sessionCount: () => number;
   exportLive: (reason?: PlayEndReason) => PlayRecording | null;
   downloadLast: () => boolean;
+  /** Drop live + archived sessions with no download. */
+  discard: () => void;
   /** Drop archived sessions so the next ON starts a new pack. Keeps last export. */
   clearArchived: () => void;
   reset: () => void;
@@ -232,11 +234,17 @@ export function createPlayRecorder(opts: PlayRecorderOpts = {}): PlayRecorder {
       return lastFile;
     },
     downloadLast() {
-      const pack = buildPack(true);
+      const pack = buildPack(true) ?? lastPack;
       if (!pack) return false;
       lastPack = pack;
       emitDownload(pack);
+      sessions = [];
+      packAt = "";
       return true;
+    },
+    discard() {
+      clearLive();
+      clearPack();
     },
     clearArchived() {
       sessions = [];

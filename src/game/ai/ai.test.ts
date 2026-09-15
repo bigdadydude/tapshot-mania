@@ -14,6 +14,7 @@ import {
   comboPaceLimit,
   shotFeel,
   demoPriors,
+  finishPocketLocked,
 } from "./policies.ts";
 import { createAiController, AI_TAP_INTERVAL, AI_WATCHDOG } from "./controller.ts";
 import { predictCurrent, predictTap } from "./predict.ts";
@@ -1874,15 +1875,15 @@ describe("AI controller", () => {
     assert.equal(ai.lastDecision()?.tap, false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
 
-    // Fruitless ground wrap, then the same under-hoop tap.
+    // Fruitless wrap: one board-kiss if the reset would hit glass, else hold.
     const afterWrap = world({
       ...under,
       dt: 0.02,
       wraps: 1,
       ball: { x: hoop.x + 58, y: hoop.y + 110, vx: -40, vy: 20, r: 19.5 },
     });
-    assert.equal(ai.tick(afterWrap), false);
-    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+    assert.equal(ai.tick(afterWrap), true);
+    assert.equal(ai.lastDecision()?.reason, "wrap-bank");
 
     // Cool expired — identical parked pose + jump vector is still the loop.
     const afterCool = world({
@@ -2080,6 +2081,59 @@ describe("AI controller", () => {
     });
     assert.equal(ai.tick(spaced), true);
     assert.equal(ai.lastDecision()?.reason, "early-jump");
+  });
+
+  it("prefers one board-kiss tap over an empty wrap cycle (wrap-bank)", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "force-wrap-bank",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "tap", reason: "wrap-escape" }),
+    });
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const ninja = {
+      dt: 1 / 60,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      hoop,
+    };
+    const spot = world({
+      ...ninja,
+      ball: { x: hoop.x - 40, y: hoop.y + 80, vx: 40, vy: 20, r: 19.5 },
+    });
+    assert.equal(predictTap(spot).willBoard, true);
+    assert.equal(predictCurrent(spot).willBoard, false);
+    assert.equal(finishPocketLocked(spot), false);
+    assert.equal(ai.tick(spot), true);
+
+    const afterWrap = world({
+      ...ninja,
+      dt: 0.2,
+      wraps: 1,
+      ball: { x: hoop.x - 40, y: hoop.y + 80, vx: 40, vy: 20, r: 19.5 },
+    });
+    assert.equal(ai.tick(afterWrap), true, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "wrap-bank");
+
+    const again = world({
+      ...ninja,
+      dt: 0.2,
+      wraps: 1,
+      ball: { x: hoop.x - 40, y: hoop.y + 80, vx: 40, vy: 20, r: 19.5 },
+    });
+    assert.equal(ai.tick(again), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
   });
 
   it("still launches from the demo band after a fruitless wrap", () => {

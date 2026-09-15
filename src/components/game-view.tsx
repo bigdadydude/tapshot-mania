@@ -52,6 +52,8 @@ export function GameView() {
   const [crash, setCrash] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu>("none");
   const [titleTaps, setTitleTaps] = useState(0);
+  const [recordPrompt, setRecordPrompt] = useState(false);
+  const [recordPromptSessions, setRecordPromptSessions] = useState(0);
   const enteredDev = useRef(false);
 
   useEffect(() => {
@@ -143,6 +145,28 @@ export function GameView() {
   function toTitle() {
     gameRef.current?.goTitle();
     setMenu("none");
+  }
+
+  function toggleRecording() {
+    const g = gameRef.current;
+    if (!g || recordPrompt) return;
+    if (!hud.recording) {
+      g.setRecording(true);
+      return;
+    }
+    setRecordPromptSessions(hud.recordingSessions);
+    g.setRecording(false);
+    setRecordPrompt(true);
+  }
+
+  function saveRecording() {
+    gameRef.current?.downloadRecording();
+    setRecordPrompt(false);
+  }
+
+  function discardRecording() {
+    gameRef.current?.discardRecording();
+    setRecordPrompt(false);
   }
 
   const showPause = menu === "pause";
@@ -271,7 +295,7 @@ export function GameView() {
                   ? "border-accent bg-accent text-accent-fg"
                   : "border-border bg-bg-elevated text-fg",
               )}
-              onClick={() => gameRef.current?.setRecording(!hud.recording)}
+              onClick={() => toggleRecording()}
               aria-pressed={hud.recording}
               aria-label={hud.recording ? "关闭对局录制" : "开启对局录制"}
             >
@@ -328,6 +352,14 @@ export function GameView() {
         />
       ) : null}
 
+      {recordPrompt ? (
+        <RecordSavePrompt
+          sessions={recordPromptSessions}
+          onYes={saveRecording}
+          onNo={discardRecording}
+        />
+      ) : null}
+
       {showPause &&
       !hud.rogue?.pendingStreakSave &&
       !hud.rogue?.pendingFlameReuse &&
@@ -339,7 +371,7 @@ export function GameView() {
           autoPlay={hud.autoPlay}
           recording={hud.recording}
           onToggleAutoPlay={() => gameRef.current?.setAutoPlay(!hud.autoPlay)}
-          onToggleRecording={() => gameRef.current?.setRecording(!hud.recording)}
+          onToggleRecording={toggleRecording}
           onDismiss={hud.phase === "playing" ? resume : () => setMenu("none")}
           onRestart={restart}
           onSettings={() => setMenu("settings")}
@@ -372,7 +404,7 @@ export function GameView() {
           autoPlay={hud.autoPlay}
           recording={hud.recording}
           onToggleAutoPlay={() => gameRef.current?.setAutoPlay(!hud.autoPlay)}
-          onToggleRecording={() => gameRef.current?.setRecording(!hud.recording)}
+          onToggleRecording={toggleRecording}
           onGfx={() => setMenu("gfx")}
           onSound={() => setMenu("sound")}
           onDev={() => {
@@ -1609,6 +1641,44 @@ function FlameReusePrompt({
             className="h-12 flex-[1.2] rounded-lg bg-accent text-sm font-medium text-accent-fg"
           >
             继续喝
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RecordSavePrompt({
+  sessions,
+  onYes,
+  onNo,
+}: {
+  sessions: number;
+  onYes: () => void;
+  onNo: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-bg/75 px-6">
+      <div className="w-full max-w-xs rounded-xl border border-border bg-bg-elevated p-5 shadow-lg">
+        <p className="text-center text-xs font-medium tracking-widest text-muted">对局录制</p>
+        <p className="mt-3 text-center text-sm text-fg">是否保存这次录制？</p>
+        <p className="mt-1 text-center text-xs text-subtle">
+          {sessions > 0 ? `共 ${sessions} 局，导出 JSON 包` : "没有完整对局，可丢弃"}
+        </p>
+        <div className="mt-5 flex gap-2">
+          <button
+            type="button"
+            onClick={onNo}
+            className="h-12 flex-1 rounded-lg border border-border text-sm text-muted"
+          >
+            不保存
+          </button>
+          <button
+            type="button"
+            onClick={onYes}
+            className="h-12 flex-[1.2] rounded-lg bg-accent text-sm font-medium text-accent-fg"
+          >
+            保存
           </button>
         </div>
       </div>

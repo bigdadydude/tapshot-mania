@@ -107,6 +107,7 @@ export function createAiController(): AiController {
   let fruitlessWraps = 0;
   let fruitlessContact = 0;
   let lastLaunchDx = -1;
+  let boardTapUsed = false;
   let recentTaps: LoopPose[] = [];
 
   function clearLoop() {
@@ -118,6 +119,7 @@ export function createAiController(): AiController {
     fruitlessWraps = 0;
     fruitlessContact = 0;
     lastLaunchDx = -1;
+    boardTapUsed = false;
     recentTaps = [];
   }
 
@@ -249,19 +251,40 @@ export function createAiController(): AiController {
           idle = 0;
           return false;
         }
+        let toFire = decision;
         if (wrapLoop && decision.reason !== "chain-next") {
-          last = { tap: false, reason: "wrap-loop", policyId: decision.policyId };
-          idle = 0;
-          return false;
+          const inbound = helpers.predictCurrent(world);
+          const next = helpers.predictTap(world);
+          // Empty wrap cycle: one board-kiss beats paralysis / wrap-escape spam.
+          // Already inbound or already had bank/rim → ride, don't reset jumpVx.
+          const oneBoard =
+            !boardTapUsed &&
+            fruitlessWraps > 0 &&
+            fruitlessContact === 0 &&
+            !locked &&
+            !farRestart &&
+            !world.hitRim &&
+            !world.hitBoard &&
+            !inbound.willBoard &&
+            !inbound.scores &&
+            next.willBoard;
+          if (oneBoard) {
+            boardTapUsed = true;
+            toFire = { tap: true, reason: "wrap-bank", policyId: decision.policyId };
+          } else {
+            last = { tap: false, reason: "wrap-loop", policyId: decision.policyId };
+            idle = 0;
+            return false;
+          }
         }
         // Cool only on ninja-class jumpFwd — classic bank-cuts need to chain.
-        if (longJump && boardCool > 0 && !recoverTap && nearBoardX) {
+        if (longJump && boardCool > 0 && !recoverTap && nearBoardX && toFire.reason !== "wrap-bank") {
           last = { tap: false, reason: "overshoot-cool", policyId: decision.policyId };
           idle = 0;
           return false;
         }
         if (cooldown > 0) return false;
-        const fired = fire(decision, wait);
+        const fired = fire(toFire, wait);
         if (longJump && !recoverTap && nearBoardX) {
           boardCool = 0.55;
         }

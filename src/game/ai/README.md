@@ -78,7 +78,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `apex-boost` extra climb on ninja | Third tap after launch/recatch | 310: floor `early-jump` + one too-low recatch, then `carry-flight` / `ride-flight` |
 | Swish-hunt `predicted-make` on ninja | 310 mix is bank 29 / rim 17 / **swish 0** | Hold inbound; don't poke for +swish |
 | Combo-clock `shot-clock` / `pace-boost` near the hoop on ninja | Oral "keep combo" poke is the same overshoot tap | Pace from far (`early-jump`); near glass, hold |
-| Repeating `wrap-escape` / far `approach-enter` / climb full-jumps (ninja-stuck-1/2) | Same jump vector `(±328,-671)`: empty wrap cycle on either hoop, or bank/rim then reset forever | Hold `wrap-loop` on repeating pose+velocity even after wrap-cool already fired, far restart, extra air taps at jump speed, and bank/rim without a score. Next attempt needs spacing or a different pose. Demo band launch (`|dx|` ~195–290) still fires on a fresh shot. |
+| Repeating `wrap-escape` / far `approach-enter` / climb full-jumps (ninja-stuck-1/2) | Same jump vector `(±328,-671)`: empty wrap cycle on either hoop, or bank/rim then reset forever | Hold `wrap-loop` on repeating pose+velocity even after wrap-cool already fired. If a tap would kiss glass and we have not already banked/rimmed, fire **one** `wrap-bank`, then ride. Far restart / extra air taps still hold. Demo band launch (`|dx|` ~195–290) still fires on a fresh shot. |
 | Oral "must bank" / upper `bank-half` **tap** | Humans bank from a held inbound, not a jump-reset | `bank-half` / `bank-steep` remain as **holds** when `willBoard` |
 
 ### Oral tactics kept (demos agree)
@@ -97,6 +97,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `bank-steep` | Steeper cut into the board (`\|vy\| > 0.52·\|vx\|`) — **hold** | velocity vs board |
 | `protect-finish` | Long jumpFwd in the glass/rim pocket — ZERO extra taps (overshoot loop) | `finishPocketLocked` |
 | `wrap-loop` | Ninja: repeating pose+jump vector (even after wrap-cool), far restart, extra full jump at launch speed, or bank/rim without a score — hold until spacing / new pose | recent poses + jump vel + wrap/contact cool |
+| `wrap-bank` | Stuck empty wrap: one tap whose reset would kiss glass, then ride — not wrap-escape spam | `predictTap.willBoard` once |
 | `bank-cut` | Classic only (demo `bankCutTap`): current path misses glass, jump-reset would kiss | `demoPriors.bankCutTap` |
 | `rim-swirl` | Inner-rim rattle (刷马桶) — hold, don't reset `jumpVx` | `hitRim` + inner side |
 | `tube-up` | Climbing through the net from below, then drop | under cylinder + `vy < 0` |

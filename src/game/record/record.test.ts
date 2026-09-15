@@ -175,6 +175,23 @@ describe("play recorder", () => {
     assert.equal(downloaded[0]?.sessions.length, 2);
   });
 
+  it("discard drops the pack without downloading", () => {
+    const downloaded: PlayRecordingPack[] = [];
+    const rec = createPlayRecorder({
+      download: (file) => downloaded.push(file),
+    });
+    rec.setEnabled(true);
+    rec.beginRun(emptyMeta());
+    rec.tick(frame({ x: 20, score: 3 }));
+    rec.endRun("stop", { score: 3, combo: 1 });
+    rec.setEnabled(false);
+    rec.discard();
+    assert.equal(downloaded.length, 0);
+    assert.equal(rec.exportPack(), null);
+    assert.equal(rec.sessionCount(), 0);
+    assert.equal(rec.downloadLast(), false);
+  });
+
   it("records antimatter orbs, collect, and black-hole geometry", () => {
     const rec = createPlayRecorder({ download: () => {} });
     rec.setEnabled(true);
