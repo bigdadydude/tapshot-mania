@@ -89,6 +89,7 @@ function world(over: Partial<AiWorld> = {}): AiWorld {
     boardFric: 1,
     floorMul: 1,
     wrapPad: Math.max(52, w * 0.15),
+    wraps: 0,
   };
   return {
     ...base,
@@ -815,6 +816,23 @@ describe("ball AI registry", () => {
     const holdLive = decideShot(liveFall, helpers);
     assert.equal(holdLive.tap, false);
     assert.ok(holdLive.reason === "let-drop" || holdLive.reason === "ride-flight");
+
+    const floorY = 844 * 0.765;
+    const r = 19.5;
+    const liveFloor = world({
+      hoop,
+      jumpVx: w * 0.76 * 1.2,
+      ballMul: 1,
+      kit: flags({ ninja: true }),
+      combo: 4,
+      streak: 4,
+      comboClock: 1.1,
+      comboCounting: true,
+      ball: { x: hoop.x - 55, y: floorY - r, vx: 140, vy: 10, r },
+    });
+    const holdFloor = decideShot(liveFloor, helpers);
+    assert.equal(holdFloor.tap, false);
+    assert.equal(holdFloor.reason, "let-drop");
   });
 
   it("ninja launches from far on the floor (human first-tap |dx| ~237)", () => {
@@ -1811,5 +1829,100 @@ describe("AI controller", () => {
     assert.equal(ai.tick(pocket), true);
     assert.equal(ai.lastDecision()?.reason, "bank-cut");
     assert.notEqual(ai.lastDecision()?.reason, "overshoot-cool");
+  });
+
+  it("breaks a repeating ninja wrap-escape cycle (stuck-loop recording)", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "force-wrap-loop",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "tap", reason: "wrap-escape" }),
+    });
+    ai.setEnabled(true);
+    const hoop = {
+      x: 28 + 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: -1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const under = world({
+      dt: 1 / 60,
+      kit: flags({ ninja: true }),
+      jumpVx: -(390 * 0.76 * 1.2),
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      hoop,
+      combo: 4,
+      streak: 4,
+      comboClock: 1.1,
+      comboCounting: true,
+      ball: { x: hoop.x + 58, y: hoop.y + 110, vx: -40, vy: 20, r: 19.5 },
+    });
+    assert.equal(ai.tick(under), true);
+    assert.equal(ai.lastDecision()?.reason, "wrap-escape");
+    // Recording: second tap ~50ms later, same pose, same jump vector
+    // ≈ (-328, -671) after a few gravity frames.
+    const again = world({
+      ...under,
+      dt: 0.05,
+      ball: { x: hoop.x + 55, y: hoop.y + 108, vx: -328, vy: -671, r: 19.5 },
+    });
+    assert.equal(ai.tick(again), false);
+    assert.equal(ai.lastDecision()?.tap, false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    // Fruitless ground wrap, then the same under-hoop tap. wrap-cool
+    // covers the ~1.57s cycle even after the short same-pose window.
+    const afterWrap = world({
+      ...under,
+      dt: 0.02,
+      wraps: 1,
+      ball: { x: hoop.x + 58, y: hoop.y + 110, vx: -40, vy: 20, r: 19.5 },
+    });
+    assert.equal(ai.tick(afterWrap), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    // Cool expires: a parked wrap-escape is allowed again (310 wrap recoveries).
+    const afterCool = world({
+      ...under,
+      dt: 1.7,
+      wraps: 1,
+      ball: { x: hoop.x + 58, y: hoop.y + 110, vx: 8, vy: 12, r: 19.5 },
+    });
+    assert.equal(ai.tick(afterCool), true);
+    assert.equal(ai.lastDecision()?.reason, "wrap-escape");
+  });
+
+  it("still launches from the far side after a fruitless wrap", () => {
+    const ai = createAiController();
+    ai.setEnabled(true);
+    const hoop = {
+      x: 28 + 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: -1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const far = world({
+      dt: 0.2,
+      kit: flags({ ninja: true }),
+      jumpVx: -(390 * 0.76 * 1.2),
+      hoop,
+      wraps: 1,
+      onApproachSide: true,
+      ballHidden: true,
+      ball: { x: 432, y: 487, vx: -44, vy: 0, r: 19.5 },
+    });
+    assert.equal(ai.tick(far), true, ai.lastDecision()?.reason);
+    assert.ok(
+      ai.lastDecision()?.reason === "approach-enter" ||
+        ai.lastDecision()?.reason === "early-jump" ||
+        ai.lastDecision()?.reason === "wrap-approach",
+    );
+    assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
   });
 });

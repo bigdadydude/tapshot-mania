@@ -105,6 +105,8 @@ export type AiWorld = {
   /** `pMul("floor")`. */
   floorMul: number;
   wrapPad: number;
+  /** Ground/height wraps this match — AI uses this to break fruitless wrap loops. */
+  wraps: number;
 };
 
 export type AiVote = {

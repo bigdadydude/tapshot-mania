@@ -52,7 +52,7 @@ import { createAiController, flagsFromKit } from "./ai";
 import { predictCurrent, predictTap } from "./ai/predict.ts";
 import { createPlayRecorder } from "./record";
 
-export const GAME_REV = 369;
+export const GAME_REV = 370;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -755,6 +755,7 @@ export function createGame(
   let camShake = 0;
   let whiteFlash = 0;
   let rimHits = 0;
+  let wrapCount = 0;
   let rimHitLock = 0;
   let hitBoardTop = false;
   let wentOffTop = false;
@@ -1976,6 +1977,7 @@ export function createGame(
       boardFric: pMul("boardFric"),
       floorMul: pMul("floor"),
       wrapPad: wrapPad(),
+      wraps: wrapCount,
     };
   }
 
@@ -2144,6 +2146,7 @@ export function createGame(
     camShake = 0;
     whiteFlash = 0;
     rimHits = 0;
+    wrapCount = 0;
     rimHitLock = 0;
     hitBoardTop = false;
     wentOffTop = false;
@@ -2455,6 +2458,7 @@ export function createGame(
     opener = 0;
     overRim = false;
     rimHits = 0;
+    wrapCount = 0;
     rimHitLock = 0;
     hitBoardTop = false;
     wentOffTop = false;
@@ -3827,6 +3831,7 @@ export function createGame(
         wrap: getBall(ballId).wrap === "height" ? "height" : "ground",
       });
     }
+    wrapCount += 1;
     // Wrap is not a miss: clear airborne so the post-wrap floor contact does not markShotMissed.
     shotAirborne = false;
     if (getBall(ballId).wrap === "height") {
@@ -5075,6 +5080,7 @@ export function createGame(
         autoPlay: autoPlay.enabled(),
         autoPlayReason: autoPlay.lastDecision()?.reason ?? null,
         autoPlayPolicy: autoPlay.lastDecision()?.policyId ?? null,
+        wraps: wrapCount,
         holeOn,
         antiCharge,
         glassBase,
@@ -5099,6 +5105,7 @@ export function createGame(
         nextScores: next.scores,
         nextBank: next.bank,
         nextWillBoard: next.willBoard,
+        wraps: w.wraps,
       };
     },
     tap: () => tapJump(),

@@ -904,6 +904,9 @@ export const physPolicy: BallAiPolicy = {
           const spd = Math.hypot(world.ball.vx, world.ball.vy);
           if (spd < 78) return tap("wrap-escape");
           if (away) return hold("exit-space");
+          // Moving toward the hoop: a wrap-escape tap writes full jumpVx and
+          // is the ninja-stuck-loop (under-hoop tap → wrap → far launch → repeat).
+          if (flyingAtHoop(world) || movingTowardBoard(world)) return hold("let-drop");
           return tap("wrap-escape");
         }
         if (lowBounce(world)) {

@@ -16,8 +16,6 @@ export const AI_WATCHDOG = 0.12;
 const SNAPPY = new Set([
   "chain-next",
   "approach-enter",
-  "wrap-boost",
-  "wrap-escape",
   "reset-boost",
   "keep-air",
   "floor-launch",
@@ -46,6 +44,7 @@ const LEGIT_WAIT = new Set([
   "protect-finish",
   "protect-make",
   "overshoot-cool",
+  "wrap-loop",
   "floor-bounce",
   "let-bounce",
   "commit-glass",
@@ -81,6 +80,13 @@ export function createAiController(): AiController {
   let lastSide: -1 | 1 | 0 = 0;
   let last: AiDecision | null = null;
   let boardCool = 0;
+  let wrapCool = 0;
+  let loopFresh = 0;
+  let lastWraps = 0;
+  let lastLoopX = 0;
+  let lastLoopY = 0;
+  let lastLoopSide: -1 | 1 | 0 = 0;
+  let lastLoopReason = "";
 
   function reset() {
     cooldown = 0;
@@ -88,6 +94,13 @@ export function createAiController(): AiController {
     lastSide = 0;
     last = null;
     boardCool = 0;
+    wrapCool = 0;
+    loopFresh = 0;
+    lastWraps = 0;
+    lastLoopX = 0;
+    lastLoopY = 0;
+    lastLoopSide = 0;
+    lastLoopReason = "";
   }
 
   function fire(reason: AiDecision, wait: number) {
@@ -110,6 +123,8 @@ export function createAiController(): AiController {
       if (!on) return false;
       cooldown = Math.max(0, cooldown - world.dt);
       boardCool = Math.max(0, boardCool - world.dt);
+      wrapCool = Math.max(0, wrapCool - world.dt);
+      loopFresh = Math.max(0, loopFresh - world.dt);
 
       // New target hoop (left/right alternate) — don't sit on the previous cooldown.
       if (world.hoop.side !== lastSide) {
@@ -117,6 +132,23 @@ export function createAiController(): AiController {
         cooldown = 0;
         idle = 0;
         boardCool = 0;
+        wrapCool = 0;
+        loopFresh = 0;
+        lastWraps = world.wraps;
+        lastLoopReason = "";
+      }
+
+      if (world.shotMade || world.scored) {
+        wrapCool = 0;
+        loopFresh = 0;
+        lastLoopReason = "";
+      }
+      // Fruitless ground wrap: same jump vector will cycle (ninja-stuck-loop).
+      if (world.wraps > lastWraps) {
+        lastWraps = world.wraps;
+        if (!world.shotMade && !world.scored && !world.hitRim && !world.hitBoard) {
+          wrapCool = Math.max(wrapCool, 1.65);
+        }
       }
 
       if (!world.canShoot) {
@@ -140,18 +172,37 @@ export function createAiController(): AiController {
       // OUT — tapping wrap in the pocket re-aims jumpVx at the glass.
       const pocketExtra =
         decision.reason !== "chain-next" && decision.reason !== "early-jump";
-      // After an overshoot tap, wrap / land-reset / recatch are the recovery.
       const recoverTap =
-        decision.reason === "chain-next" ||
-        decision.reason === "early-jump" ||
-        decision.reason === "wrap-escape";
+        decision.reason === "chain-next" || decision.reason === "early-jump";
       const nearBoardX = Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36;
+      const wrapTap =
+        decision.reason === "wrap-escape" ||
+        decision.reason === "wrap-boost" ||
+        (decision.reason === "early-jump" && nearBoardX);
+      const sameLoop =
+        wrapTap &&
+        loopFresh > 0 &&
+        lastLoopReason !== "" &&
+        lastLoopSide === world.hoop.side &&
+        Math.hypot(world.ball.x - lastLoopX, world.ball.y - lastLoopY) < 40;
       if (decision.tap) {
-        if (cooldown > 0) return false;
         // Long jumpFwd near glass/rim: ZERO extra taps. bank-cut / apex /
         // combo-pressure / wrap-in-pocket / watchdog is the ninja death loop.
         if (locked && pocketExtra) {
           last = { tap: false, reason: "protect-finish", policyId: decision.policyId };
+          idle = 0;
+          return false;
+        }
+        // Recording ninja-stuck-loop: wrap-escape + 50ms recatch, ground wrap,
+        // far launch, ~1.08s, same under-hoop tap. Same jump vector, 0 scores.
+        // wrapCool only blocks *near the board* so a far approach-enter still
+        // fires. sameLoop is a short pose-repeat window, not a permanent ban.
+        if (
+          longJump &&
+          wrapTap &&
+          (sameLoop || (wrapCool > 0 && nearBoardX))
+        ) {
+          last = { tap: false, reason: "wrap-loop", policyId: decision.policyId };
           idle = 0;
           return false;
         }
@@ -161,9 +212,17 @@ export function createAiController(): AiController {
           idle = 0;
           return false;
         }
+        if (cooldown > 0) return false;
         const fired = fire(decision, wait);
         if (longJump && !recoverTap && nearBoardX) {
           boardCool = 0.55;
+        }
+        if (wrapTap) {
+          lastLoopX = world.ball.x;
+          lastLoopY = world.ball.y;
+          lastLoopSide = world.hoop.side;
+          lastLoopReason = decision.reason;
+          loopFresh = 0.35;
         }
         return fired;
       }
@@ -192,7 +251,7 @@ export function createAiController(): AiController {
           idle = 0;
           return false;
         }
-        if (locked || (longJump && boardCool > 0)) {
+        if (locked || (longJump && (boardCool > 0 || wrapCool > 0))) {
           idle = 0;
           return false;
         }
