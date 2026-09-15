@@ -1874,8 +1874,7 @@ describe("AI controller", () => {
     assert.equal(ai.lastDecision()?.tap, false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
 
-    // Fruitless ground wrap, then the same under-hoop tap. wrap-cool
-    // covers the ~1.57s cycle even after the short same-pose window.
+    // Fruitless ground wrap, then the same under-hoop tap.
     const afterWrap = world({
       ...under,
       dt: 0.02,
@@ -1885,44 +1884,156 @@ describe("AI controller", () => {
     assert.equal(ai.tick(afterWrap), false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
 
-    // Cool expires: a parked wrap-escape is allowed again (310 wrap recoveries).
+    // Same pose after cool is still the loop. A *new* parked pose can wrap-escape.
     const afterCool = world({
       ...under,
       dt: 1.7,
       wraps: 1,
       ball: { x: hoop.x + 58, y: hoop.y + 110, vx: 8, vy: 12, r: 19.5 },
     });
-    assert.equal(ai.tick(afterCool), true);
+    assert.equal(ai.tick(afterCool), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    const newPose = world({
+      ...under,
+      dt: 0.2,
+      wraps: 1,
+      ball: { x: hoop.x + 130, y: hoop.y + 110, vx: 8, vy: 12, r: 19.5 },
+    });
+    assert.equal(ai.tick(newPose), true, ai.lastDecision()?.reason);
     assert.equal(ai.lastDecision()?.reason, "wrap-escape");
   });
 
-  it("still launches from the far side after a fruitless wrap", () => {
+  it("breaks the right-hoop empty wrap cycle (stuck-1)", () => {
+    // tap (-72,487) → (15,378) → wrap at ~(432,379), identical (328,-671).
     const ai = createAiController();
+    registerBallAiPolicy({
+      id: "force-stuck-1",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "tap", reason: "approach-enter" }),
+    });
     ai.setEnabled(true);
     const hoop = {
-      x: 28 + 390 * 0.1,
+      x: 390 - 28 - 390 * 0.1,
       y: 330,
       inner: 28,
-      side: -1 as const,
+      side: 1 as const,
       tube: 4.3,
       moving: false,
     };
-    const far = world({
-      dt: 0.2,
+    const ninja = {
+      dt: 1 / 60,
       kit: flags({ ninja: true }),
-      jumpVx: -(390 * 0.76 * 1.2),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
       hoop,
+    };
+    const first = world({
+      ...ninja,
+      onApproachSide: true,
+      ballHidden: true,
+      ball: { x: -72, y: 487, vx: 44, vy: 0, r: 19.5 },
+    });
+    assert.equal(ai.tick(first), true);
+    const second = world({
+      ...ninja,
+      dt: 0.05,
+      onApproachSide: false,
+      ballHidden: false,
+      ball: { x: 15, y: 378, vx: 328, vy: -671, r: 19.5 },
+    });
+    assert.equal(ai.tick(second), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    const back = world({
+      ...ninja,
+      dt: 0.02,
       wraps: 1,
       onApproachSide: true,
       ballHidden: true,
-      ball: { x: 432, y: 487, vx: -44, vy: 0, r: 19.5 },
+      ball: { x: -72, y: 487, vx: 44, vy: 0, r: 19.5 },
     });
-    assert.equal(ai.tick(far), true, ai.lastDecision()?.reason);
-    assert.ok(
-      ai.lastDecision()?.reason === "approach-enter" ||
-        ai.lastDecision()?.reason === "early-jump" ||
-        ai.lastDecision()?.reason === "wrap-approach",
-    );
+    assert.equal(ai.tick(back), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+  });
+
+  it("breaks full-jump spam after bank/rim without a score (stuck-2)", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "force-stuck-2",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "tap", reason: "early-jump" }),
+    });
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const climb = world({
+      dt: 1 / 60,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoop,
+      ball: { x: hoop.x - 200, y: hoop.y + 80, vx: 40, vy: -20, r: 19.5 },
+    });
+    assert.equal(ai.tick(climb), true);
+    const again = world({
+      ...climb,
+      dt: 0.05,
+      ball: { x: hoop.x - 160, y: hoop.y + 40, vx: 328, vy: -671, r: 19.5 },
+    });
+    assert.equal(ai.tick(again), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    const afterRim = world({
+      ...climb,
+      dt: 0.2,
+      hitRim: true,
+      ball: { x: hoop.x - 90, y: hoop.y + 20, vx: 120, vy: 40, r: 19.5 },
+    });
+    assert.equal(ai.tick(afterRim), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+  });
+
+  it("still launches from the demo band after a fruitless wrap", () => {
+    const ai = createAiController();
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const floorY = 844 * 0.765;
+    const r = 19.5;
+    const seed = world({
+      dt: 1 / 60,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoop,
+      wraps: 0,
+      ball: { x: hoop.x - 50, y: floorY - r, vx: 8, vy: 10, r },
+    });
+    ai.tick(seed);
+    const afterWrap = world({
+      dt: 0.2,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoop,
+      wraps: 1,
+      ball: { x: hoop.x - 224, y: floorY - r, vx: 8, vy: 10, r },
+    });
+    assert.equal(ai.tick(afterWrap), true, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "early-jump");
     assert.notEqual(ai.lastDecision()?.reason, "wrap-loop");
   });
 });

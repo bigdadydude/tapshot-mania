@@ -78,13 +78,13 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `apex-boost` extra climb on ninja | Third tap after launch/recatch | 310: floor `early-jump` + one too-low recatch, then `carry-flight` / `ride-flight` |
 | Swish-hunt `predicted-make` on ninja | 310 mix is bank 29 / rim 17 / **swish 0** | Hold inbound; don't poke for +swish |
 | Combo-clock `shot-clock` / `pace-boost` near the hoop on ninja | Oral "keep combo" poke is the same overshoot tap | Pace from far (`early-jump`); near glass, hold |
-| Repeating `wrap-escape` after a fruitless ground wrap (ninja-stuck-loop) | Same full jump under the hoop → wrap → far launch → same pose, 0 scores | Hold `wrap-loop` near the board for ~1.65s; far `approach-enter` still fires; parked wrap recoveries return after cool |
+| Repeating `wrap-escape` / far `approach-enter` / climb full-jumps (ninja-stuck-1/2) | Same jump vector `(±328,-671)`: empty wrap cycle on either hoop, or bank/rim then reset forever | Hold `wrap-loop` on repeating poses, far restart after fruitless wrap, extra air taps at jump speed, and bank/rim without a score. Demo band launch (`|dx|` ~195–290) still fires. |
 | Oral "must bank" / upper `bank-half` **tap** | Humans bank from a held inbound, not a jump-reset | `bank-half` / `bank-steep` remain as **holds** when `willBoard` |
 
 ### Oral tactics kept (demos agree)
 
 - Half-board / steep **holds** when the current path already hits glass (`holdInboundBank`)
-- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap, do not full-jump wrap-escape again from the same under-hoop pose (`wrap-loop`). `wrap-escape` is not snappy (kills the ~50ms double-tap).
+- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap, do not full-jump the same vector from a repeating pose or off-screen approach (`wrap-loop`). Mid-court demo-band launches still fire.
 - `hole-spam` / `hole-ride` after the hole opens (anti packs)
 - `pop-away` on a hot bounce
 - Glass `seek-swish` (+4 HP) and drop-finish (10156 / 5992)
@@ -96,7 +96,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `bank-half` | Contact around half board height, moving into glass — **hold** | board geom + vy |
 | `bank-steep` | Steeper cut into the board (`\|vy\| > 0.52·\|vx\|`) — **hold** | velocity vs board |
 | `protect-finish` | Long jumpFwd in the glass/rim pocket — ZERO extra taps (overshoot loop) | `finishPocketLocked` |
-| `wrap-loop` | Ninja fruitless wrap or same wrap-escape pose — hold, don't full-jump the same vector | wrap count + pose window |
+| `wrap-loop` | Ninja: repeating tap pose, far restart after fruitless wrap, extra full jump at launch speed, or bank/rim without a score — hold | recent poses + wrap/contact cool |
 | `bank-cut` | Classic only (demo `bankCutTap`): current path misses glass, jump-reset would kiss | `demoPriors.bankCutTap` |
 | `rim-swirl` | Inner-rim rattle (刷马桶) — hold, don't reset `jumpVx` | `hitRim` + inner side |
 | `tube-up` | Climbing through the net from below, then drop | under cylinder + `vy < 0` |

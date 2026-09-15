@@ -71,6 +71,13 @@ export type AiController = {
   lastDecision: () => AiDecision | null;
 };
 
+type LoopPose = { x: number; y: number; side: -1 | 1 };
+
+function ballOnFloor(world: AiWorld): boolean {
+  const floor = world.world.floorY - world.ball.r;
+  return world.ball.y >= floor - 10 && world.ball.vy > -50;
+}
+
 export function createAiController(): AiController {
   installBuiltInBallAiPolicies();
 
@@ -81,12 +88,17 @@ export function createAiController(): AiController {
   let last: AiDecision | null = null;
   let boardCool = 0;
   let wrapCool = 0;
-  let loopFresh = 0;
+  let contactCool = 0;
   let lastWraps = 0;
-  let lastLoopX = 0;
-  let lastLoopY = 0;
-  let lastLoopSide: -1 | 1 | 0 = 0;
-  let lastLoopReason = "";
+  let airTaps = 0;
+  let recentTaps: LoopPose[] = [];
+
+  function clearLoop() {
+    wrapCool = 0;
+    contactCool = 0;
+    airTaps = 0;
+    recentTaps = [];
+  }
 
   function reset() {
     cooldown = 0;
@@ -94,13 +106,8 @@ export function createAiController(): AiController {
     lastSide = 0;
     last = null;
     boardCool = 0;
-    wrapCool = 0;
-    loopFresh = 0;
     lastWraps = 0;
-    lastLoopX = 0;
-    lastLoopY = 0;
-    lastLoopSide = 0;
-    lastLoopReason = "";
+    clearLoop();
   }
 
   function fire(reason: AiDecision, wait: number) {
@@ -124,7 +131,7 @@ export function createAiController(): AiController {
       cooldown = Math.max(0, cooldown - world.dt);
       boardCool = Math.max(0, boardCool - world.dt);
       wrapCool = Math.max(0, wrapCool - world.dt);
-      loopFresh = Math.max(0, loopFresh - world.dt);
+      contactCool = Math.max(0, contactCool - world.dt);
 
       // New target hoop (left/right alternate) — don't sit on the previous cooldown.
       if (world.hoop.side !== lastSide) {
@@ -132,21 +139,20 @@ export function createAiController(): AiController {
         cooldown = 0;
         idle = 0;
         boardCool = 0;
-        wrapCool = 0;
-        loopFresh = 0;
         lastWraps = world.wraps;
-        lastLoopReason = "";
+        clearLoop();
       }
 
       if (world.shotMade || world.scored) {
-        wrapCool = 0;
-        loopFresh = 0;
-        lastLoopReason = "";
+        clearLoop();
       }
-      // Fruitless ground wrap: same jump vector will cycle (ninja-stuck-loop).
+      // Fruitless wrap (shot flags reset on wrap): same jump vector cycles
+      // even from the far side (stuck-1: tap (-72,487) → (15,378) → wrap).
       if (world.wraps > lastWraps) {
         lastWraps = world.wraps;
-        if (!world.shotMade && !world.scored && !world.hitRim && !world.hitBoard) {
+        airTaps = 0;
+        contactCool = 0;
+        if (!world.shotMade && !world.scored) {
           wrapCool = Math.max(wrapCool, 1.65);
         }
       }
@@ -175,16 +181,28 @@ export function createAiController(): AiController {
       const recoverTap =
         decision.reason === "chain-next" || decision.reason === "early-jump";
       const nearBoardX = Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36;
+      const dx = Math.abs(world.ball.x - world.hoop.x);
       const wrapTap =
         decision.reason === "wrap-escape" ||
         decision.reason === "wrap-boost" ||
+        decision.reason === "wrap-approach" ||
+        decision.reason === "approach-enter" ||
         (decision.reason === "early-jump" && nearBoardX);
-      const sameLoop =
-        wrapTap &&
-        loopFresh > 0 &&
-        lastLoopReason !== "" &&
-        lastLoopSide === world.hoop.side &&
-        Math.hypot(world.ball.x - lastLoopX, world.ball.y - lastLoopY) < 40;
+      const farRestart =
+        world.onApproachSide ||
+        world.ballHidden ||
+        dx > world.world.w * 0.76;
+      const samePose = recentTaps.some(
+        (p) =>
+          p.side === world.hoop.side &&
+          Math.hypot(world.ball.x - p.x, world.ball.y - p.y) < 48,
+      );
+      const launched =
+        Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55;
+      const grounded = ballOnFloor(world);
+      if (longJump && (world.hitRim || world.hitBoard) && !world.scored && !world.shotMade) {
+        contactCool = Math.max(contactCool, 0.9);
+      }
       if (decision.tap) {
         // Long jumpFwd near glass/rim: ZERO extra taps. bank-cut / apex /
         // combo-pressure / wrap-in-pocket / watchdog is the ninja death loop.
@@ -193,18 +211,19 @@ export function createAiController(): AiController {
           idle = 0;
           return false;
         }
-        // Recording ninja-stuck-loop: wrap-escape + 50ms recatch, ground wrap,
-        // far launch, ~1.08s, same under-hoop tap. Same jump vector, 0 scores.
-        // wrapCool only blocks *near the board* so a far approach-enter still
-        // fires. sameLoop is a short pose-repeat window, not a permanent ban.
-        if (
-          longJump &&
-          wrapTap &&
-          (sameLoop || (wrapCool > 0 && nearBoardX))
-        ) {
-          last = { tap: false, reason: "wrap-loop", policyId: decision.policyId };
-          idle = 0;
-          return false;
+        // stuck-1: repeating pose after wrap, including far approach-enter.
+        // stuck-2: same full jumpVx after bank/rim, or extra air taps at jump speed.
+        if (longJump && decision.reason !== "chain-next") {
+          const loop =
+            samePose ||
+            (wrapCool > 0 && (farRestart || wrapTap || nearBoardX)) ||
+            (contactCool > 0 && !grounded) ||
+            (launched && !grounded && airTaps >= 1);
+          if (loop) {
+            last = { tap: false, reason: "wrap-loop", policyId: decision.policyId };
+            idle = 0;
+            return false;
+          }
         }
         // Cool only on ninja-class jumpFwd — classic bank-cuts need to chain.
         if (longJump && boardCool > 0 && !recoverTap && nearBoardX) {
@@ -217,12 +236,14 @@ export function createAiController(): AiController {
         if (longJump && !recoverTap && nearBoardX) {
           boardCool = 0.55;
         }
-        if (wrapTap) {
-          lastLoopX = world.ball.x;
-          lastLoopY = world.ball.y;
-          lastLoopSide = world.hoop.side;
-          lastLoopReason = decision.reason;
-          loopFresh = 0.35;
+        if (longJump) {
+          recentTaps.push({
+            x: world.ball.x,
+            y: world.ball.y,
+            side: world.hoop.side,
+          });
+          if (recentTaps.length > 8) recentTaps.shift();
+          airTaps = grounded ? 0 : airTaps + 1;
         }
         return fired;
       }
@@ -251,7 +272,10 @@ export function createAiController(): AiController {
           idle = 0;
           return false;
         }
-        if (locked || (longJump && (boardCool > 0 || wrapCool > 0))) {
+        if (
+          locked ||
+          (longJump && (boardCool > 0 || wrapCool > 0 || contactCool > 0))
+        ) {
           idle = 0;
           return false;
         }
