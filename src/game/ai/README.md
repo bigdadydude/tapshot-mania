@@ -68,7 +68,8 @@ Ball-id / skill-flag votes are only for skills that are not a number:
 |--------|------|-----------|
 | `bank-half` | Contact around half board height, moving into glass | board geom + vy |
 | `bank-steep` | Steeper cut into the board (`\|vy\| > 0.52·\|vx\|`) | velocity vs board |
-| `bank-cut` | Current path misses glass, jump-reset would kiss (`predictTap.willBoard`) | `willBoard` current vs tap |
+| `protect-finish` | Long jumpFwd in the glass/rim pocket — ZERO extra taps (overshoot loop) | `finishPocketLocked` |
+| `bank-cut` | Classic only: current path misses glass, jump-reset would kiss | `willBoard` current vs tap |
 | `rim-swirl` | Inner-rim rattle (刷马桶) — hold, don't reset `jumpVx` | `hitRim` + inner side |
 | `tube-up` | Climbing through the net from below, then drop | under cylinder + `vy < 0` |
 | `exit-space` | Under-rim but opening court — let spacing grow, then jump back | under + bounce away |
@@ -91,7 +92,7 @@ points into the hole.
 
 Playbook mapping (PO):
 
-1. Bank → hold if `predictCurrent.willBoard` **in the glass pocket** (near the board in X, not merely at half-board height). `bank-cut` tap only when that current path misses **and** `predictTap.willBoard` **and** the ball is not still climbing (`vy > -24`). `tapJump` always writes full jumpVx/jumpVy, so a tap on a live glass flight overshoots, a Y-only half-board hold froze ninja climbs as `flight-scores`, and closing-speed-only holds froze makeable steep cuts.
+1. Bank → hold if `predictCurrent.willBoard` **in the glass pocket** (near the board in X, not merely at half-board height). On **long jumpFwd / ninja**, ZERO extra taps in the finish pocket (`protect-finish` / `finishPocketLocked`): no `bank-cut`, apex-boost, combo-pressure poke, or wrap-in-pocket. A live make or inbound glass/rim flight is frozen. After a near-board overshoot tap, `overshoot-cool` blocks repeating the same cut — wrap / land-reset instead. Missing a cut is better than flying over. Classic may still `bank-cut` when the current path misses **and** `predictTap.willBoard` **and** the ball is not climbing. `tapJump` always writes full jumpVx/jumpVy.
 2. 刷马桶 → `rim-swirl`
 3. Under-rim: `tube-up` while rising through the net; `let-drop` if too low; `exit-space` when opening
 4. High bounce → `pop-away`
@@ -151,7 +152,7 @@ The default policy covers plain kinematics. `phys` only votes when jumpFwd /
 bounce / glass grip make a tap dangerous or a playbook tactic applies.
 
 - **Chain:** at the make (`shotMade`) it jumps toward the **new** hoop immediately — no floor wait. It only holds `chain-wait` while still *above* the new rim (a full `jumpVy` from there orbits). `tapJump` after a counted make is a new shot and does not break combo.
-- **Banks:** 擦板 only in the **glass pocket**. Prefer **half-board** and **steep** cuts (`bank-half` / `bank-steep`). Hold when `predictCurrent.willBoard` — a tap resets to full `jumpVx` and flies past the glass. Tap `bank-cut` only when the current path misses **and** the jump-reset would kiss (`predictTap.willBoard`). Closing speed without `willBoard` is not a hold.
+- **Banks:** 擦板 only in the **glass pocket**. Prefer **half-board** and **steep** cuts (`bank-half` / `bank-steep`). Hold when `predictCurrent.willBoard` or `predictCurrent.scores` near the play. On ninja / long jumpFwd the controller also forbids extra taps in `nearFinishPocket` (`protect-finish`) — humans (310 / 2641 / 1324) finish with few taps. Classic may `bank-cut` only when the current path misses **and** the jump-reset would kiss.
 - **Floor bounce / pop-away:** after a messy miss or a hot bounce, hold while velocity is **opening spacing**. Sitting idle under the rim is `wrap-escape`, not a hover.
 - **Climb / release:** far + rising → tap-climb for a near-vertical drop; release in the pocket; let-drop above the rim. Long jumpFwd **jumps early** then **rides** the descent.
 - **Frost:** freeze can keep the scored stand (`nextHoop` does not always flip). After a make still next to that stand, **let-drop** instead of `chain-next` into the glass. Frozen +2 is in-engine. Human classic 1339 / 36: combo pace ~1.48s, floor `reset-boost` when the freeze clock is dying.

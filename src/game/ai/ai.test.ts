@@ -452,7 +452,8 @@ describe("ball AI registry", () => {
         stay.reason === "let-drop" ||
         stay.reason === "commit-glass" ||
         stay.reason === "bank-steep" ||
-        stay.reason === "bank-half",
+        stay.reason === "bank-half" ||
+      stay.reason === "protect-finish",
     );
 
     const overfly = world({
@@ -473,6 +474,7 @@ describe("ball AI registry", () => {
         hold.reason === "flight-scores" ||
           hold.reason === "let-drop" ||
           hold.reason === "commit-glass" ||
+          hold.reason === "protect-finish" ||
           hold.reason === "bank-steep" ||
           hold.reason === "bank-half",
       );
@@ -609,6 +611,61 @@ describe("ball AI registry", () => {
     assert.notEqual(n.reason, "early-jump");
     assert.notEqual(n.reason, "wrap-escape");
     assert.notEqual(n.reason, "shot-clock");
+  });
+
+  it("ninja does not bank-cut a live make approaching the rim", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const goingIn = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      combo: 8,
+      streak: 8,
+      comboClock: 0.9,
+      comboCounting: true,
+      ball: { x: hoop.x - 40, y: hoop.y - 50, vx: 160, vy: 90, r: 19.5 },
+    });
+    const cur = predictCurrent(goingIn);
+    assert.equal(cur.scores, true);
+    const d = decideShot(goingIn, helpers);
+    assert.equal(d.tap, false);
+    assert.notEqual(d.reason, "bank-cut");
+    assert.notEqual(d.reason, "apex-boost");
+    assert.notEqual(d.reason, "shot-clock");
+    assert.notEqual(d.reason, "pace-boost");
+    assert.notEqual(d.reason, "predicted-make");
+  });
+
+  it("ninja prefers a missed cut over a jump-reset near the glass", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const steep = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      ball: { x: hoop.x + hoop.inner * 0.4, y: hoop.y + 20, vx: 90, vy: 140, r: 19.5 },
+    });
+    const d = decideShot(steep, helpers);
+    assert.equal(d.tap, false);
+    assert.notEqual(d.reason, "bank-cut");
+    assert.notEqual(d.reason, "apex-boost");
   });
 
   it("does not freeze a ninja climb at half-board height far from the glass", () => {
@@ -1176,7 +1233,12 @@ describe("ball AI registry", () => {
     });
     const d = decideShot(w, helpers);
     assert.equal(d.tap, false);
-    assert.ok(d.reason === "rim-swirl" || d.reason === "flight-scores" || d.reason === "commit-glass");
+    assert.ok(
+      d.reason === "rim-swirl" ||
+        d.reason === "flight-scores" ||
+        d.reason === "commit-glass" ||
+        d.reason === "protect-finish",
+    );
     assert.notEqual(d.reason, "let-drop");
   });
 
@@ -1422,7 +1484,8 @@ describe("ball AI registry", () => {
       d.reason === "let-rattle" ||
         d.reason === "wait-spacing" ||
         d.reason === "flight-scores" ||
-        d.reason === "commit-glass",
+        d.reason === "commit-glass" ||
+        d.reason === "protect-finish",
     );
 
     const sky = world({
@@ -1596,5 +1659,81 @@ describe("AI controller", () => {
     });
     assert.equal(ai.tick(flying), false);
     assert.notEqual(ai.lastDecision()?.reason, "watchdog");
+  });
+
+  it("forbids an extra tap near the board on long jumpFwd", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "force-cut",
+      priority: 99,
+      match: () => true,
+      vote: (w) =>
+        w.shotMade
+          ? { action: "tap", reason: "chain-next" }
+          : { action: "tap", reason: "bank-cut" },
+    });
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const pocket = world({
+      dt: 1 / 60,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoop,
+      ball: { x: hoop.x - 40, y: hoop.y - 20, vx: 160, vy: 90, r: 19.5 },
+    });
+    assert.equal(ai.tick(pocket), false);
+    assert.equal(ai.lastDecision()?.tap, false);
+    assert.ok(
+      ai.lastDecision()?.reason === "protect-finish" ||
+        ai.lastDecision()?.reason === "flight-scores",
+    );
+
+    const chain = world({
+      dt: 1 / 60,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoop,
+      shotMade: true,
+      ball: { x: hoop.x - 40, y: hoop.y + 40, vx: 40, vy: 80, r: 19.5 },
+    });
+    ai.reset();
+    assert.equal(ai.tick(chain), true);
+    assert.equal(ai.lastDecision()?.reason, "chain-next");
+  });
+
+  it("does not wrap-tap in the ninja finish pocket (that re-aims jumpVx at the glass)", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "force-wrap",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "tap", reason: "wrap-escape" }),
+    });
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const pocket = world({
+      dt: 1 / 60,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoop,
+      ball: { x: hoop.x - 40, y: hoop.y - 20, vx: 160, vy: 90, r: 19.5 },
+    });
+    assert.equal(ai.tick(pocket), false);
+    assert.equal(ai.lastDecision()?.tap, false);
+    assert.equal(ai.lastDecision()?.reason, "protect-finish");
   });
 });

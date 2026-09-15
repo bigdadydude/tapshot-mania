@@ -1,6 +1,6 @@
 import { predictCurrent, predictTap } from "./predict.ts";
 import { decideShot } from "./registry.ts";
-import { comboPaceLimit, installBuiltInBallAiPolicies } from "./policies.ts";
+import { comboPaceLimit, finishPocketLocked, installBuiltInBallAiPolicies } from "./policies.ts";
 import type { AiDecision, AiWorld } from "./types.ts";
 
 const helpers = { predictCurrent, predictTap };
@@ -44,6 +44,7 @@ const LEGIT_WAIT = new Set([
   "protect-swish",
   "protect-finish",
   "protect-make",
+  "overshoot-cool",
   "floor-bounce",
   "let-bounce",
   "commit-glass",
@@ -78,12 +79,14 @@ export function createAiController(): AiController {
   let idle = 0;
   let lastSide: -1 | 1 | 0 = 0;
   let last: AiDecision | null = null;
+  let boardCool = 0;
 
   function reset() {
     cooldown = 0;
     idle = 0;
     lastSide = 0;
     last = null;
+    boardCool = 0;
   }
 
   function fire(reason: AiDecision, wait: number) {
@@ -105,12 +108,14 @@ export function createAiController(): AiController {
     tick(world) {
       if (!on) return false;
       cooldown = Math.max(0, cooldown - world.dt);
+      boardCool = Math.max(0, boardCool - world.dt);
 
       // New target hoop (left/right alternate) — don't sit on the previous cooldown.
       if (world.hoop.side !== lastSide) {
         lastSide = world.hoop.side;
         cooldown = 0;
         idle = 0;
+        boardCool = 0;
       }
 
       if (!world.canShoot) {
@@ -128,9 +133,39 @@ export function createAiController(): AiController {
       last = decision;
       const snappy = SNAPPY.has(decision.reason);
       const wait = panic ? PANIC_INTERVAL : snappy ? CHAIN_INTERVAL : AI_TAP_INTERVAL;
+      const locked = finishPocketLocked(world);
+      // Pocket lock: only floor chain + too-low recatch. wrap-escape stays
+      // OUT — tapping wrap in the pocket re-aims jumpVx at the glass.
+      const pocketExtra =
+        decision.reason !== "chain-next" && decision.reason !== "early-jump";
+      // After an overshoot tap, wrap / land-reset / recatch are the recovery.
+      const recoverTap =
+        decision.reason === "chain-next" ||
+        decision.reason === "early-jump" ||
+        decision.reason === "wrap-escape";
       if (decision.tap) {
         if (cooldown > 0) return false;
-        return fire(decision, wait);
+        // Long jumpFwd near glass/rim: ZERO extra taps. bank-cut / apex /
+        // combo-pressure / wrap-in-pocket / watchdog is the ninja death loop.
+        if (locked && pocketExtra) {
+          last = { tap: false, reason: "protect-finish", policyId: decision.policyId };
+          idle = 0;
+          return false;
+        }
+        if (
+          boardCool > 0 &&
+          !recoverTap &&
+          Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36
+        ) {
+          last = { tap: false, reason: "overshoot-cool", policyId: decision.policyId };
+          idle = 0;
+          return false;
+        }
+        const fired = fire(decision, wait);
+        if (!recoverTap && Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36) {
+          boardCool = 0.55;
+        }
+        return fired;
       }
 
       const spd = Math.hypot(world.ball.vx, world.ball.vy);
@@ -154,6 +189,10 @@ export function createAiController(): AiController {
         const sky = world.ball.y + world.ball.r * 0.15 < world.hoop.y;
         // jumpVy from above the rim is how rubber/glass/classic sail into orbit.
         if (sky && !grounded) {
+          idle = 0;
+          return false;
+        }
+        if (locked || boardCool > 0) {
           idle = 0;
           return false;
         }

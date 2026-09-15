@@ -162,6 +162,9 @@ function wantsBankCut(
 ): boolean {
   if (onFloor(world) || pastBoard(world) || world.onApproachSide) return false;
   if (world.hitRim || world.rimHits >= 1) return false;
+  if (current.scores) return false;
+  // Ninja / long jumpFwd: missing a cut beats flying over the board.
+  if (longJumpFwd(world)) return false;
   // Climbing: a tap writes another full jumpVy and sails over the board.
   if (world.ball.vy < -24) return false;
   if (inboundGlass(world, current)) return false;
@@ -170,6 +173,55 @@ function wantsBankCut(
   if (dist > world.world.w * 0.38) return false;
   if (!nearBoard(world) && dist > world.hoop.inner * 3.2) return false;
   return next.willBoard || (next.scores && next.bank);
+}
+
+/**
+ * Hoop + glass neighborhood where a full jumpVx reset sails over the board.
+ * Excludes the too-low recatch band (~150px under the rim) so ninja's 2nd tap
+ * still fires. Humans (310 / 2641 / 1324) are decisive with few taps here.
+ */
+function nearFinishPocket(world: AiWorld): boolean {
+  if (onFloor(world) || pastBoard(world) || world.onApproachSide) return false;
+  const dx = Math.abs(world.ball.x - world.hoop.x);
+  if (dx > world.world.w * 0.32) return false;
+  if (world.ball.y > world.hoop.y + world.hoop.inner * 1.15) return false;
+  if (world.ball.y < world.hoop.y - world.world.h * 0.22) return false;
+  return true;
+}
+
+/**
+ * ZERO taps: current flight already makes, or is clearly inbound to glass/rim.
+ * Long jumpFwd prefers a missed cut over an overshoot tap.
+ */
+function mustHoldFinish(
+  world: AiWorld,
+  current: { scores: boolean; bank: boolean; swish: boolean; willBoard: boolean },
+): boolean {
+  if (onFloor(world) || world.shotMade) return false;
+  if (pastBoard(world) || world.onApproachSide) return false;
+  const pocket = nearFinishPocket(world) || nearBoard(world);
+  if (current.scores && pocket) return true;
+  if (
+    current.scores &&
+    closeToHoop(world, 0.4) &&
+    world.ball.y < world.hoop.y + world.hoop.inner * 1.15 &&
+    world.ball.y > world.hoop.y - world.world.h * 0.22
+  ) {
+    return true;
+  }
+  if (!pocket) return false;
+  if (current.willBoard || current.bank || current.swish) return true;
+  if (world.hitRim || world.hitBoard) return true;
+  if (world.hitRim && onInnerRim(world)) return true;
+  if (longJumpFwd(world) && flyingAtHoop(world) && !bounceOpening(world)) return true;
+  if (longJumpFwd(world) && movingTowardBoard(world) && (nearBoard(world) || inBankBand(world))) {
+    return true;
+  }
+  return false;
+}
+
+export function finishPocketLocked(world: AiWorld): boolean {
+  return longJumpFwd(world) && nearFinishPocket(world);
 }
 
 /** Parked / dying under the rim — the ninja freeze. */
@@ -313,6 +365,10 @@ function bankCommit(world: AiWorld, helpers: AiHelpers): AiVote | null {
 
   const current = helpers.predictCurrent(world);
   const next = helpers.predictTap(world);
+  if (mustHoldFinish(world, current)) {
+    if (current.scores) return hold("flight-scores");
+    return hold("protect-finish");
+  }
   if (inboundGlass(world, current)) {
     if (current.scores) return hold("flight-scores");
     return hold(steepIntoBoard(world) ? "bank-steep" : "commit-glass");
@@ -361,6 +417,12 @@ export const defaultPolicy: BallAiPolicy = {
 
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
+    if (mustHoldFinish(world, current)) {
+      return hold(current.scores ? "flight-scores" : "protect-finish");
+    }
+    if (longJumpFwd(world) && nearFinishPocket(world)) {
+      return hold("protect-finish");
+    }
     if (inboundGlass(world, current)) {
       return hold(current.scores ? "flight-scores" : "commit-glass");
     }
@@ -425,6 +487,9 @@ export const defaultPolicy: BallAiPolicy = {
     }
 
     const next = helpers.predictTap(world);
+    if (mustHoldFinish(world, current) || (longJumpFwd(world) && nearFinishPocket(world))) {
+      return hold(current.scores ? "flight-scores" : "protect-finish");
+    }
     if (inboundGlass(world, current)) {
       return hold(current.scores ? "flight-scores" : "commit-glass");
     }
@@ -461,6 +526,9 @@ export const defaultPolicy: BallAiPolicy = {
 
     const launch = onLaunchSide(world) || world.onApproachSide;
     if (belowRim && launch && !messyContact(world)) {
+      if (longJumpFwd(world) && nearFinishPocket(world)) {
+        return hold("protect-finish");
+      }
       if (
         longJumpFwd(world) &&
         !world.onApproachSide &&
@@ -654,6 +722,9 @@ export const wrapHeightPolicy: BallAiPolicy = {
 
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
+    if (mustHoldFinish(world, current)) {
+      return hold(current.scores ? "flight-scores" : "protect-finish");
+    }
     const rattledEarly = world.hitRim || world.rimHits >= 1;
     if (inboundGlass(world, current) && !rattledEarly) {
       return hold(current.scores ? "flight-scores" : "commit-glass");
@@ -746,6 +817,12 @@ export const physPolicy: BallAiPolicy = {
     const feel = shotFeel(world);
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
+    if (mustHoldFinish(world, current)) {
+      return hold(current.scores ? "flight-scores" : "protect-finish");
+    }
+    if (feel.longJump && nearFinishPocket(world)) {
+      return hold("protect-finish");
+    }
     if (
       world.hitRim &&
       onInnerRim(world) &&
