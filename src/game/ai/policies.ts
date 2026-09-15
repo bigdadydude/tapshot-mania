@@ -709,8 +709,13 @@ export const physPolicy: BallAiPolicy = {
         if (lowBounce(world)) {
           const spd = Math.hypot(world.ball.vx, world.ball.vy);
           if (spd < 90 && bounceOpening(world)) return hold("exit-space");
-          // Combo dying on the floor-bounce: wrap, don't sit a let-drop.
-          if (comboPressure(world) && !current.scores) return tap("wrap-escape");
+          // Parked on the bounce with combo dying: wrap. A live bounce still drops.
+          if (
+            !current.scores &&
+            (world.comboClock > 2.4 || (comboPressure(world) && spd < 78))
+          ) {
+            return tap("wrap-escape");
+          }
           return hold("let-drop");
         }
         // Too-low apex under the cylinder: recatch for height. Tube-up only
@@ -724,18 +729,31 @@ export const physPolicy: BallAiPolicy = {
         ) {
           return hold("tube-up");
         }
-        // Falling well below the rim: hold a live attack. After a miss the
-        // 1.08s combo clock (elite 2641 / 138, 310 / 28) must wrap instead
-        // of sitting in let-drop — that was the 1–13 pt drought.
+        // Falling well below the rim: hold a live attack. Only wrap a
+        // parked miss (the 1–13 pt drought) or a combo that's actually
+        // about to die (~2.4s of the 4s window). Wrapping at 1.08s on
+        // every under-rim fall killed the 259-class streaks.
         if (world.ball.vy > 12 && world.ball.y > world.hoop.y + world.hoop.inner) {
-          if (comboPressure(world) && !current.scores && !flyingAtHoop(world)) {
+          const spd = Math.hypot(world.ball.vx, world.ball.vy);
+          if (
+            comboPressure(world) &&
+            !current.scores &&
+            !flyingAtHoop(world) &&
+            (spd < 78 || world.comboClock > 2.4)
+          ) {
             return tap("wrap-escape");
           }
           return hold("let-drop");
         }
         const tooLow = world.ball.y > world.hoop.y + world.hoop.inner * 2.2;
         if (tooLow) {
-          if (comboPressure(world) && !current.scores && !flyingAtHoop(world)) {
+          const spd = Math.hypot(world.ball.vx, world.ball.vy);
+          if (
+            comboPressure(world) &&
+            !current.scores &&
+            !flyingAtHoop(world) &&
+            (spd < 78 || world.comboClock > 2.4)
+          ) {
             return tap("wrap-escape");
           }
           return hold("let-drop");

@@ -542,6 +542,21 @@ describe("ball AI registry", () => {
     assert.equal(d.policyId, "phys");
     assert.equal(d.tap, true);
     assert.equal(d.reason, "wrap-escape");
+
+    const liveFall = world({
+      hoop,
+      jumpVx: w * 0.76 * 1.2,
+      ballMul: 1,
+      kit: flags({ ninja: true }),
+      combo: 18,
+      streak: 18,
+      comboClock: 1.4,
+      comboCounting: true,
+      ball: { x: hoop.x - 55, y: hoop.y + 110, vx: 120, vy: 80, r: 19.5 },
+    });
+    const holdLive = decideShot(liveFall, helpers);
+    assert.equal(holdLive.tap, false);
+    assert.ok(holdLive.reason === "let-drop" || holdLive.reason === "ride-flight");
   });
 
   it("ninja launches from far on the floor (human first-tap |dx| ~237)", () => {
