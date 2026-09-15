@@ -398,8 +398,9 @@ export function createAiController(): AiController {
         !farRestart &&
         !world.onApproachSide &&
         !world.ballHidden &&
-        dx >= world.world.w * 0.68 &&
-        (world.hoop.x - world.ball.x) * world.ball.vx > 12;
+        dx >= world.world.w * 0.7 &&
+        (world.hoop.x - world.ball.x) * world.ball.vx > 12 &&
+        Math.hypot(world.ball.vx, world.ball.vy) > 24;
       if (
         world.scored ||
         crawlWait ||

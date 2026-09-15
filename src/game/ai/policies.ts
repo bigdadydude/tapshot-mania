@@ -894,10 +894,10 @@ export const physPolicy: BallAiPolicy = {
     const far = feel.longJump
       ? dx > world.world.w * 0.5
       : dx > world.world.w * 0.38 * hangScale;
-    // Human p25–p75 |dx| ≈ 195–290. Apex travel ~129px: jump from ≳0.68w
-    // (~265) peaks too far for the 110–133 recatch, then only rims/wraps.
+    // Human p25–p75 |dx| ≈ 195–290. Apex travel ~129px: jump from ≳0.70w
+    // (~273) while still rolling in; a dead crawl above that still launches.
     const launchFar = feel.longJump
-      ? dx > world.world.w * 0.5 && dx < world.world.w * 0.68
+      ? dx > world.world.w * 0.5 && dx < world.world.w * 0.7
       : dx > world.world.w * 0.48;
     const crawlingIn = (world.hoop.x - world.ball.x) * world.ball.vx > 12;
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
@@ -1005,12 +1005,24 @@ export const physPolicy: BallAiPolicy = {
         onFloor(world) &&
         !world.onApproachSide &&
         !world.ballHidden &&
-        dx >= world.world.w * 0.68 &&
-        crawlingIn
+        dx >= world.world.w * 0.7 &&
+        crawlingIn &&
+        Math.hypot(world.ball.vx, world.ball.vy) > 24
       ) {
         return hold("wait-window");
       }
       if (feel.longJump && onFloor(world) && launchFar) {
+        return tap("early-jump");
+      }
+      // Crawl friction can die above the band — jump rather than sit until timeout.
+      if (
+        feel.longJump &&
+        onFloor(world) &&
+        !world.onApproachSide &&
+        !world.ballHidden &&
+        dx > world.world.w * 0.5 &&
+        Math.hypot(world.ball.vx, world.ball.vy) <= 24
+      ) {
         return tap("early-jump");
       }
       if (ninjaBandRecatch(world, current)) return tap("early-jump");

@@ -883,6 +883,18 @@ describe("ball AI registry", () => {
     assert.equal(d.tap, false);
     assert.equal(d.reason, "wait-window");
     assert.notEqual(d.reason, "early-jump");
+
+    const stalled = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      ball: { x: hoop.x - 280, y: floorY - r, vx: 10, vy: 0, r },
+    });
+    const go = decideShot(stalled, helpers);
+    assert.equal(go.tap, true);
+    assert.equal(go.reason, "early-jump");
   });
 
   it("ninja recatches mid-climb after flying in (human 2nd tap)", () => {
