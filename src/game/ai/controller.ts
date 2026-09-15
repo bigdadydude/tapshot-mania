@@ -263,7 +263,14 @@ export function createAiController(): AiController {
       const inbound = helpers.predictCurrent(world);
       const nextShot = helpers.predictTap(world);
       const wrapEscapeSpam =
-        longJump && fruitlessWraps > 0 && decision.reason === "wrap-escape";
+        longJump &&
+        fruitlessWraps > 0 &&
+        decision.reason === "wrap-escape";
+      const closePoke =
+        longJump &&
+        fruitlessContact > 0 &&
+        dx < world.world.w * 0.4 &&
+        (decision.reason === "wrap-escape" || decision.reason === "early-jump");
       const closeForBank = dx < world.world.w * 0.28;
       // Break-glass board-kiss: empty wrap-escape, or a close reset after a
       // wrap whose tap would kiss glass. Demo-band / recatch stay the attack.
@@ -273,6 +280,7 @@ export function createAiController(): AiController {
         !farRestart &&
         !world.hitRim &&
         !world.hitBoard &&
+        contactCool <= 0 &&
         !airSpam &&
         !inbound.willBoard &&
         !inbound.scores &&
@@ -295,7 +303,7 @@ export function createAiController(): AiController {
           boardTapUsed = true;
           toFire = { tap: true, reason: "wrap-bank", policyId: decision.policyId };
         } else if (
-          (wrapLoop || wrapEscapeSpam) &&
+          (wrapLoop || wrapEscapeSpam || closePoke) &&
           decision.reason !== "chain-next"
         ) {
           last = { tap: false, reason: "wrap-loop", policyId: decision.policyId };
@@ -368,6 +376,7 @@ export function createAiController(): AiController {
           locked ||
           wrapLoop ||
           wrapEscapeSpam ||
+          closePoke ||
           (longJump && fruitlessContact > 0 && FAR_JUMP.has(decision.reason)) ||
           (longJump && (boardCool > 0 || contactCool > 0))
         ) {

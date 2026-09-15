@@ -272,7 +272,7 @@ function onInnerRim(world: AiWorld): boolean {
  */
 function tooLowApex(world: AiWorld): boolean {
   const belowFinish = world.ball.y > world.hoop.y + world.hoop.inner * 1.2;
-  const nearApex = world.ball.vy > -200 && world.ball.vy < 55;
+  const nearApex = world.ball.vy > -250 && world.ball.vy < 55;
   if (!belowFinish || !nearApex) return false;
   // Parked / dying under the rim — a full jumpVy from here flies over.
   if (Math.abs(world.ball.vx) < 50) return false;
