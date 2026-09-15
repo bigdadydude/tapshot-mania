@@ -479,6 +479,52 @@ describe("ball AI registry", () => {
     assert.equal(d.reason, "early-jump");
   });
 
+  it("ninja recatches mid-climb while still far (human 2nd tap)", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const mid = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 210, y: hoop.y + 170, vx: 280, vy: -300, r: 19.5 },
+    });
+    const d = decideShot(mid, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "early-jump");
+  });
+
+  it("ninja recatches a too-low apex instead of riding under the rim", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const apex = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 200, y: hoop.y + 150, vx: 280, vy: -40, r: 19.5 },
+    });
+    const d = decideShot(apex, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "early-jump");
+  });
+
   it("ninja does not spam early-jump after the launch is already flying", () => {
     const hoop = {
       x: 390 - 28 - 390 * 0.1,
@@ -495,7 +541,7 @@ describe("ball AI registry", () => {
       hoopMul: 0.8,
       boardFric: 0.7,
       shotOpen: true,
-      ball: { x: hoop.x - 224, y: hoop.y + 180, vx: 280, vy: -400, r: 19.5 },
+      ball: { x: hoop.x - 224, y: hoop.y + 180, vx: 280, vy: -520, r: 19.5 },
     });
     const d = decideShot(rising, helpers);
     assert.equal(d.tap, false);
@@ -729,7 +775,8 @@ describe("ball AI registry", () => {
     });
     const d = decideShot(w, helpers);
     assert.equal(d.tap, false);
-    assert.ok(d.reason === "rim-swirl" || d.reason === "flight-scores" || d.reason === "let-drop");
+    assert.ok(d.reason === "rim-swirl" || d.reason === "flight-scores");
+    assert.notEqual(d.reason, "let-drop");
   });
 
   it("tap-climbs from far away so the drop is steep", () => {
