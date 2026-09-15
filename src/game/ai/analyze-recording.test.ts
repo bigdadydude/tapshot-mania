@@ -59,4 +59,48 @@ describe("recording analyzer", () => {
     assert.equal(parseRecordingJson(pack).score, 18);
     assert.equal(parseRecordingJson(first).score, 4);
   });
+
+  it("counts antimatter orb samples and hole events", () => {
+    const s = summarizePlayRecording(
+      rec({
+        ballId: "anti",
+        samples: [
+          {
+            t: 0.5,
+            f: 30,
+            x: 80,
+            y: 400,
+            vx: 10,
+            vy: -20,
+            hs: -1,
+            hx: 48,
+            hy: 280,
+            hi: 28,
+            ht: 8,
+            hm: false,
+            bx: 8,
+            by: 120,
+            bw: 14,
+            bh: 200,
+            s: 0,
+            c: 0,
+            am: { id: 1, x: 140, y: 400, r: 16, pct: 12 },
+          },
+        ],
+        events: [
+          { t: 0, f: 0, kind: "start" },
+          { t: 0.4, f: 24, kind: "anti-spawn", antiId: 1, pct: 12, x: 140, y: 400 },
+          { t: 0.8, f: 48, kind: "anti-collect", antiId: 1, pct: 12, charge: 12 },
+          { t: 0.9, f: 54, kind: "hole-open", hole: { x: 195, y: 330, r: 36, left: 8 } },
+          { t: 8.9, f: 534, kind: "hole-close" },
+        ],
+      }),
+    );
+    assert.equal(s.antiSpawns, 1);
+    assert.equal(s.antiCollects, 1);
+    assert.equal(s.holeOpens, 1);
+    assert.equal(s.holeCloses, 1);
+    assert.equal(s.antiOrbSamples, 1);
+    assert.deepEqual(s.antiIds, [1]);
+  });
 });

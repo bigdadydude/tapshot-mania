@@ -51,7 +51,7 @@ import {
 import { createAiController, flagsFromKit } from "./ai";
 import { createPlayRecorder } from "./record";
 
-export const GAME_REV = 346;
+export const GAME_REV = 347;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -172,7 +172,8 @@ export function createGame(
 
   let world: World = layout(390, 844);
   let phase: Phase = "title";
-  let booted = artProgress().ready;
+  // Court textures keep loading in the background; don't hold the title overlay.
+  let booted = true;
   let lastLoadN = booted ? 100 : -1;
   let score = 0;
   let best = save.best;

@@ -55,6 +55,7 @@ function loadArt(key: ArtKey, src: string, fallback?: string) {
 
 export function primeArt() {
   if (typeof Image === "undefined") return;
+  if (!primedAt && typeof performance !== "undefined") primedAt = performance.now();
   const SRC = sceneSrc();
   primeBalls();
   (Object.keys(SRC) as ArtKey[]).forEach((key) => {
@@ -130,6 +131,10 @@ export function ballImage(id: BallId): HTMLImageElement | null {
   return null;
 }
 
+/** Don't hold the title menu for balls / graffiti / clouds. */
+const BOOT_CAP_MS = 200;
+let primedAt = 0;
+
 export function artProgress() {
   const extras = cloudSlots.length + GRAF_KEYS.length + BALLS.length;
   const total = BOOT_KEYS.length + extras;
@@ -138,8 +143,12 @@ export function artProgress() {
   for (const slot of cloudSlots) if (slot.settled) done += 1;
   for (const key of GRAF_KEYS) if (grafSlots[key].settled) done += 1;
   for (const kit of BALLS) if (ballSlots[kit.id].settled) done += 1;
-  const pct = total <= 0 ? 1 : done / total;
-  return { done, total, pct, ready: done >= total && total > 0 };
+  const sceneReady = BOOT_KEYS.every((key) => slots[key].settled);
+  const elapsed =
+    primedAt > 0 && typeof performance !== "undefined" ? performance.now() - primedAt : 0;
+  const ready = total > 0 && (sceneReady || elapsed >= BOOT_CAP_MS);
+  const pct = ready ? 1 : total <= 0 ? 1 : done / total;
+  return { done, total, pct, ready };
 }
 
 export function artReady() {

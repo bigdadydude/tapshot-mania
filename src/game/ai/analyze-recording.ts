@@ -27,6 +27,12 @@ export type RecordingSummary = {
   boardYRatios: number[];
   medianBoardYRatio: number | null;
   scoreRate: number | null;
+  antiSpawns: number;
+  antiCollects: number;
+  holeOpens: number;
+  holeCloses: number;
+  antiOrbSamples: number;
+  antiIds: number[];
 };
 
 const PRE_MAKE = 1.6;
@@ -143,6 +149,12 @@ export function summarizePlayRecording(
     boardYRatios,
     medianBoardYRatio: median(boardYRatios),
     scoreRate: rec.duration > 0 ? rec.score / rec.duration : null,
+    antiSpawns: rec.events.filter((e) => e.kind === "anti-spawn").length,
+    antiCollects: rec.events.filter((e) => e.kind === "anti-collect").length,
+    holeOpens: rec.events.filter((e) => e.kind === "hole-open").length,
+    holeCloses: rec.events.filter((e) => e.kind === "hole-close").length,
+    antiOrbSamples: rec.samples.filter((s) => s.am).length,
+    antiIds: [...new Set(rec.samples.filter((s) => s.am).map((s) => s.am!.id))],
   };
 }
 
@@ -161,6 +173,11 @@ export function formatRecordingSummary(s: RecordingSummary): string {
     `wraps ${s.wraps}, scored within ${s.wrapScoreWindowSec}s: ${s.wrapsScoredWithin}`,
     `median board-Y ratio (1=top) near banks ${s.medianBoardYRatio?.toFixed(2) ?? "—"}`,
   ];
+  if (s.antiSpawns || s.antiCollects || s.holeOpens || s.antiOrbSamples) {
+    lines.push(
+      `antimatter spawn ${s.antiSpawns} collect ${s.antiCollects}  hole open ${s.holeOpens} close ${s.holeCloses}  orb samples ${s.antiOrbSamples} ids [${s.antiIds.join(",")}]`,
+    );
+  }
   return lines.join("\n");
 }
 
