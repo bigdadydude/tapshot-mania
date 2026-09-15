@@ -48,8 +48,11 @@ import {
   devRevokeRogue,
   type RogueRun,
 } from "./rogue";
+import { createAiController, flagsFromKit } from "./ai";
+import { predictCurrent, predictTap } from "./ai/predict.ts";
+import { createPlayRecorder } from "./record";
 
-export const GAME_REV = 293;
+export const GAME_REV = 388;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -127,6 +130,14 @@ export type GameHandle = {
   rogueEndRun: () => void;
   /** Dev settle: return to sandbox play without exiting developer mode. */
   devBackFromSettle: () => void;
+  /** Session-only auto-play (demo / AFK). Default off; not persisted. */
+  setAutoPlay: (on: boolean) => void;
+  /** Session-only hand-play recording. Default off; UI confirms save vs discard. */
+  setRecording: (on: boolean) => void;
+  /** Re-download the last (or live) recording, if any. */
+  downloadRecording: () => void;
+  /** Drop the current pack without downloading. */
+  discardRecording: () => void;
   /** Activate inventory item / usable ornament from pause. */
   useRogue: (id: string) => void;
   /** Answer连击保护 prompt. */
@@ -164,7 +175,8 @@ export function createGame(
 
   let world: World = layout(390, 844);
   let phase: Phase = "title";
-  let booted = artProgress().ready;
+  // Court textures keep loading in the background; don't hold the title overlay.
+  let booted = true;
   let lastLoadN = booted ? 100 : -1;
   let score = 0;
   let best = save.best;
@@ -241,6 +253,9 @@ export function createGame(
     x: number;
     y: number;
   };
+  const autoPlay = createAiController();
+  const recorder = createPlayRecorder();
+  let tapFromAi = false;
   let pathHist: PathSample[] = [];
   let pathClock = 0;
   let ninjaGhosts: NinjaGhost[] = [];
@@ -464,7 +479,18 @@ export function createGame(
   }
 
   function markShotMissed() {
-    if (shotOpen && !shotMade) shotMissed = true;
+    if (shotOpen && !shotMade) {
+      shotMissed = true;
+      if (recorder.live()) {
+        recorder.noteEvent("miss", {
+          x: ball.x,
+          y: ball.y,
+          hs: hoop.side,
+          score,
+          combo: comboShown(),
+        });
+      }
+    }
   }
 
   /** Break active streak (timeout or finished miss jump). Heat may keep decaying. */
@@ -706,6 +732,8 @@ export function createGame(
   let shotMade = false;
   /** Previous attempt finished without a make (floor settle) — next new jump breaks streak. */
   let shotMissed = false;
+  /** Last body finish: swish / bank (擦板) / rim. QA + AI read this. */
+  let lastFinish: "swish" | "bank" | "rim" | null = null;
   /** Left the floor during this attempt — avoids marking miss on takeoff overlap. */
   let shotAirborne = false;
   let opener = 0;
@@ -729,6 +757,7 @@ export function createGame(
   let camShake = 0;
   let whiteFlash = 0;
   let rimHits = 0;
+  let wrapCount = 0;
   let rimHitLock = 0;
   let hitBoardTop = false;
   let wentOffTop = false;
@@ -745,7 +774,8 @@ export function createGame(
   let champFinishing = false;
   /** Anti ball: antimatter charge 0–100, pickups, timed black hole. */
   let antiCharge = 0;
-  let antiMatter: { x: number; y: number; r: number; pct: number; age: number } | null =
+  let antiSpawnSeq = 0;
+  let antiMatter: { id: number; x: number; y: number; r: number; pct: number; age: number } | null =
     null;
   /** Sum of antimatter field linger this charge cycle (cuts hole duration). */
   let antiLingerAcc = 0;
@@ -888,6 +918,79 @@ export function createGame(
       playMode,
       prison: prisonHud(),
       rogue: toRogueHud(isRogueMode() ? rogueRun : null),
+      autoPlay: autoPlay.enabled(),
+      recording: recorder.enabled(),
+      recordingSessions: recorder.sessionCount(),
+    });
+  }
+
+  function comboShown() {
+    return comboCounting ? streak : combo;
+  }
+
+  function recordingMeta() {
+    return {
+      mode: playMode,
+      ballId,
+      world: { w: world.w, h: world.h, floorY: world.floorY },
+    };
+  }
+
+  function recordingTally() {
+    return { score, combo: comboShown() };
+  }
+
+  function beginRecordingRun() {
+    if (!recorder.enabled()) return;
+    recorder.beginRun(recordingMeta());
+  }
+
+  function endRecordingRun(reason: "over" | "stop" | "restart") {
+    if (!recorder.live()) return;
+    recorder.endRun(reason, recordingTally());
+  }
+
+  function samplePlay() {
+    if (!recorder.enabled() || !recorder.live()) return;
+    if (phase !== "playing") return;
+    const g = boardGeom(hoop, world);
+    recorder.tick({
+      x: ball.x,
+      y: ball.y,
+      vx: ball.vx,
+      vy: ball.vy,
+      hs: hoop.side,
+      hx: hoop.x,
+      hy: hoop.y,
+      hi: hoop.inner,
+      ht: hoop.tube,
+      hm: hoop.moving,
+      bx: g.visX,
+      by: g.visY,
+      bw: g.visW,
+      bh: g.bh,
+      score,
+      combo: comboShown(),
+      hitRim: ball.hitRim,
+      hitBoard: ball.hitBoard,
+      anti: antiMatter
+        ? { id: antiMatter.id, x: antiMatter.x, y: antiMatter.y, r: antiMatter.r, pct: antiMatter.pct }
+        : null,
+      antiCharge,
+      hole: holeOn ? { x: holeX, y: holeY, r: holeR, left: holeLeft } : null,
+    });
+  }
+
+  function noteScoreRecord(ghostMake: boolean, hs: -1 | 1 = hoop.side) {
+    if (!recorder.live()) return;
+    recorder.noteEvent("score", {
+      finish: lastFinish ?? (ghostMake ? "swish" : undefined),
+      hs,
+      ghost: ghostMake || undefined,
+      x: ball.x,
+      y: ball.y,
+      score,
+      combo: comboShown(),
     });
   }
 
@@ -1065,6 +1168,7 @@ export function createGame(
 
   function resetAntiRun() {
     antiCharge = 0;
+    antiSpawnSeq = 0;
     antiMatter = null;
     antiLingerAcc = 0;
     holeOn = false;
@@ -1079,6 +1183,13 @@ export function createGame(
   }
 
   function closeAntiHole() {
+    if (recorder.live() && holeOn) {
+      recorder.noteEvent("hole-close", {
+        x: holeX,
+        y: holeY,
+        hole: { x: holeX, y: holeY, r: holeR, left: holeLeft },
+      });
+    }
     holeOn = false;
     holeLeft = 0;
     holeScoreAcc = 0;
@@ -1109,6 +1220,14 @@ export function createGame(
     holeTick = 0;
     antiCharge = 0;
     antiMatter = null;
+    if (recorder.live()) {
+      recorder.noteEvent("hole-open", {
+        x: holeX,
+        y: holeY,
+        hole: { x: holeX, y: holeY, r: holeR, left: holeLeft },
+        charge: 0,
+      });
+    }
     // Refill countdown bar when the hole opens (classic shot clock only).
     if (phase === "playing" && !isMinuteMode() && !isRogueMode()) {
       timer = timerMax;
@@ -1392,13 +1511,24 @@ export function createGame(
     }
     if (!ok) return;
     const pct = 1 + Math.floor(Math.random() * 15);
+    antiSpawnSeq += 1;
     antiMatter = {
+      id: antiSpawnSeq,
       x,
       y,
       r: Math.max(14, world.ballR * 0.7),
       pct,
       age: 0,
     };
+    if (recorder.live()) {
+      recorder.noteEvent("anti-spawn", {
+        x,
+        y,
+        antiId: antiMatter.id,
+        pct,
+        charge: antiCharge,
+      });
+    }
   }
 
   function tryCollectAntiMatter() {
@@ -1406,9 +1536,21 @@ export function createGame(
     const d = Math.hypot(ball.x - antiMatter.x, ball.y - antiMatter.y);
     if (d > ball.r + antiMatter.r) return;
     const got = antiMatter.pct;
+    const collectedId = antiMatter.id;
+    const collectedX = antiMatter.x;
+    const collectedY = antiMatter.y;
     antiLingerAcc += antiMatter.age;
     antiMatter = null;
     antiCharge = Math.min(100, antiCharge + got);
+    if (recorder.live()) {
+      recorder.noteEvent("anti-collect", {
+        x: collectedX,
+        y: collectedY,
+        antiId: collectedId,
+        pct: got,
+        charge: antiCharge,
+      });
+    }
     callouts.push({
       text: `+${got}%`,
       x: ball.x,
@@ -1554,8 +1696,8 @@ export function createGame(
     } else {
       resetAntiRun();
     }
-    if (devOn) {
-      applyKitPhys();
+    applyKitPhys();
+    if (devOn || phase === "title") {
       remakeBall(hoop.side < 0 ? 1 : -1);
       prevBallX = ball.x;
       prevBallY = ball.y;
@@ -1590,6 +1732,7 @@ export function createGame(
       prisonFreeExtendUsed = false;
       prisonShackleBest = 0;
     }
+    autoPlay.reset();
     persist();
     emitHud();
   }
@@ -1761,6 +1904,85 @@ export function createGame(
     return hoop.side > 0 ? ball.x < 0 : ball.x > world.w;
   }
 
+  function snapshotAiWorld(dt: number) {
+    const heroClutch =
+      isRogueMode() && rogueRun && hasHeroMoment(rogueRun) && (buzzer || timeUp);
+    const hidden = ballHidden();
+    const approach = onApproachSide();
+    return {
+      dt,
+      canShoot:
+        phase === "playing" &&
+        !paused &&
+        !((buzzer || timeUp) && !heroClutch) &&
+        !(hidden && !approach),
+      phase,
+      paused,
+      tapLock,
+      scored: ball.scored,
+      shotOpen,
+      shotMade,
+      shotMissed,
+      hitRim: ball.hitRim,
+      hitBoard: ball.hitBoard,
+      rimHits,
+      timer,
+      timerArmed,
+      buzzer,
+      timeUp,
+      combo,
+      streak,
+      comboClock,
+      comboCounting,
+      world: { w: world.w, h: world.h, floorY: world.floorY },
+      ball: { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy, r: ball.r },
+      hoop: {
+        x: hoop.x,
+        y: hoop.y,
+        inner: hoop.inner,
+        side: hoop.side,
+        tube: hoop.tube,
+        moving: hoop.moving,
+        active: hoop.active,
+        frostLeft: hoop.frostLeft,
+      },
+      other: other
+        ? {
+            x: other.x,
+            y: other.y,
+            inner: other.inner,
+            side: other.side,
+            tube: other.tube,
+            moving: other.moving,
+            frostLeft: other.frostLeft,
+            active: other.active,
+          }
+        : null,
+      ballHidden: hidden,
+      onApproachSide: approach,
+      holeOn,
+      hole: holeOn ? { x: holeX, y: holeY, r: holeR } : null,
+      antiMatter: antiMatter
+        ? { x: antiMatter.x, y: antiMatter.y, r: antiMatter.r }
+        : null,
+      antiCharge,
+      champMode,
+      glassBase,
+      kit: flagsFromKit(kit()),
+      jumpVx: jumpVx(),
+      jumpVy: jumpVy(),
+      gravity: gravity(),
+      air: pMul("air"),
+      buoy: pMul("buoy"),
+      ballMul: pMul("ball"),
+      hoopMul: pMul("hoop"),
+      boardFric: pMul("boardFric"),
+      floorMul: pMul("floor"),
+      wrapPad: wrapPad(),
+      wraps: wrapCount,
+    };
+  }
+
   function predictBuzzerMake() {
     if (ball.scored) return false;
     const floor = world.floorY - ball.r;
@@ -1876,6 +2098,7 @@ export function createGame(
   }
 
   function beginPlay() {
+    endRecordingRun("restart");
     phase = "playing";
     paused = false;
     score = 0;
@@ -1912,6 +2135,7 @@ export function createGame(
     shotOpen = false;
     shotMade = false;
     shotMissed = false;
+    lastFinish = null;
     shotAirborne = false;
     opener = 0;
     bgmOn = false;
@@ -1924,6 +2148,7 @@ export function createGame(
     camShake = 0;
     whiteFlash = 0;
     rimHits = 0;
+    wrapCount = 0;
     rimHitLock = 0;
     hitBoardTop = false;
     wentOffTop = false;
@@ -1952,6 +2177,8 @@ export function createGame(
     boardHitLock = 0;
     resetPrisonRun();
     resetNinjaPath();
+    autoPlay.reset();
+    beginRecordingRun();
     if (isPrison()) {
       callouts.push({
         text: "审判",
@@ -1980,6 +2207,16 @@ export function createGame(
 
   function gameOver(opts?: { quiet?: boolean }) {
     if (phase === "over") return;
+    if (recorder.live()) {
+      recorder.noteEvent("over", {
+        x: ball.x,
+        y: ball.y,
+        hs: hoop.side,
+        score,
+        combo: comboShown(),
+      });
+      endRecordingRun("over");
+    }
     phase = "over";
     paused = false;
     buzzer = false;
@@ -2218,10 +2455,12 @@ export function createGame(
     shotOpen = false;
     shotMade = false;
     shotMissed = false;
+    lastFinish = null;
     shotAirborne = false;
     opener = 0;
     overRim = false;
     rimHits = 0;
+    wrapCount = 0;
     rimHitLock = 0;
     hitBoardTop = false;
     wentOffTop = false;
@@ -2388,6 +2627,14 @@ export function createGame(
       glassLand = true;
       tapLock = 0.03;
       audio.whoosh(0.5);
+      if (recorder.live()) {
+        recorder.noteTap(tapFromAi ? "ai" : "player", {
+          x: ball.x,
+          y: ball.y,
+          vx: ball.vx,
+          vy: ball.vy,
+        });
+      }
       emitHud();
       return;
     }
@@ -2415,6 +2662,14 @@ export function createGame(
     glassLand = true;
     tapLock = 0.03;
     audio.whoosh(0.5);
+    if (recorder.live()) {
+      recorder.noteTap(tapFromAi ? "ai" : "player", {
+        x: ball.x,
+        y: ball.y,
+        vx: ball.vx,
+        vy: ball.vy,
+      });
+    }
     emitHud();
   }
 
@@ -2466,6 +2721,15 @@ export function createGame(
   }
 
   function goTitle() {
+    if (recorder.live()) {
+      recorder.noteEvent("stop", {
+        x: ball.x,
+        y: ball.y,
+        score,
+        combo: comboShown(),
+      });
+      endRecordingRun("stop");
+    }
     phase = "title";
     paused = false;
     score = 0;
@@ -2488,6 +2752,7 @@ export function createGame(
     shotOpen = false;
     shotMade = false;
     shotMissed = false;
+    lastFinish = null;
     shotAirborne = false;
     other = null;
     hoop = makeHoop(world, -1, true);
@@ -2503,6 +2768,7 @@ export function createGame(
     leaveSandbox();
     resetPrisonRun();
     resetNinjaPath();
+    autoPlay.reset();
     emitHud();
   }
 
@@ -3173,6 +3439,14 @@ export function createGame(
         callouts.pop();
       } else i += 1;
     }
+
+    // Isolated auto-play: no-op when OFF. Taps the real shot path only.
+    if (autoPlay.enabled() && autoPlay.tick(snapshotAiWorld(dt))) {
+      tapFromAi = true;
+      tapJump();
+      tapFromAi = false;
+    }
+    samplePlay();
   }
 
   function boardTravel() {
@@ -3551,6 +3825,15 @@ export function createGame(
       Math.abs(ball.vx) < 14 &&
       ball.vy >= 0;
     if (!exitLeft && !exitRight && !stuckOff) return;
+    if (recorder.live()) {
+      recorder.noteEvent("wrap", {
+        x: ball.x,
+        y: ball.y,
+        hs: hoop.side,
+        wrap: getBall(ballId).wrap === "height" ? "height" : "ground",
+      });
+    }
+    wrapCount += 1;
     // Wrap is not a miss: clear airborne so the post-wrap floor contact does not markShotMissed.
     shotAirborne = false;
     if (getBall(ballId).wrap === "height") {
@@ -3843,6 +4126,9 @@ export function createGame(
     const lucky = ghost ? false : hitBoardTop;
     const depth = ghost ? false : wentOffTop && swish;
     const needle = ghost ? false : fromBelow;
+    if (!ghost) {
+      lastFinish = swish ? "swish" : bank ? "bank" : "rim";
+    }
     const prevStage = fireStage(heatN());
     const shackled = isPrison() && prisonMode === "shackle";
     const freed = isPrison() && prisonMode === "free";
@@ -3894,7 +4180,9 @@ export function createGame(
       tugNet(hoop);
       refillShotClock();
       prisonShackleBest = Math.max(prisonShackleBest, streak);
+      const scoredHs = hoop.side;
       if (!ghost) nextHoop();
+      noteScoreRecord(ghost, scoredHs);
       emitHud();
       if (streak >= prisonTarget) enterPrisonFree(Math.max(prisonShackleBest, streak));
       return;
@@ -4137,6 +4425,7 @@ export function createGame(
       champIdleLeft = -1;
       // 肉鸽：绝杀进球若已达目标则过关，否则本关失败；经典模式仍直接结束
       if (isRogueMode() && rogueRun) {
+        noteScoreRecord(ghost);
         emitHud();
         if (!rogueRun.endless && rogueRun.stageScore >= rogueRun.target) {
           enterRogueSettle();
@@ -4145,11 +4434,13 @@ export function createGame(
         }
         return;
       }
+      noteScoreRecord(ghost);
       emitHud();
       gameOver({ quiet: true });
       return;
     }
     const stage = fireStage(heatN());
+    const scoredHs = hoop.side;
     if (!ghost) {
       if (isFrost() && Math.random() < frostChance()) {
         // hoop is the stand just scored into (swapped earlier if needed).
@@ -4181,6 +4472,7 @@ export function createGame(
       }
     }
     syncNinjaGhosts();
+    noteScoreRecord(ghost, scoredHs);
     emitHud();
     if (
       !ghost &&
@@ -4561,6 +4853,9 @@ export function createGame(
   const handle: GameHandle = {
     destroy() {
       running = false;
+      if (recorder.live()) endRecordingRun("stop");
+      recorder.reset();
+      autoPlay.setEnabled(false);
       cancelAnimationFrame(raf);
       canvas.removeEventListener("pointerdown", onDown);
       window.removeEventListener("keydown", onKey);
@@ -4698,6 +4993,35 @@ export function createGame(
     setRogueFuse(id) {
       applyRogueFuse(id);
     },
+    setAutoPlay(on) {
+      autoPlay.setEnabled(Boolean(on));
+      emitHud();
+    },
+    setRecording(on) {
+      if (on) {
+        recorder.setEnabled(true);
+        if (phase === "playing" && !recorder.live()) beginRecordingRun();
+      } else {
+        if (recorder.live()) {
+          recorder.noteEvent("stop", {
+            x: ball.x,
+            y: ball.y,
+            score,
+            combo: comboShown(),
+          });
+          endRecordingRun("stop");
+        }
+        recorder.setEnabled(false);
+      }
+      emitHud();
+    },
+    downloadRecording() {
+      recorder.downloadLast();
+    },
+    discardRecording() {
+      recorder.discard();
+      emitHud();
+    },
     dev(cmd) {
       applyDev(cmd);
     },
@@ -4710,11 +5034,16 @@ export function createGame(
         phase,
         score,
         combo,
+        streak,
+        comboClock,
         timer,
         timerMax,
         timerArmed,
         buzzer,
+        timeUp,
         madeCount,
+        lastFinish,
+        ballId,
         hoopInner: hoop.inner,
         ballR: ball.r,
         hold: other?.hold ?? 0,
@@ -4749,9 +5078,61 @@ export function createGame(
         playMode,
         rogueStage: rogueRun?.stage ?? null,
         rogueEndless: rogueRun?.endless ?? null,
+        shotMade,
+        shotMissed,
+        hitRim: ball.hitRim,
+        hitBoard: ball.hitBoard,
+        autoPlay: autoPlay.enabled(),
+        autoPlayReason: autoPlay.lastDecision()?.reason ?? null,
+        autoPlayPolicy: autoPlay.lastDecision()?.policyId ?? null,
+        wraps: wrapCount,
+        holeOn,
+        antiCharge,
+        glassBase,
+        recording: recorder.enabled(),
+        recordingLive: recorder.live(),
+        recordingSessions: recorder.sessionCount(),
+        recordingSamples: recorder.exportLive()?.samples.length ?? recorder.lastFile()?.samples.length ?? 0,
+      };
+    },
+    aiProbe() {
+      const w = snapshotAiWorld(1 / 60);
+      const current = predictCurrent(w);
+      const next = predictTap(w);
+      const d = autoPlay.lastDecision();
+      return {
+        reason: d?.reason ?? null,
+        policy: d?.policyId ?? null,
+        tap: d?.tap ?? false,
+        scores: current.scores,
+        bank: current.bank,
+        willBoard: current.willBoard,
+        nextScores: next.scores,
+        nextBank: next.bank,
+        nextWillBoard: next.willBoard,
+        wraps: w.wraps,
       };
     },
     tap: () => tapJump(),
+    noteMiss() {
+      shotMissed = true;
+      shotOpen = true;
+      ball.hitRim = true;
+      rimHits = Math.max(2, rimHits);
+    },
+    setAutoPlay: (on: boolean) => {
+      autoPlay.setEnabled(Boolean(on));
+      emitHud();
+    },
+    setRecording: (on: boolean) => {
+      handle.setRecording(Boolean(on));
+    },
+    exportRecording: () => recorder.exportPack() ?? recorder.exportLive() ?? recorder.lastFile(),
+    downloadRecording: () => recorder.downloadLast(),
+    discardRecording: () => handle.discardRecording(),
+    setBall: (id: BallId) => applyBall(id),
+    setPlayMode: (mode: PlayMode) => handle.setPlayMode(mode),
+    goTitle: () => goTitle(),
     setCombo(n: number) {
       combo = Math.max(0, Math.floor(n));
       streak = combo;

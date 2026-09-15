@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
-import { AudioLines, Music, Pause, Volume2, VolumeX } from "lucide-react";
+import { AudioLines, Bot, CircleDot, Music, Pause, Volume2, VolumeX } from "lucide-react";
 import { createGame, rankFor, GAME_REV, type GameHandle } from "@/game/engine";
 import { primeArt } from "@/game/art";
 import { DEFAULT_DEV, wantDevQuery } from "@/game/dev";
@@ -37,6 +37,9 @@ const idleHud: HudState = {
   playMode: "classic",
   prison: null,
   rogue: null,
+  autoPlay: false,
+  recording: false,
+  recordingSessions: 0,
 };
 
 type Menu = "none" | "pause" | "settings" | "gfx" | "sound";
@@ -49,6 +52,8 @@ export function GameView() {
   const [crash, setCrash] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu>("none");
   const [titleTaps, setTitleTaps] = useState(0);
+  const [recordPrompt, setRecordPrompt] = useState(false);
+  const [recordPromptSessions, setRecordPromptSessions] = useState(0);
   const enteredDev = useRef(false);
 
   useEffect(() => {
@@ -142,6 +147,28 @@ export function GameView() {
     setMenu("none");
   }
 
+  function toggleRecording() {
+    const g = gameRef.current;
+    if (!g || recordPrompt) return;
+    if (!hud.recording) {
+      g.setRecording(true);
+      return;
+    }
+    setRecordPromptSessions(hud.recordingSessions);
+    g.setRecording(false);
+    setRecordPrompt(true);
+  }
+
+  function saveRecording() {
+    gameRef.current?.downloadRecording();
+    setRecordPrompt(false);
+  }
+
+  function discardRecording() {
+    gameRef.current?.discardRecording();
+    setRecordPrompt(false);
+  }
+
   const showPause = menu === "pause";
   const showSettings = menu === "settings";
   const showGfx = menu === "gfx";
@@ -233,7 +260,55 @@ export function GameView() {
             />
           ) : null}
 
-          <footer className="flex items-end justify-end px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <footer className="flex items-end justify-end gap-2 px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            {hud.loadPct >= 1 &&
+            !hud.dev.on &&
+            menu === "none" &&
+            (hud.phase === "playing" || hud.phase === "title") ? (
+            <button
+              type="button"
+              className={cn(
+                "pointer-events-auto flex h-11 items-center gap-1.5 rounded-md border px-3",
+                hud.autoPlay
+                  ? "border-accent bg-accent text-accent-fg"
+                  : "border-border bg-bg-elevated text-fg",
+              )}
+              onClick={() => gameRef.current?.setAutoPlay(!hud.autoPlay)}
+              aria-pressed={hud.autoPlay}
+              aria-label={hud.autoPlay ? "关闭自动代打" : "开启自动代打"}
+            >
+              <Bot className="size-4" />
+              <span className="text-xs font-medium tracking-wide">
+                {hud.autoPlay ? "代打中" : "代打"}
+              </span>
+            </button>
+            ) : null}
+            {hud.loadPct >= 1 &&
+            !hud.dev.on &&
+            menu === "none" &&
+            (hud.phase === "playing" || hud.phase === "title" || hud.phase === "over") ? (
+            <button
+              type="button"
+              className={cn(
+                "pointer-events-auto flex h-11 items-center gap-1.5 rounded-md border px-3",
+                hud.recording
+                  ? "border-accent bg-accent text-accent-fg"
+                  : "border-border bg-bg-elevated text-fg",
+              )}
+              onClick={() => toggleRecording()}
+              aria-pressed={hud.recording}
+              aria-label={hud.recording ? "关闭对局录制" : "开启对局录制"}
+            >
+              <CircleDot className="size-4" />
+              <span className="text-xs font-medium tracking-wide">
+                {hud.recording
+                  ? hud.recordingSessions > 1
+                    ? `录制中 · ${hud.recordingSessions}局`
+                    : "录制中"
+                  : "录制"}
+              </span>
+            </button>
+            ) : null}
             {hud.loadPct >= 1 && !hud.dev.on && hud.phase !== "over" ? (
             <button
               type="button"
@@ -277,6 +352,14 @@ export function GameView() {
         />
       ) : null}
 
+      {recordPrompt ? (
+        <RecordSavePrompt
+          sessions={recordPromptSessions}
+          onYes={saveRecording}
+          onNo={discardRecording}
+        />
+      ) : null}
+
       {showPause &&
       !hud.rogue?.pendingStreakSave &&
       !hud.rogue?.pendingFlameReuse &&
@@ -285,6 +368,10 @@ export function GameView() {
           canResume={hud.phase === "playing"}
           rogue={hud.playMode === "rogue" ? hud.rogue : null}
           ballId={hud.ballId}
+          autoPlay={hud.autoPlay}
+          recording={hud.recording}
+          onToggleAutoPlay={() => gameRef.current?.setAutoPlay(!hud.autoPlay)}
+          onToggleRecording={toggleRecording}
           onDismiss={hud.phase === "playing" ? resume : () => setMenu("none")}
           onRestart={restart}
           onSettings={() => setMenu("settings")}
@@ -314,6 +401,10 @@ export function GameView() {
       {showSettings ? (
         <SettingsHub
           showDev={hud.dev.unlocked}
+          autoPlay={hud.autoPlay}
+          recording={hud.recording}
+          onToggleAutoPlay={() => gameRef.current?.setAutoPlay(!hud.autoPlay)}
+          onToggleRecording={toggleRecording}
           onGfx={() => setMenu("gfx")}
           onSound={() => setMenu("sound")}
           onDev={() => {
@@ -1557,6 +1648,44 @@ function FlameReusePrompt({
   );
 }
 
+function RecordSavePrompt({
+  sessions,
+  onYes,
+  onNo,
+}: {
+  sessions: number;
+  onYes: () => void;
+  onNo: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-bg/75 px-6">
+      <div className="w-full max-w-xs rounded-xl border border-border bg-bg-elevated p-5 shadow-lg">
+        <p className="text-center text-xs font-medium tracking-widest text-muted">对局录制</p>
+        <p className="mt-3 text-center text-sm text-fg">是否保存这次录制？</p>
+        <p className="mt-1 text-center text-xs text-subtle">
+          {sessions > 0 ? `共 ${sessions} 局，导出 JSON 包` : "没有完整对局，可丢弃"}
+        </p>
+        <div className="mt-5 flex gap-2">
+          <button
+            type="button"
+            onClick={onNo}
+            className="h-12 flex-1 rounded-lg border border-border text-sm text-muted"
+          >
+            不保存
+          </button>
+          <button
+            type="button"
+            onClick={onYes}
+            className="h-12 flex-[1.2] rounded-lg bg-accent text-sm font-medium text-accent-fg"
+          >
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FusePickPanel({
   ballId,
   onPick,
@@ -1635,6 +1764,10 @@ function PauseMenu({
   canResume,
   rogue,
   ballId,
+  autoPlay,
+  recording,
+  onToggleAutoPlay,
+  onToggleRecording,
   onDismiss,
   onRestart,
   onSettings,
@@ -1645,6 +1778,10 @@ function PauseMenu({
   canResume: boolean;
   rogue: HudState["rogue"];
   ballId: BallId;
+  autoPlay: boolean;
+  recording: boolean;
+  onToggleAutoPlay: () => void;
+  onToggleRecording: () => void;
   onDismiss: () => void;
   onRestart: () => void;
   onSettings: () => void;
@@ -1776,7 +1913,11 @@ function PauseMenu({
             <p>被动饰品：{passiveOrns.length ? passiveOrns.join("、") : "无"}</p>
           </div>
         ) : null}
-        <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2">
+          {canResume ? (
+            <ToggleRow label="自动代打" on={autoPlay} onToggle={onToggleAutoPlay} />
+          ) : null}
+          <ToggleRow label="录制对局" on={recording} onToggle={onToggleRecording} />
           <MenuBtn label="重新开始" onClick={onRestart} />
           {rogue && onEndRun ? (
             <MenuBtn label="结束游戏" onClick={onEndRun} />
@@ -1818,12 +1959,20 @@ function MenuBtn({
 
 function SettingsHub({
   showDev,
+  autoPlay,
+  recording,
+  onToggleAutoPlay,
+  onToggleRecording,
   onGfx,
   onSound,
   onDev,
   onBack,
 }: {
   showDev: boolean;
+  autoPlay: boolean;
+  recording: boolean;
+  onToggleAutoPlay: () => void;
+  onToggleRecording: () => void;
   onGfx: () => void;
   onSound: () => void;
   onDev: () => void;
@@ -1834,6 +1983,14 @@ function SettingsHub({
       <div className="w-full max-w-xs rounded-xl border border-border bg-bg-elevated p-5 shadow-lg">
         <p className="mb-4 text-center text-xs font-medium tracking-widest text-muted">设置</p>
         <div className="flex flex-col gap-2">
+          <ToggleRow label="自动代打" on={autoPlay} onToggle={onToggleAutoPlay} />
+          <p className="px-1 pb-1 text-[11px] leading-relaxed text-subtle">
+            局内 AI 持续投球（演示 / 挂机）。关闭后立即交还操作，不留代打状态。
+          </p>
+          <ToggleRow label="录制对局" on={recording} onToggle={onToggleRecording} />
+          <p className="px-1 pb-1 text-[11px] leading-relaxed text-subtle">
+            记下球与篮架轨迹、点击和进球事件。结束一局或关闭时下载 JSON。默认关，不影响手感。
+          </p>
           <MenuBtn label="画面" onClick={onGfx} />
           <MenuBtn label="声音" onClick={onSound} />
           {showDev ? <MenuBtn label="开发者" onClick={onDev} /> : null}

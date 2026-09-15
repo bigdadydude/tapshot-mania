@@ -153,6 +153,12 @@ export type HudState = {
   playMode: PlayMode;
   prison: PrisonHud | null;
   rogue: RogueHud | null;
+  /** Session-only auto-play. Default false; not persisted. */
+  autoPlay: boolean;
+  /** Session-only hand-play recording. Default false; not persisted. */
+  recording: boolean;
+  /** Games already in the open recording pack (including the live take). */
+  recordingSessions: number;
 };
 
 export type World = {

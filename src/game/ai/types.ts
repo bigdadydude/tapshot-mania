@@ -1,0 +1,152 @@
+import type { EffectiveBall } from "../balls.ts";
+import type { Phase } from "../types.ts";
+
+/**
+ * Skill flags the AI keys off — same OR-merge as rogue fusion (`effectiveBall`).
+ * Register policies against these, not against a growing ball-id switch.
+ */
+export type BallSkillFlags = {
+  heat: boolean;
+  frost: boolean;
+  champ: boolean;
+  anti: boolean;
+  chain: boolean;
+  ninja: boolean;
+  glass: boolean;
+  wrap: "ground" | "height";
+  rScale: number;
+};
+
+export function flagsFromKit(
+  kit: Pick<
+    EffectiveBall,
+    "heat" | "frost" | "champ" | "anti" | "chain" | "ninja" | "glass" | "wrap" | "rScale"
+  >,
+): BallSkillFlags {
+  return {
+    heat: kit.heat,
+    frost: kit.frost,
+    champ: kit.champ,
+    anti: kit.anti,
+    chain: kit.chain,
+    ninja: kit.ninja,
+    glass: kit.glass,
+    wrap: kit.wrap,
+    rScale: kit.rScale,
+  };
+}
+
+export type AiHoop = {
+  x: number;
+  y: number;
+  inner: number;
+  side: -1 | 1;
+  tube: number;
+  moving: boolean;
+  /** Live scoring target. Departing post-make stands are inactive. */
+  active?: boolean;
+  /** Ice-ball freeze remaining on this stand (seconds). */
+  frostLeft?: number;
+};
+
+export type AiWorld = {
+  dt: number;
+  /** Matches `tapJump` admission (except tapLock, which the controller also checks). */
+  canShoot: boolean;
+  phase: Phase;
+  paused: boolean;
+  tapLock: number;
+  /** True only while this make is still resolving (`ball.scored`). */
+  scored: boolean;
+  shotOpen: boolean;
+  /**
+   * Combo latch: this attempt already counted. Stays true until the next *new*
+   * `tapJump` — do not use as "don't shoot"; that deadlocks after hoop switch.
+   */
+  shotMade: boolean;
+  shotMissed: boolean;
+  /** Live rim contact this attempt — rubber uses this to stop angle-spam. */
+  hitRim: boolean;
+  hitBoard: boolean;
+  rimHits: number;
+  timer: number;
+  timerArmed: boolean;
+  buzzer: boolean;
+  timeUp: boolean;
+  combo: number;
+  streak: number;
+  /** Seconds since last make while the streak is live (`COMBO_STOP` is 4). */
+  comboClock: number;
+  comboCounting: boolean;
+  world: { w: number; h: number; floorY: number };
+  ball: { x: number; y: number; vx: number; vy: number; r: number };
+  hoop: AiHoop;
+  other: (AiHoop & { frostLeft: number }) | null;
+  ballHidden: boolean;
+  onApproachSide: boolean;
+  holeOn: boolean;
+  hole: { x: number; y: number; r: number } | null;
+  antiMatter: { x: number; y: number; r: number } | null;
+  antiCharge: number;
+  champMode: boolean;
+  glassBase: number;
+  kit: BallSkillFlags;
+  jumpVx: number;
+  jumpVy: number;
+  gravity: number;
+  air: number;
+  buoy: number;
+  /** `pMul("ball")` — high-bounce kits skip fallBoost. */
+  ballMul: number;
+  /** `pMul("hoop")` — rim/board restitution scale. */
+  hoopMul: number;
+  /** `pMul("boardFric")`. */
+  boardFric: number;
+  /** `pMul("floor")`. */
+  floorMul: number;
+  wrapPad: number;
+  /** Ground/height wraps this match — AI uses this to break fruitless wrap loops. */
+  wraps: number;
+};
+
+export type AiVote = {
+  /** `abstain` defers to a lower-priority policy (usually default). */
+  action: "tap" | "hold" | "abstain";
+  reason: string;
+};
+
+export type FlightGuess = {
+  scores: boolean;
+  swish: boolean;
+  /** Scored after a backboard bounce in the kinematic guess. */
+  bank: boolean;
+  /**
+   * Path contacts the court-facing glass, even if it does not score.
+   * A tap here writes full jumpVx and flies past the board.
+   */
+  willBoard: boolean;
+  hitFloor: boolean;
+  minHoopDist: number;
+  collectedAnti: boolean;
+  minAntiDist: number;
+};
+
+export type AiHelpers = {
+  predictCurrent: (world: AiWorld) => FlightGuess;
+  predictTap: (world: AiWorld) => FlightGuess;
+};
+
+export type BallAiPolicy = {
+  /** Stable id for docs / debug (`anti`, `glass`, `default`, …). */
+  id: string;
+  /** Higher wins. Default is 0. */
+  priority: number;
+  match: (kit: BallSkillFlags) => boolean;
+  vote: (world: AiWorld, helpers: AiHelpers) => AiVote;
+};
+
+export type AiDecision = {
+  tap: boolean;
+  reason: string;
+  policyId: string;
+};
