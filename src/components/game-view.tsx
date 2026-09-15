@@ -801,6 +801,17 @@ function BallThumb({ kit, large = false }: { kit: (typeof BALLS)[number]; large?
       />
     );
   }
+  if (kit.id === "bolt") {
+    return (
+      <span
+        className={`${big} rounded-full shadow-inner`}
+        style={{
+          background:
+            "radial-gradient(circle at 32% 28%, #fff7a8 0%, #ffe14a 40%, #5ad0ff 75%, #2a6dff 100%)",
+        }}
+      />
+    );
+  }
   if (kit.src || kit.fallback) {
     const sz = kit.rScale && kit.rScale < 1 ? (large ? 44 : 36) : large ? 80 : 64;
     return (

@@ -55,6 +55,8 @@ export function drawScene(
   antiCharge = -1,
   antimatter: { x: number; y: number; r: number; pct: number } | null = null,
   scoreOverride: string | null = null,
+  boltCharge = -1,
+  boltTrail: { x: number; y: number }[] = [],
 ) {
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
@@ -65,6 +67,7 @@ export function drawScene(
 	}
 	if (hole) drawBlackHole(ctx, hole, time);
 	if (antimatter) drawAntiMatter(ctx, antimatter, time);
+	if (boltTrail.length > 1) drawBoltTrail(ctx, boltTrail, time);
 	if (gfx.ballShadow) drawGroundShadow(ctx, ball, world);
 	if (chain) drawChain(ctx, chain, true);
 	if (showHud) drawCountdown(ctx, world, timer01, buzzer);
@@ -73,6 +76,7 @@ export function drawScene(
 	const ballWithOther = Boolean(other && distO < distH);
 	if (other) drawHoopStack(ctx, other, world, ballWithOther ? ball : null, combo, time, gfx.particles ? trail : [], gfx, ballId);
 	drawHoopStack(ctx, hoop, world, ballWithOther ? null : ball, combo, time, gfx.particles ? trail : [], gfx, ballId);
+	if (ballId === "bolt" && boltCharge > 90) drawBoltWhitePulse(ctx, ball, time);
 	for (const c of ninjaClones) {
 		drawNinjaBall(
 			ctx,
@@ -126,6 +130,7 @@ export function drawScene(
 			antiCharge,
 			hole?.left ?? -1,
 			scoreOverride,
+			boltCharge,
 		);
 	}
 }
@@ -1468,6 +1473,133 @@ function drawYellowBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean)
 	ctx.restore();
 }
 
+function boltFillColor(pct: number) {
+	if (pct >= 70) return "#2ee66a";
+	if (pct >= 35) return "#f5d000";
+	return "#e53935";
+}
+
+function drawBoltBattery(ctx: CanvasRenderingContext2D, world: World, charge: number) {
+	const pct = Math.max(0, Math.min(100, charge));
+	const g = hudGeom(world);
+	const x = Math.max(12, Math.floor(world.w * 0.035));
+	const y = g.scoreY + 6;
+	const bw = Math.max(78, Math.floor(world.w * 0.22));
+	const bh = Math.max(22, Math.floor(world.h * 0.028));
+	const r = Math.max(5, bh * 0.35);
+	const tip = Math.max(5, Math.floor(bh * 0.34));
+	ctx.save();
+	// Battery body fill by level
+	const fillW = Math.max(0, (bw - 4) * (pct / 100));
+	ctx.beginPath();
+	ctx.roundRect(x, y, bw, bh, r);
+	ctx.clip();
+	ctx.fillStyle = "rgba(12,14,18,0.45)";
+	ctx.fillRect(x, y, bw, bh);
+	ctx.fillStyle = boltFillColor(pct);
+	ctx.fillRect(x + 2, y + 2, fillW, bh - 4);
+	ctx.restore();
+
+	ctx.save();
+	ctx.strokeStyle = "#ffffff";
+	ctx.lineWidth = Math.max(2, bh * 0.12);
+	ctx.beginPath();
+	ctx.roundRect(x, y, bw, bh, r);
+	ctx.stroke();
+	// Positive tip
+	ctx.fillStyle = "#ffffff";
+	ctx.beginPath();
+	ctx.roundRect(x + bw + 1, y + bh * 0.28, tip, bh * 0.44, Math.max(2, tip * 0.35));
+	ctx.fill();
+	// Centered white %
+	ctx.textAlign = "center";
+	ctx.textBaseline = "middle";
+	ctx.font = `800 ${Math.max(12, Math.floor(bh * 0.72))}px 'Noto Sans SC', Impact, sans-serif`;
+	ctx.lineWidth = Math.max(3, bh * 0.14);
+	ctx.strokeStyle = "rgba(18,22,30,0.55)";
+	ctx.fillStyle = "#ffffff";
+	const label = `${Math.floor(pct)}%`;
+	ctx.strokeText(label, x + bw * 0.5, y + bh * 0.52);
+	ctx.fillText(label, x + bw * 0.5, y + bh * 0.52);
+	ctx.restore();
+}
+
+function drawBoltTrail(ctx: CanvasRenderingContext2D, pts: { x: number; y: number }[], time: number) {
+	if (pts.length < 2) return;
+	ctx.save();
+	ctx.lineCap = "round";
+	ctx.lineJoin = "round";
+	ctx.strokeStyle = "rgba(180, 230, 255, 0.35)";
+	ctx.lineWidth = 10;
+	ctx.beginPath();
+	ctx.moveTo(pts[0]!.x, pts[0]!.y);
+	for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i]!.x, pts[i]!.y);
+	ctx.stroke();
+	ctx.strokeStyle = `rgba(255, 255, 120, ${0.75 + 0.2 * Math.sin(time * 40)})`;
+	ctx.lineWidth = 3.2;
+	ctx.beginPath();
+	ctx.moveTo(pts[0]!.x, pts[0]!.y);
+	for (let i = 1; i < pts.length; i++) {
+		const p = pts[i]!;
+		const wobble = (i % 2 === 0 ? 1 : -1) * (4 + (i % 3));
+		ctx.lineTo(p.x + wobble, p.y);
+	}
+	ctx.stroke();
+	ctx.strokeStyle = "#ffffff";
+	ctx.lineWidth = 1.2;
+	ctx.stroke();
+	ctx.restore();
+}
+
+function drawBoltWhitePulse(ctx: CanvasRenderingContext2D, ball: Ball, time: number) {
+	const pulse = 0.5 + 0.5 * Math.sin(time * 2.2);
+	ctx.save();
+	ctx.translate(ball.x, ball.y + (ball.squash < 1 ? ball.r * (1 - ball.squash) : 0));
+	ctx.scale(1 / ball.squash, ball.squash);
+	ctx.globalCompositeOperation = "screen";
+	ctx.fillStyle = `rgba(255,255,255,${0.08 + pulse * 0.34})`;
+	ctx.shadowColor = "rgba(255,255,255,0.9)";
+	ctx.shadowBlur = ball.r * (0.25 + pulse * 0.55);
+	ctx.beginPath();
+	ctx.arc(0, 0, ball.r * 1.02, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.restore();
+}
+function drawBoltBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean, time: number) {
+	const { x, y, r, squash } = ball;
+	ctx.save();
+	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+	ctx.scale(1 / squash, squash);
+	if (lit) {
+		const glow = ctx.createRadialGradient(0, 0, r * 0.2, 0, 0, r * 1.7);
+		glow.addColorStop(0, "rgba(255,240,120,0.35)");
+		glow.addColorStop(0.55, "rgba(80,180,255,0.12)");
+		glow.addColorStop(1, "rgba(40,80,255,0)");
+		ctx.fillStyle = glow;
+		ctx.beginPath();
+		ctx.arc(0, 0, r * 1.7, 0, Math.PI * 2);
+		ctx.fill();
+	}
+	const skin = ctx.createRadialGradient(-r * 0.28, -r * 0.32, r * 0.06, r * 0.1, r * 0.15, r * 1.05);
+	skin.addColorStop(0, "#fff7a8");
+	skin.addColorStop(0.4, "#ffe14a");
+	skin.addColorStop(0.75, "#5ad0ff");
+	skin.addColorStop(1, "#2a6dff");
+	ctx.fillStyle = skin;
+	ctx.beginPath();
+	ctx.arc(0, 0, r, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.strokeStyle = `rgba(255,255,255,${0.55 + 0.25 * Math.sin(time * 18)})`;
+	ctx.lineWidth = Math.max(1.2, r * 0.08);
+	ctx.beginPath();
+	ctx.moveTo(-r * 0.15, -r * 0.55);
+	ctx.lineTo(r * 0.05, -r * 0.1);
+	ctx.lineTo(-r * 0.12, -r * 0.05);
+	ctx.lineTo(r * 0.22, r * 0.55);
+	ctx.stroke();
+	ctx.restore();
+}
+
 function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _world: World, time = 0, lit = true, ballId: BallId = DEFAULT_BALL) {
 	if (ballId === "prison") {
 		drawPrisonBall(ctx, ball, lit);
@@ -1483,6 +1615,10 @@ function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _wor
 	}
 	if (ballId === "frost") {
 		drawIceBall(ctx, ball, lit);
+		return;
+	}
+	if (ballId === "bolt") {
+		drawBoltBall(ctx, ball, lit, time);
 		return;
 	}
 	if (ballId === "champ") {
@@ -2021,6 +2157,7 @@ function drawHud(
 	antiCharge = -1,
 	antiHoleLeft = -1,
 	scoreOverride: string | null = null,
+	boltCharge = -1,
 ) {
 	const { w } = world;
 	const g = hudGeom(world);
@@ -2154,6 +2291,8 @@ function drawHud(
 		ctx.strokeText(pct, x, g.scoreY + 4 + label + 1);
 		ctx.fillText(pct, x, g.scoreY + 4 + label + 1);
 		ctx.restore();
+	} else if (boltCharge >= 0) {
+		drawBoltBattery(ctx, world, boltCharge);
 	}
 	let tag = null;
 	for (const c of callouts) if (c.kind === "tag") tag = c;

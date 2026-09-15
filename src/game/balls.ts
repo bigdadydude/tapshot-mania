@@ -9,7 +9,8 @@ export type BallId =
   | "glass"
   | "prison"
   | "rubber"
-  | "ninja";
+  | "ninja"
+  | "bolt";
 
 export type BallKit = {
   id: BallId;
@@ -22,6 +23,8 @@ export type BallKit = {
   champ?: boolean;
   /** Anti ball: collect antimatter → timed black hole. */
   anti?: boolean;
+  /** Lightning ball: charge on roll/bank, long-press chain swish. */
+  bolt?: boolean;
   src?: string;
   fallback?: string;
   wrap: "ground" | "height";
@@ -51,9 +54,22 @@ export const BALLS: BallKit[] = [
     },
   },
   {
+    id: "bolt",
+    name: "闪电球",
+    skill: "首球后按滚速充电（每0.1秒最高8%）；空心+1%、擦板+8%；电量>90%打铁+1分并掉电1%；长按0.5秒连灌",
+    heat: false,
+    bolt: true,
+    wrap: "ground",
+    score: "normal",
+    phys: {
+      jumpUp: 0.95,
+      jumpFwd: 0.95,
+    },
+  },
+  {
     id: "ninja",
     name: "忍者球",
-    skill: "连击10/26/40各获一个影分身；分身只加连击，不计分",
+    skill: "连击10/26/47各获一个影分身；分身只加连击，不计分",
     heat: false,
     wrap: "ground",
     score: "normal",
@@ -134,7 +150,7 @@ export const BALLS: BallKit[] = [
   {
     id: "glass",
     name: "玻璃球",
-    skill: "基础分从20起；打铁−2、擦板−1、板上端−3、落地−4，空心+4，上限50",
+    skill: "基础分从20起；打铁−1、打板−1、落地−4，空心+4，上限50",
     heat: false,
     src: "/game/balls/glass.webp?v=5",
     fallback: "/game/balls/glass.png?v=5",
@@ -183,7 +199,8 @@ export function parseBall(v: unknown): BallId {
     v === "glass" ||
     v === "prison" ||
     v === "rubber" ||
-    v === "ninja"
+    v === "ninja" ||
+    v === "bolt"
       ? v
       : DEFAULT_BALL;
   return isPlayableBall(id) ? id : DEFAULT_BALL;
@@ -212,6 +229,7 @@ export type EffectiveBall = {
   frost: boolean;
   champ: boolean;
   anti: boolean;
+  bolt: boolean;
   chain: boolean;
   ninja: boolean;
   glass: boolean;
@@ -229,6 +247,7 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | null): Effecti
   const frost = Boolean(primary.frost) || Boolean(fuse?.frost);
   const champ = Boolean(primary.champ) || Boolean(fuse?.champ);
   const anti = Boolean(primary.anti) || Boolean(fuse?.anti);
+  const bolt = Boolean(primary.bolt) || Boolean(fuse?.bolt);
   const chain = Boolean(primary.chain) || Boolean(fuse?.chain);
   const ninja = primaryId === "ninja" || fuseId === "ninja";
   const glass = primary.score === "glass" || fuse?.score === "glass";
@@ -245,6 +264,7 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | null): Effecti
     frost,
     champ,
     anti,
+    bolt,
     chain,
     ninja,
     glass,

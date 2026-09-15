@@ -69,7 +69,7 @@ const FROST_CHANCE_PER_STREAK = 0.01;
 /** Champ: bank this fraction of leftover timer per make. */
 const CHAMP_BANK_RATE = 0.2;
 const CHAMP_SCORE_MULT = 2;
-/** After a make in champion moment, this long without another → clutch then over. */
+/** After a make in champion moment, this long without another �?clutch then over. */
 const CHAMP_IDLE = 5;
 /** Anti ball: chance to spawn antimatter pickup after a make. */
 const ANTI_SPAWN_CHANCE = 0.55;
@@ -79,21 +79,31 @@ const ANTI_HOLE_DUR_MAX = 20;
 const ANTI_LINGER_PENALTY = 0.75;
 const GLASS_BASE_START = 20;
 const GLASS_BASE_MAX = 50;
-const GLASS_RIM_HURT = 2;
+const GLASS_RIM_HURT = 1;
 const GLASS_BANK_HURT = 1;
-const GLASS_BOARD_TOP_HURT = 3;
+const GLASS_BOARD_TOP_HURT = 1;
 const GLASS_LAND_HURT = 4;
 const GLASS_SWISH_HEAL = 4;
 /** Ignore soft scrapes / stuck contacts (glass restitution is 0). */
 const GLASS_IMPACT_MIN = 95;
+const MOVE_CHANCE_STEP = 0.004;
+const MOVE_CHANCE_MAX = 0.5;
+const BOLT_TICK = 0.1;
+const BOLT_IDLE_DRAIN_TICK = 0.5;
+const BOLT_ROLL_CHARGE_MAX = 8;
+const BOLT_DRAIN_STEP = 1;
+const BOLT_COST = 10;
+const BOLT_HOLD_ARM = 0.5;
+const BOLT_DIVE_DUR = 0.14;
+const BOLT_GAP_DUR = 0.06;
+const BOLT_OVERHEAT_DUR = 3;
 const FROST_BONUS_PER_HIT = 2;
 const PRISON_FREE_PER_COMBO = 3;
 const PRISON_FREE_EXTEND = 10;
 const NINJA_DELAYS = [0.11, 0.22, 0.33] as const;
-const NINJA_CLONE_AT = [10, 26, 40] as const;
+const NINJA_CLONE_AT = [10, 26, 47] as const;
 const MOVE_SPD0_LO = 0.048;
 const MOVE_SPD0_HI = 0.078;
-const MOVE_SPD_CAP_LO = 0.13;
 const MOVE_SPD_CAP_HI = 0.2;
 const MOVE_SPD_STEP = 0.008;
 const STAGE_WHITE = FIRE_WHITE;
@@ -133,15 +143,15 @@ export type GameHandle = {
   answerStreakSave: (use: boolean) => void;
   /** Answer热火饮料续用 prompt. */
   answerFlameReuse: (use: boolean) => void;
-  /** Rogue open-run fuse: secondary ball or null = 不融合. */
+  /** Rogue open-run fuse: secondary ball or null = 不融�? */
   setRogueFuse: (id: BallId | null) => void;
   dev: (cmd: DevCmd) => void;
   resize: () => void;
 };
 
 export function rankFor(score: number): string {
-  if (score <= 0) return "空气球";
-  if (score < 8) return "热身中";
+  if (score <= 0) return "空气球员";
+  if (score < 8) return "热身球员";
   if (score < 20) return "手感来了";
   if (score < 40) return "街球场王";
   if (score < 70) return "空心制造机";
@@ -251,7 +261,7 @@ export function createGame(
     let r = world.ballR * kit().rScale;
     if (isRogueMode() && rogueRun) {
       const mul = rogueBallRMul(rogueRun);
-      // 叠在球种半径上：经典→弹力球大小；弹力球再缩一半
+      // 叠在球种半径上：经典→弹力球大小；弹力球再缩一�?
       if (mul < 1) r *= mul;
     }
     return r;
@@ -387,7 +397,7 @@ export function createGame(
       r: ball.r,
       alpha: 0.42 - i * 0.08,
     }));
-    // 小小我：本体半径的一半（弹力球/儿童装已缩小后，再取其一半）
+    // 小小我：本体半径的一半（弹力�?儿童装已缩小后，再取其一半）
     const miniR = ball.r * 0.5;
     const mini = miniGhosts.map((g, i) => ({
       x: g.x,
@@ -545,7 +555,7 @@ export function createGame(
     emitHud();
   }
 
-  /** Break streak only when opening a new shot after a settled miss — not mid-air / wrap. */
+  /** Break streak only when opening a new shot after a settled miss �?not mid-air / wrap. */
   function breakComboOnMissJump() {
     if (!shotMissed) return;
     shotMissed = false;
@@ -562,7 +572,7 @@ export function createGame(
   function enterPrisonFree(achieved: number) {
     prisonMode = "free";
     const peak = Math.max(1, achieved);
-    // 铐奖 = 上一段枷锁最高连击 × 3；自由时长仍为连击 × 3 秒
+    // 铐奖 = 上一段枷锁最高连�?× 3；自由时长仍为连�?× 3 �?
     prisonBonus = peak * 3;
     prisonFreeLeft = peak * PRISON_FREE_PER_COMBO;
     prisonFreeExtendUsed = false;
@@ -704,9 +714,9 @@ export function createGame(
   let shotOpen = false;
   /** True if this open shot scored (body). Survives wrap/floor clearing ball.scored. */
   let shotMade = false;
-  /** Previous attempt finished without a make (floor settle) — next new jump breaks streak. */
+  /** Previous attempt finished without a make (floor settle) �?next new jump breaks streak. */
   let shotMissed = false;
-  /** Left the floor during this attempt — avoids marking miss on takeoff overlap. */
+  /** Left the floor during this attempt �?avoids marking miss on takeoff overlap. */
   let shotAirborne = false;
   let opener = 0;
   let bgmOn = false;
@@ -722,7 +732,8 @@ export function createGame(
   let grafIn: { key: GrafKey; t: number } | null = null;
   let grafPrevCombo = 0;
   let grafScoreGate = 0;
-  let moveChance = 0.05;
+  let moveChance = 0;
+  /** Raises only the high end of dynamic-hoop speed when a moving hoop is scored. */
   let moveHits = 0;
   let overRim = false;
   let burnFlash = 0;
@@ -741,9 +752,9 @@ export function createGame(
   let champMode = false;
   /** Seconds left to score again in champ mode; <0 = not armed. */
   let champIdleLeft = -1;
-  /** Idle timeout opened the final clutch window — make or miss ends the run. */
+  /** Idle timeout opened the final clutch window �?make or miss ends the run. */
   let champFinishing = false;
-  /** Anti ball: antimatter charge 0–100, pickups, timed black hole. */
+  /** Anti ball: antimatter charge 0�?00, pickups, timed black hole. */
   let antiCharge = 0;
   let antiMatter: { x: number; y: number; r: number; pct: number; age: number } | null =
     null;
@@ -760,9 +771,40 @@ export function createGame(
   let holeTick = 0;
   let otherOverRim = false;
   let boardHitLock = 0;
-  /** Glass: one rim / board penalty per shot (ball restitution 0 rattles otherwise). */
+  /**
+   * Glass: one rim / board / floor penalty per jump.
+   * Cleared only on tapJump �?not in resetShotFlags (floor settle used to re-arm
+   * and cause multi-deduct while rattling on rim/board or hopping on the floor).
+   */
   let glassRimHurtShot = false;
   let glassBoardHurtShot = false;
+  let glassFloorHurtShot = false;
+  /** Lightning ball charge 0�?00. */
+  let boltCharge = 0;
+  let boltTickAcc = 0;
+  let boltIdleDrainAcc = 0;
+  let boltFloorGrip = false;
+  let boltFloorSpeed = 0;
+  let boltChargeUnlocked = false;
+  let boltBoardGrip = false;
+  let boltBoardTopHold = 0;
+  let boltFastFill = false;
+  let boltStormMakes = 0;
+  let boltOverheatLeft = 0;
+  let boltOverheatStartCharge = 0;
+  let pointerHeld = false;
+  let boltHoldArm = 0;
+  let boltPendingTap = false;
+  let boltStorm: null | {
+    phase: "dive" | "gap";
+    t: number;
+    dur: number;
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+  } = null;
+  let boltTrail: { x: number; y: number }[] = [];
 
   function resetShotFlags() {
     ball.hitRim = false;
@@ -772,8 +814,20 @@ export function createGame(
     hitBoardTop = false;
     wentOffTop = false;
     fromBelow = false;
+  }
+
+  function armGlassShotHurts() {
     glassRimHurtShot = false;
     glassBoardHurtShot = false;
+    glassFloorHurtShot = false;
+    glassLand = true;
+  }
+
+  function clearGlassShotHurts() {
+    glassRimHurtShot = false;
+    glassBoardHurtShot = false;
+    glassFloorHurtShot = false;
+    glassLand = false;
   }
 
   function isMinuteMode() {
@@ -830,7 +884,7 @@ export function createGame(
   }
 
   function refillShotClock() {
-    // Minute mode keeps a fixed 60s clock — no per-make shrink/refill.
+    // Minute mode keeps a fixed 60s clock �?no per-make shrink/refill.
     if (isMinuteMode() || champMode) return;
     const decay = activeDecay();
     timerMax = Math.max(TIMER_MIN, timerMax * decay);
@@ -1063,6 +1117,230 @@ export function createGame(
     return kit().anti;
   }
 
+  function isBolt() {
+    return kit().bolt;
+  }
+
+  function resetBoltRun() {
+    boltCharge = 0;
+    boltTickAcc = 0;
+    boltIdleDrainAcc = 0;
+    boltFloorGrip = false;
+    boltFloorSpeed = 0;
+    boltChargeUnlocked = false;
+    boltBoardGrip = false;
+    boltBoardTopHold = 0;
+    boltFastFill = false;
+    boltStormMakes = 0;
+    boltOverheatLeft = 0;
+    boltOverheatStartCharge = 0;
+    boltHoldArm = 0;
+    boltPendingTap = false;
+    boltStorm = null;
+    boltTrail = [];
+  }
+
+  function boltAboveY(h: Hoop) {
+    return h.y - Math.max(110, world.h * 0.22);
+  }
+
+  function boltBelowY(h: Hoop) {
+    return h.y + Math.max(70, world.h * 0.12);
+  }
+
+  function beginBoltDive() {
+    if (!isBolt() || phase !== "playing") return;
+    if (boltCharge < BOLT_COST) {
+      endBoltStorm();
+      return;
+    }
+    const h = hoop;
+    const x0 = h.x;
+    const y0 = boltAboveY(h);
+    const x1 = h.x;
+    const y1 = boltBelowY(h);
+    ball.x = x0;
+    ball.y = y0;
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.omega = 0;
+    ball.scored = false;
+    ball.hitRim = false;
+    ball.hitBoard = false;
+    ball.squash = 1.04;
+    prevBallX = x0;
+    prevBallY = y0;
+    resetShotFlags();
+    shotOpen = true;
+    shotMade = false;
+    shotMissed = false;
+    shotAirborne = true;
+    boltTrail = [{ x: x0, y: y0 }];
+    boltStorm = {
+      phase: "dive",
+      t: 0,
+      dur: BOLT_DIVE_DUR,
+      x0,
+      y0,
+      x1,
+      y1,
+    };
+  }
+
+  function startBoltStorm() {
+    if (!isBolt() || boltStorm || boltCharge < BOLT_COST || boltOverheatLeft > 0 || phase !== "playing") return;
+    if (paused || buzzer || timeUp) return;
+    boltPendingTap = false;
+    boltHoldArm = 0;
+    boltStormMakes = 0;
+    hint = false;
+    if (!timerArmed) timerArmed = true;
+    beginBoltDive();
+  }
+
+  function endBoltStorm() {
+    if (!boltStorm && boltTrail.length === 0) return;
+    boltStorm = null;
+    boltTrail = [];
+    boltHoldArm = 0;
+    // Soft drop under the active hoop after the chain ends.
+    ball.vx = hoop.side * 40;
+    ball.vy = 80;
+    ball.omega = ball.vx / Math.max(8, ball.r);
+    shotAirborne = true;
+  }
+
+  function finishBoltDive() {
+    if (!boltStorm) return;
+    ball.x = boltStorm.x1;
+    ball.y = boltStorm.y1;
+    ball.vx = 0;
+    ball.vy = 220;
+    prevBallX = boltStorm.x0;
+    prevBallY = boltStorm.y0;
+    ball.hitRim = false;
+    ball.hitBoard = false;
+    boltCharge = Math.max(0, boltCharge - BOLT_COST);
+    if (gfx.flash) {
+      whiteFlash = 0.16;
+      camShake = 0.18;
+    }
+    registerScore({ forceSwish: true });
+    audio.whoosh(0.85);
+    boltStormMakes += 1;
+    if (boltStormMakes > 4 && Math.random() < Math.min(1, (boltStormMakes - 4) * 0.05)) {
+      beginBoltOverheat();
+      return;
+    }
+    if (!pointerHeld || boltCharge < BOLT_COST || phase !== "playing") {
+      endBoltStorm();
+      return;
+    }
+    boltStorm = { phase: "gap", t: 0, dur: BOLT_GAP_DUR, x0: 0, y0: 0, x1: 0, y1: 0 };
+    boltTrail = [];
+  }
+
+  function beginBoltOverheat() {
+    boltStorm = null;
+    boltTrail = [];
+    boltPendingTap = false;
+    boltHoldArm = 0;
+    pointerHeld = false;
+    boltOverheatLeft = BOLT_OVERHEAT_DUR;
+    boltOverheatStartCharge = Math.max(1, boltCharge);
+    ball.x = Math.max(ball.r, Math.min(world.w - ball.r, ball.x));
+    ball.y = world.floorY - ball.r;
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.omega = 0;
+    ball.scored = false;
+    shotAirborne = false;
+    callouts.push({
+      text: "过热",
+      x: ball.x,
+      y: ball.y - ball.r * 2.6,
+      life: 1,
+      max: 1,
+      kind: "tag",
+    });
+    if (gfx.flash) {
+      whiteFlash = 0.14;
+      camShake = 0.16;
+    }
+  }
+
+  function stepBoltOverheat(dt: number) {
+    if (!isBolt() || boltOverheatLeft <= 0) return false;
+    boltOverheatLeft = Math.max(0, boltOverheatLeft - dt);
+    const p = boltOverheatLeft / BOLT_OVERHEAT_DUR;
+    boltCharge = Math.min(boltCharge, boltOverheatStartCharge * p);
+    ball.y = world.floorY - ball.r;
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.omega = 0;
+    ball.squash += (0.94 - ball.squash) * (1 - Math.exp(-10 * dt));
+    if (boltOverheatLeft <= 0) {
+      boltCharge = 0;
+      boltStormMakes = 0;
+      ball.squash = 1;
+    }
+    return true;
+  }
+  function stepBoltStorm(dt: number) {
+    if (!boltStorm) return false;
+    boltStorm.t += dt;
+    if (boltStorm.phase === "gap") {
+      if (boltStorm.t >= boltStorm.dur) {
+        if (!pointerHeld || boltCharge < BOLT_COST) endBoltStorm();
+        else beginBoltDive();
+      }
+      return true;
+    }
+    const u = Math.min(1, boltStorm.t / Math.max(0.001, boltStorm.dur));
+    // Ease-in dive
+    const e = u * u;
+    ball.x = boltStorm.x0 + (boltStorm.x1 - boltStorm.x0) * e;
+    ball.y = boltStorm.y0 + (boltStorm.y1 - boltStorm.y0) * e;
+    ball.vx = 0;
+    ball.vy = (boltStorm.y1 - boltStorm.y0) / Math.max(0.001, boltStorm.dur);
+    boltTrail.push({ x: ball.x, y: ball.y });
+    if (boltTrail.length > 28) boltTrail.shift();
+    if (u >= 1) finishBoltDive();
+    return true;
+  }
+
+  function stepBoltCharge(dt: number) {
+    if (!isBolt() || phase !== "playing" || paused) return;
+    if (!boltChargeUnlocked) {
+      boltTickAcc = 0;
+      boltIdleDrainAcc = 0;
+      return;
+    }
+    if (boltStorm) return;
+    if (boltFastFill || boltFloorGrip) {
+      boltIdleDrainAcc = 0;
+      boltTickAcc += dt;
+      while (boltTickAcc >= BOLT_TICK) {
+        boltTickAcc -= BOLT_TICK;
+        if (boltFastFill) {
+          boltCharge = Math.min(100, boltCharge + 25);
+        } else {
+          const stopSpeed = 2.2;
+          const fullSpeed = Math.max(stopSpeed + 1, Math.abs(jumpVx()));
+          const speed01 = clamp((boltFloorSpeed - stopSpeed) / (fullSpeed - stopSpeed), 0, 1);
+          boltCharge = Math.min(100, boltCharge + BOLT_ROLL_CHARGE_MAX * speed01);
+        }
+      }
+      return;
+    }
+    boltTickAcc = 0;
+    boltIdleDrainAcc += dt;
+    while (boltIdleDrainAcc >= BOLT_IDLE_DRAIN_TICK) {
+      boltIdleDrainAcc -= BOLT_IDLE_DRAIN_TICK;
+      boltCharge = Math.max(0, boltCharge - BOLT_DRAIN_STEP);
+    }
+  }
+
   function resetAntiRun() {
     antiCharge = 0;
     antiMatter = null;
@@ -1178,7 +1456,7 @@ export function createGame(
     }
     if (id === "streakSave") {
       callouts.push({
-        text: "断连且连击≥3时询问",
+        text: "杩炲嚮淇濅綇",
         x: world.w * 0.5,
         y: world.h * 0.28,
         life: 1.1,
@@ -1195,7 +1473,7 @@ export function createGame(
       const sec = catalogOf("comboboost")?.comboBoostSec ?? 5;
       rogueRun.buffComboLeft = Math.max(rogueRun.buffComboLeft, sec);
       callouts.push({
-        text: "连击兴奋剂",
+        text: "杩炲嚮淇濅綇",
         x: world.w * 0.5,
         y: world.h * 0.28,
         life: 1,
@@ -1215,7 +1493,7 @@ export function createGame(
       const sec = catalogOf("ineedpower")?.powerBoostSec ?? 4;
       rogueRun.buffPowerLeft = Math.max(rogueRun.buffPowerLeft, sec);
       callouts.push({
-        text: "大力丸",
+        text: "杩炲嚮淇濅綇",
         x: world.w * 0.5,
         y: world.h * 0.28,
         life: 1,
@@ -1502,7 +1780,7 @@ export function createGame(
 
   function applyBall(id: BallId) {
     const next = parseBall(id);
-    // Champ is not allowed in 1-minute — fall back to classic when picking it.
+    // Champ is not allowed in 1-minute �?fall back to classic when picking it.
     if (next === "champ" && playMode === "minute") {
       playMode = "classic";
     }
@@ -1511,7 +1789,7 @@ export function createGame(
       rogueRun.fuseBall = null;
     }
     glassBase = GLASS_BASE_START;
-    glassLand = false;
+    clearGlassShotHurts();
     resetNinjaPath();
     if (!canHeat()) {
       resetTrail();
@@ -1553,6 +1831,13 @@ export function createGame(
       holeTick = 0;
     } else {
       resetAntiRun();
+    }
+    if (!isBolt()) resetBoltRun();
+    else {
+      boltStorm = null;
+      boltTrail = [];
+      boltPendingTap = false;
+      boltHoldArm = 0;
     }
     if (devOn) {
       applyKitPhys();
@@ -1652,6 +1937,7 @@ export function createGame(
     } else if (!holeOn && !antiMatter && antiCharge <= 0) {
       resetAntiRun();
     }
+    if (!isBolt()) resetBoltRun();
     if (!isNinja() && !bunshinActive()) resetNinjaPath();
     if (isPrison()) {
       if (prisonMode == null) resetPrisonRun();
@@ -1888,7 +2174,7 @@ export function createGame(
       rogueStageDecay = null;
       if (devOn) {
         rogueRun.endless = true;
-        // Sandbox skips open-run fuse UI; use 融合球 chips instead.
+        // Sandbox skips open-run fuse UI; use 融合�?chips instead.
         rogueRun.fusePicked = true;
       }
     } else {
@@ -1917,7 +2203,7 @@ export function createGame(
     bgmOn = false;
     recoverTo = 0;
     recoverMakes = 0;
-    moveChance = 0.05;
+    moveChance = 0;
     moveHits = 0;
     overRim = false;
     burnFlash = 0;
@@ -1940,7 +2226,7 @@ export function createGame(
     callouts = [];
     resetTrail();
     resetGraf();
-    glassLand = false;
+    clearGlassShotHurts();
     glassBase = GLASS_BASE_START;
     frostBonus = 0;
     champBank = 0;
@@ -1948,6 +2234,7 @@ export function createGame(
     champIdleLeft = -1;
     champFinishing = false;
     resetAntiRun();
+    resetBoltRun();
     otherOverRim = false;
     boardHitLock = 0;
     resetPrisonRun();
@@ -2102,7 +2389,7 @@ export function createGame(
     if (!isRogueMode() || !rogueRun) return;
     if (phase !== "settle") return;
     if (rogueRun.stage < ROGUE_CAMPAIGN_STAGES) return;
-    // settleStagePayout already folded last stage into runScore — carry that total.
+    // settleStagePayout already folded last stage into runScore �?carry that total.
     const carried = rogueRun.runScore;
     rogueRun.endless = true;
     rogueRun.runScore = 0;
@@ -2148,7 +2435,7 @@ export function createGame(
     champIdleLeft = -1;
     champFinishing = false;
     if (isGlass() && glassBase <= 0) glassBase = GLASS_BASE_START;
-    glassLand = false;
+    clearGlassShotHurts();
     remakeBall(hoop.side < 0 ? 1 : -1);
     prevBallX = ball.x;
     prevBallY = ball.y;
@@ -2181,7 +2468,7 @@ export function createGame(
     }
     resetNinjaPath();
     callouts.push({
-      text: "装备已重置",
+      text: "閲婃斁",
       x: world.w * 0.5,
       y: world.h * 0.28,
       life: 0.9,
@@ -2238,6 +2525,7 @@ export function createGame(
     callouts = [];
     resetTrail();
     resetAntiRun();
+    resetBoltRun();
     otherOverRim = false;
     boardHitLock = 0;
     frostBonus = 0;
@@ -2264,7 +2552,7 @@ export function createGame(
       rogueRun.buffFlameLeft = 0;
       rogueRun.pendingFlameReuse = false;
       rogueRun.whatsThatAcc = 0;
-      // 黑洞饰品：每关开局自动开启（时长 = 4s × 层数）
+      // 黑洞饰品：每关开局自动开启（时长 = 4s × 层数�?
       const holeSec = rogueBlackholeSec(rogueRun);
       if (holeSec > 0) openAntiHole(holeSec);
     }
@@ -2367,7 +2655,7 @@ export function createGame(
     if ((buzzer || timeUp) && !heroClutch) return;
     if (tapLock > 0) return;
     if (ballHidden() && !onApproachSide()) return;
-    // Mid-air re-tap on an unfinished attempt: boost only — do not break combo.
+    // Mid-air re-tap on an unfinished attempt: boost only �?do not break combo.
     if (shotOpen && !shotMade && !shotMissed) {
       hint = false;
       if (holeOn) {
@@ -2385,7 +2673,7 @@ export function createGame(
       ball.squash = 1.08;
       ball.scored = false;
       resetShotFlags();
-      glassLand = true;
+      armGlassShotHurts();
       tapLock = 0.03;
       audio.whoosh(0.5);
       emitHud();
@@ -2412,7 +2700,7 @@ export function createGame(
     shotMade = false;
     shotMissed = false;
     shotAirborne = false;
-    glassLand = true;
+    armGlassShotHurts();
     tapLock = 0.03;
     audio.whoosh(0.5);
     emitHud();
@@ -2423,7 +2711,37 @@ export function createGame(
     audio.unlock();
     if (phase === "over") return;
     e.preventDefault();
+    pointerHeld = true;
+    if (phase === "playing" && !paused && isBolt() && boltOverheatLeft > 0) return;
     tapJump();
+    if (
+      phase === "playing" &&
+      !paused &&
+      isBolt() &&
+      boltCharge >= BOLT_COST &&
+      !boltStorm
+    ) {
+      boltPendingTap = true;
+      boltHoldArm = 0;
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function onUp(e: PointerEvent) {
+    if (e.button !== undefined && e.button !== 0) return;
+    pointerHeld = false;
+    boltHoldArm = 0;
+    if (boltStorm) {
+      endBoltStorm();
+      boltPendingTap = false;
+      return;
+    }
+    boltPendingTap = false;
+
   }
 
   function onKey(e: KeyboardEvent) {
@@ -2438,6 +2756,7 @@ export function createGame(
     if (e.code !== "Space" && e.code !== "ArrowUp") return;
     e.preventDefault();
     audio.unlock();
+    if (isBolt() && boltOverheatLeft > 0) return;
     tapJump();
   }
 
@@ -2493,6 +2812,7 @@ export function createGame(
     hoop = makeHoop(world, -1, true);
     applyRogueHoopScale(hoop);
     resetAntiRun();
+    resetBoltRun();
     remakeBall(1);
     particles = [];
     callouts = [];
@@ -2876,10 +3196,28 @@ export function createGame(
     if (boardHitLock > 0) boardHitLock -= dt;
     if (burnFlash > 0) burnFlash = Math.max(0, burnFlash - dt);
 
+    if (stepBoltOverheat(dt)) return;
+
+    if (
+      phase === "playing" &&
+      !paused &&
+      pointerHeld &&
+      boltPendingTap &&
+      isBolt() &&
+      !boltStorm &&
+      boltCharge >= BOLT_COST
+    ) {
+      boltHoldArm += dt;
+      if (boltHoldArm >= BOLT_HOLD_ARM) {
+        boltPendingTap = false;
+        startBoltStorm();
+      }
+    }
+
     if (phase === "playing" && timerArmed && !buzzer && !timeUp && !devFreeze) {
       let drain = dt;
       if (holeOn) {
-        // Far from hole → timer drains slower; at center → normal speed.
+        // Far from hole �?timer drains slower; at center �?normal speed.
         const dist = Math.hypot(ball.x - holeX, ball.y - holeY);
         const maxD = Math.max(120, world.w * 0.55);
         const t = Math.max(0, Math.min(1, dist / maxD));
@@ -2891,13 +3229,13 @@ export function createGame(
         if (isChamp() && !champMode && enterChampionMoment()) {
           // Champion bank consumed as a fresh countdown.
         } else if (isRogueMode() && tryRogueRevive()) {
-          // Revived — keep playing this stage.
+          // Revived �?keep playing this stage.
         } else if (isRogueMode() && tryRogueMoneyProtect()) {
-          // Converted gold → score / settle.
+          // Converted gold �?score / settle.
         } else {
           timeUp = true;
           champIdleLeft = -1;
-          // 肉鸽非无限关：倒计时耗尽一律进入绝杀窗，进球达目标即可过关
+          // 肉鸽非无限关：倒计时耗尽一律进入绝杀窗，进球达目标即可过�?
           const forceClutch = isRogueMode() && rogueRun && !rogueRun.endless;
           if (forceClutch || predictBuzzerMake()) {
             buzzer = true;
@@ -3018,13 +3356,20 @@ export function createGame(
       }
     }
 
+    boltFloorGrip = false;
+    boltFloorSpeed = 0;
+    boltBoardGrip = false;
+    boltFastFill = false;
+    const boltLock = stepBoltStorm(dt);
+
+    if (!boltLock) {
     prevBallX = ball.x;
     prevBallY = ball.y;
     const live =
       phase === "playing" || phase === "over" || phase === "title" || phase === "hub" || phase === "settle";
     if (live) {
       const gScale = buzzer ? 0.42 : 1;
-      // High-bounce kits skip fallBoost — otherwise each landing gains height.
+      // High-bounce kits skip fallBoost �?otherwise each landing gains height.
       const fallBoost = (() => {
         if (pMul("ball") > 1.15) return 1;
         if (holeOn) return 1;
@@ -3050,7 +3395,7 @@ export function createGame(
         // Keep a strong clockwise spin so rim hits always get a tangential kick.
         ball.omega += 22 * dt;
         if (ball.omega < 8) ball.omega += 18 * dt;
-        // Near the rim plane with almost no vertical speed → nudge down through the hoop.
+        // Near the rim plane with almost no vertical speed �?nudge down through the hoop.
         if (
           phase === "playing" &&
           !ball.scored &&
@@ -3068,12 +3413,16 @@ export function createGame(
       const onFloor = ball.y + ball.r >= world.floorY - 0.5 && ball.vy >= 0;
       if (!onFloor && ball.y + ball.r < world.floorY - 2) shotAirborne = true;
       if (onFloor) {
+        if (Math.abs(ball.vx) > 2.2) {
+          boltFloorGrip = true;
+          boltFloorSpeed = Math.abs(ball.vx);
+        }
         ball.vx *= 1 - Math.min(0.85, 0.28 * roll * dt);
         ball.omega = ball.vx / Math.max(8, ball.r);
         if (isRogueMode() && rogueRun && phase === "playing") {
           const jn = ornamentStacks(rogueRun, "jiahao");
           if (jn > 0) {
-            // 接触地面累计 0.5s → +1 金 ×层数（不要求滚动）
+            // 接触地面累计 0.5s �?+1 �?×层数（不要求滚动�?
             rogueRun.rollGoldAcc += dt;
             while (rogueRun.rollGoldAcc >= 0.5) {
               rogueRun.rollGoldAcc -= 0.5;
@@ -3122,6 +3471,8 @@ export function createGame(
         tickRogueBuffs(dt);
       }
       collideFloor();
+      stepBoltBoardTop(dt);
+      stepBoltCharge(dt);
       if (chain && hasChain()) {
         stepChain(
           chain,
@@ -3135,6 +3486,9 @@ export function createGame(
         );
       }
     }
+    }
+
+    stepBoltBoardTop(dt);
 
     if (Math.hypot(ball.x - hoop.x, ball.y - hoop.y) > world.w * 0.55) {
       ball.hitRim = false;
@@ -3180,7 +3534,7 @@ export function createGame(
   }
 
   function rollMoveSpeed() {
-    const lo = Math.min(MOVE_SPD_CAP_LO, MOVE_SPD0_LO + moveHits * MOVE_SPD_STEP);
+    const lo = MOVE_SPD0_LO;
     const hi = Math.min(MOVE_SPD_CAP_HI, MOVE_SPD0_HI + moveHits * MOVE_SPD_STEP);
     return world.h * (lo + Math.random() * Math.max(0.004, hi - lo));
   }
@@ -3240,6 +3594,25 @@ export function createGame(
     nudgeNet(h, h.x - ox, h.y - oy);
   }
 
+  /** Resting on a board top for two seconds triggers a rapid battery fill. */
+  function stepBoltBoardTop(dt: number) {
+    if (!isBolt() || phase !== "playing" || boltStorm) {
+      boltBoardTopHold = 0;
+      return;
+    }
+    const onTop = (h: Hoop) => {
+      const g = boardGeom(h, world);
+      const within = ball.x >= g.visX - ball.r * 0.45 && ball.x <= g.visX + g.visW + ball.r * 0.45;
+      const restingY = Math.abs(ball.y + ball.r - g.visY) <= Math.max(3, ball.r * 0.22);
+      return within && restingY && Math.abs(ball.vy) < 28 && Math.abs(ball.vx) < 38;
+    };
+    if (onTop(hoop) || Boolean(other && onTop(other))) {
+      boltBoardTopHold += dt;
+      if (boltBoardTopHold >= 2) boltFastFill = true;
+    } else {
+      boltBoardTopHold = 0;
+    }
+  }
   function collideRim(h: Hoop) {
     const rad = h.tube * 0.92;
     const pts = [
@@ -3267,7 +3640,7 @@ export function createGame(
     const tx = -ny;
     const ty = nx;
     const r = Math.max(8, ball.r);
-    // Couple spin ↔ tangential velocity (rolling contact). Spinning balls deflect off the rim.
+    // Couple spin �?tangential velocity (rolling contact). Spinning balls deflect off the rim.
     const applySpinDeflect = () => {
       const vt = ball.vx * tx + ball.vy * ty;
       const slip = vt - ball.omega * r;
@@ -3318,9 +3691,17 @@ export function createGame(
     if (h.active && rimHitLock <= 0) {
       rimHits += 1;
       rimHitLock = 0.08;
+      if (isBolt() && boltCharge > 90 && !ball.scored) {
+        score += 1;
+        boltCharge = Math.max(0, boltCharge - 1);
+        if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
+        callouts.push({ text: "+1 / -1%", x: ball.x, y: ball.y - ball.r * 2, life: 0.6, max: 0.6, kind: "base" });
+        noteBest();
+      }
       if (
         !ball.scored &&
         !throughHole &&
+        isGlass() &&
         !glassRimHurtShot &&
         impact >= GLASS_IMPACT_MIN
       ) {
@@ -3380,7 +3761,10 @@ export function createGame(
       ball.y += ny * overlap;
     }
     const vn = ball.vx * nx + ball.vy * ny;
-    if (vn >= 0) return;
+    if (vn >= 0) {
+      ball.hitBoard = true;
+      return;
+    }
     const rest = bounceRest("board");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
@@ -3399,7 +3783,7 @@ export function createGame(
     if (impact > 90) audio.board(Math.min(1, (impact - 60) / 520));
     if (h.active && boardHitLock <= 0 && !ball.scored) {
       boardHitLock = 0.08;
-      if (!glassBoardHurtShot && impact >= GLASS_IMPACT_MIN) {
+      if (isGlass() && !glassBoardHurtShot && impact >= GLASS_IMPACT_MIN) {
         glassBoardHurtShot = true;
         hurtGlass(
           topHit ? GLASS_BOARD_TOP_HURT : GLASS_BANK_HURT,
@@ -3410,7 +3794,7 @@ export function createGame(
     }
   }
 
-  /** Collide with hoop support brace — swept so small/fast balls cannot tunnel. */
+  /** Collide with hoop support brace �?swept so small/fast balls cannot tunnel. */
   function collideBrace(h: Hoop) {
     const segs = braceColliders(h, world);
     const hitR = ball.r;
@@ -3555,7 +3939,7 @@ export function createGame(
     shotAirborne = false;
     if (getBall(ballId).wrap === "height") {
       // Spawn on the approach side of the active hoop (same rule as classic wrap).
-      // hoop.side > 0 → basket on right → enter from left; else enter from right.
+      // hoop.side > 0 �?basket on right �?enter from left; else enter from right.
       const spd = Math.max(44, Math.abs(ball.vx));
       if (hoop.side > 0) {
         ball.x = -r - pad * 0.5;
@@ -3611,9 +3995,16 @@ export function createGame(
           audio.bounce(Math.min(1, incoming / 900));
         }
       }
-      if (isGlass() && glassLand && phase === "playing") {
-        hurtGlass(GLASS_LAND_HURT, ball.x, ball.y - ball.r * 2.2);
+      if (
+        isGlass() &&
+        glassLand &&
+        !glassFloorHurtShot &&
+        phase === "playing" &&
+        incoming > 40
+      ) {
+        glassFloorHurtShot = true;
         glassLand = false;
+        hurtGlass(GLASS_LAND_HURT, ball.x, ball.y - ball.r * 2.2);
       }
     } else if (incoming > 0) {
       ball.vy = 0;
@@ -3798,6 +4189,7 @@ export function createGame(
 
   function registerScore(opts?: {
     ghost?: boolean;
+    forceSwish?: boolean;
     at?: { x: number; y: number; inner: number } | Hoop;
   }) {
     const ghost = opts?.ghost === true;
@@ -3818,7 +4210,7 @@ export function createGame(
           hit: Array.from({ length: slots }, () => false),
         });
       }
-      // Score on secondary hoop → promote it so nextHoop freezes the right stand.
+      // Score on secondary hoop �?promote it so nextHoop freezes the right stand.
       if (other && scoredHoop === other) {
         const swap = hoop;
         hoop = other;
@@ -3827,7 +4219,7 @@ export function createGame(
         otherOverRim = false;
       }
     }
-    let swish = ghost ? true : !ball.hitRim && !ball.hitBoard;
+    let swish = ghost || opts?.forceSwish === true ? true : !ball.hitRim && !ball.hitBoard;
     if (
       !ghost &&
       isRogueMode() &&
@@ -3839,6 +4231,13 @@ export function createGame(
       swish = true;
     }
     const bank = ghost ? false : ball.hitBoard;
+    if (!ghost && isBolt()) {
+      boltChargeUnlocked = true;
+      boltTickAcc = 0;
+      boltIdleDrainAcc = 0;
+      if (bank) boltCharge = Math.min(100, boltCharge + 8);
+      else if (swish && !boltStorm) boltCharge = Math.min(100, boltCharge + 1);
+    }
     const toilet = ghost ? false : rimHits >= 3;
     const lucky = ghost ? false : hitBoardTop;
     const depth = ghost ? false : wentOffTop && swish;
@@ -3875,6 +4274,11 @@ export function createGame(
     combo = Math.max(combo, streak);
 
     madeCount += 1;
+    if (!ghost) {
+      // Dynamic hoop: +0.4% chance per make, cap 50%; scoring a mover raises speed hi.
+      moveChance = Math.min(MOVE_CHANCE_MAX, moveChance + MOVE_CHANCE_STEP);
+      if (hoop.moving) moveHits += 1;
+    }
     if (madeCount === 1) {
       audio.playBgm();
       bgmOn = true;
@@ -3911,7 +4315,7 @@ export function createGame(
       frostBonus += frostGain;
     }
 
-    // 基础分 + 连击得分；混乱药丸只改基础分，连击分与后续加成照常
+    // 基础�?+ 连击得分；混乱药丸只改基础分，连击分与后续加成照常
     const streakPart = streak;
     let basePart = isGlass() ? glassBase : 0;
     if (isRogueMode() && rogueRun && hasChaosBase(rogueRun) && !bunshinGhost && !ninjaGhost) {
@@ -4085,7 +4489,7 @@ export function createGame(
     }
     if (freed && prisonBonus > 0) {
       callouts.push({
-        text: `铐+${prisonBonus}`,
+        text: "杩炲嚮淇濅綇",
         x: popX,
         y: popY - popInner * RIM_RY + 18,
         capY: boardTop + 8,
@@ -4099,7 +4503,7 @@ export function createGame(
     }
     if (frostGain > 0) {
       callouts.push({
-        text: `冻+${frostBonus}`,
+        text: "杩炲嚮淇濅綇",
         x: popX,
         y: popY - popInner * RIM_RY + 18,
         capY: boardTop + 8,
@@ -4135,7 +4539,7 @@ export function createGame(
       champFinishing = false;
       champMode = false;
       champIdleLeft = -1;
-      // 肉鸽：绝杀进球若已达目标则过关，否则本关失败；经典模式仍直接结束
+      // 肉鸽：绝杀进球若已达目标则过关，否则本关失败；经典模式仍直接结�?
       if (isRogueMode() && rogueRun) {
         emitHud();
         if (!rogueRun.endless && rogueRun.stageScore >= rogueRun.target) {
@@ -4212,7 +4616,7 @@ export function createGame(
     }
 
     if (frozenOther) {
-      // Already two stands — never spawn a third. Same-side spawn blocked by frozenOther.
+      // Already two stands �?never spawn a third. Same-side spawn blocked by frozenOther.
       if (frozenOther.side === nextSide) {
         hoop = frozenOther;
         other = scored;
@@ -4245,7 +4649,7 @@ export function createGame(
     hoop.x = nextSide < 0 ? -90 : world.w + 90;
     applyRogueHoopScale(hoop);
     hoop.net = buildNet(hoop);
-    if (madeCount >= 50 && Math.random() < Math.max(0, moveChance + (isRogueMode() && rogueRun ? rogueMoveChanceDelta(rogueRun) : 0))) {
+    if (Math.random() < Math.max(0, moveChance + (isRogueMode() && rogueRun ? rogueMoveChanceDelta(rogueRun) : 0))) {
       hoop.moving = true;
       hoop.moveDir = Math.random() < 0.5 ? 1 : -1;
       const pool: Array<0 | 1 | 2 | 3 | 4> = [0, 3, 4];
@@ -4255,8 +4659,6 @@ export function createGame(
       hoop.moveKind = pool[Math.floor(Math.random() * pool.length)]!;
       hoop.moveAmp = rollMoveSpeed();
       hoop.moveT = Math.random() * Math.PI * 2;
-      moveHits += 1;
-      moveChance = Math.min(0.45, moveChance + 0.02);
     }
     ball.hitRim = false;
     ball.hitBoard = false;
@@ -4521,9 +4923,11 @@ export function createGame(
             isAnti() ? antiMatter : null,
             isRogueMode() && rogueRun
               ? rogueRun.endless
-                ? `∞:${rogueRun.runScore + rogueRun.stageScore}`
+                ? "刷马桶"
                 : `${rogueRun.target}:${rogueRun.stageScore}`
               : null,
+            isBolt() ? boltCharge : -1,
+            boltTrail,
           );
           ctx.restore();
           }
@@ -4554,6 +4958,8 @@ export function createGame(
   });
 
   canvas.addEventListener("pointerdown", onDown, { passive: false });
+  canvas.addEventListener("pointerup", onUp, { passive: false });
+  canvas.addEventListener("pointercancel", onUp, { passive: false });
   window.addEventListener("keydown", onKey);
   window.addEventListener("resize", resize);
   document.addEventListener("visibilitychange", onVis);
@@ -4563,6 +4969,8 @@ export function createGame(
       running = false;
       cancelAnimationFrame(raf);
       canvas.removeEventListener("pointerdown", onDown);
+      canvas.removeEventListener("pointerup", onUp);
+      canvas.removeEventListener("pointercancel", onUp);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", resize);
       document.removeEventListener("visibilitychange", onVis);
