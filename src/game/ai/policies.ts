@@ -291,7 +291,9 @@ function ninjaBandRecatch(
 ): boolean {
   if (!shotFeel(world).longJump) return false;
   if (!tooLowApex(world) || onFloor(world)) return false;
-  if (current.scores || current.willBoard) return false;
+  // Ride a live make. Long-range willBoard from 150px under the rim is a
+  // false positive — skipping the 2nd tap is the classic 0 (clock never arms).
+  if (current.scores) return false;
   const dx = Math.abs(world.ball.x - world.hoop.x);
   // Apex travel ~129px: recatch in ~110–133 so the reset peaks at the rim.
   // The live too-low frame is ~121 after a 230 launch; 0.36w tapped at 133

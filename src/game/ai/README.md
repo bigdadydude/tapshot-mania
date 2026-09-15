@@ -81,7 +81,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `apex-boost` extra climb on ninja | Third tap after launch/recatch | 310: floor `early-jump` + one too-low recatch, then `carry-flight` / `ride-flight` |
 | Swish-hunt `predicted-make` on ninja | 310 mix is bank 29 / rim 17 / **swish 0** | Hold inbound; don't poke for +swish |
 | Combo-clock `shot-clock` / `pace-boost` near the hoop on ninja | Oral "keep combo" poke is the same overshoot tap | Pace from far (`early-jump`); near glass, hold |
-| Repeating `wrap-escape` / off-screen `approach-enter` / extra jump-speed recatch (ninja-stuck-1/2) | Same jump vector `(±328,-671)` empty wrap, or a 3rd tap after launch+recatch | Break-glass `wrap-loop` on off-screen / identical last pose / extra air tap. **Do not** hold the demo-band floor launch or the too-low recatch — those are the scoring path. If wrap-escape would fire after a fruitless wrap and the reset would kiss glass, one `wrap-bank`, then ride. |
+| Repeating `wrap-escape` / off-screen `approach-enter` / extra jump-speed recatch (ninja-stuck-1/2) | Same jump vector `(±328,-671)` empty wrap, or a 3rd tap after launch+recatch | Break-glass `wrap-loop` on off-screen / identical last pose / extra air tap. **Do not** hold the demo-band floor launch or the too-low recatch — those are the scoring path. Long-range `willBoard` from 150px under the rim must not skip that recatch (classic clock never arms). If wrap-escape would fire after a fruitless wrap and the reset would kiss glass, one `wrap-bank`, then ride. |
 | Oral "must bank" / upper `bank-half` **tap** | Humans bank from a held inbound, not a jump-reset | `bank-half` / `bank-steep` remain as **holds** when `willBoard` |
 
 ### Oral tactics kept (demos agree)
