@@ -58,6 +58,16 @@ const LEGIT_WAIT = new Set([
   "gather-path",
 ]);
 
+/** Full-jump reasons that replay the empty wrap cycle after a far launch. */
+const FAR_JUMP = new Set([
+  "early-jump",
+  "wrap-escape",
+  "far-climb",
+  "approach-enter",
+  "glass-launch",
+  "floor-launch",
+]);
+
 export type AiController = {
   enabled: () => boolean;
   setEnabled: (on: boolean) => void;
@@ -180,6 +190,7 @@ export function createAiController(): AiController {
         lastWraps = world.wraps;
         airTaps = 0;
         contactCool = 0;
+        fruitlessContact = 0;
         if (!world.shotMade && !world.scored) {
           wrapCool = Math.max(wrapCool, 1.65);
           fruitlessWraps += 1;
@@ -256,41 +267,58 @@ export function createAiController(): AiController {
           (launched && !grounded && airTaps >= 1));
       if (wrapLoop && grounded && !farRestart) sitHold += world.dt;
       else if (!wrapLoop) sitHold = 0;
+      const inbound = helpers.predictCurrent(world);
+      const nextShot = helpers.predictTap(world);
+      const airSpam = launched && !grounded && airTaps >= 1;
+      const stuck = wrapLoop || fruitlessWraps > 0 || fruitlessContact > 0;
+      const lastWasClose = lastLaunchDx >= 0 && lastLaunchDx < world.world.w * 0.4;
+      // After a far full-jump wrap, don't replay wrap-escape / demo-band
+      // (±328,-671). A launch that started close may still re-attack from mid-court.
+      const fruitlessFarJump =
+        longJump && fruitless && FAR_JUMP.has(decision.reason) && !lastWasClose;
+      // One board-kiss when stuck: inbound glass still holds. Jump-speed
+      // recatch is the overshoot death loop — don't wrap-bank that.
+      // Parked under the rim: tap once for a rebound chance even if the
+      // predictor is unsure — better than empty wrap or sitting forever.
+      const closePark =
+        grounded &&
+        dx < world.world.w * 0.22 &&
+        world.ball.y + world.ball.r * 0.15 >= world.hoop.y;
+      const wantBoardTap =
+        stuck &&
+        longJump &&
+        !boardTapUsed &&
+        fruitlessContact === 0 &&
+        !farRestart &&
+        !world.hitRim &&
+        !world.hitBoard &&
+        !airSpam &&
+        !inbound.willBoard &&
+        !inbound.scores &&
+        (nextShot.willBoard || closePark);
       const thaw = grounded && sitHold > 2.4 && !farRestart;
-      if (thaw) wrapLoop = false;
-      if (decision.tap) {
+      if (thaw && (wantBoardTap || !sameLaunch)) wrapLoop = false;
+      const forceBank = wantBoardTap && stuck;
+      if (decision.tap || forceBank) {
         // Long jumpFwd near glass/rim: ZERO extra taps. bank-cut / apex /
         // combo-pressure / wrap-in-pocket / watchdog is the ninja death loop.
-        if (locked && pocketExtra) {
+        // Exception: one wrap-bank when stuck and the reset would kiss glass.
+        if (locked && pocketExtra && !forceBank) {
           last = { tap: false, reason: "protect-finish", policyId: decision.policyId };
           idle = 0;
           return false;
         }
         let toFire = decision;
-        if (wrapLoop && decision.reason !== "chain-next") {
-          const inbound = helpers.predictCurrent(world);
-          const next = helpers.predictTap(world);
-          // Empty wrap cycle: one board-kiss beats paralysis / wrap-escape spam.
-          // Already inbound or already had bank/rim → ride, don't reset jumpVx.
-          const oneBoard =
-            !boardTapUsed &&
-            fruitlessWraps > 0 &&
-            fruitlessContact === 0 &&
-            !locked &&
-            !farRestart &&
-            !world.hitRim &&
-            !world.hitBoard &&
-            !inbound.willBoard &&
-            !inbound.scores &&
-            next.willBoard;
-          if (oneBoard) {
-            boardTapUsed = true;
-            toFire = { tap: true, reason: "wrap-bank", policyId: decision.policyId };
-          } else {
-            last = { tap: false, reason: "wrap-loop", policyId: decision.policyId };
-            idle = 0;
-            return false;
-          }
+        if (forceBank) {
+          boardTapUsed = true;
+          toFire = { tap: true, reason: "wrap-bank", policyId: decision.policyId };
+        } else if (
+          (wrapLoop || fruitlessFarJump) &&
+          decision.reason !== "chain-next"
+        ) {
+          last = { tap: false, reason: "wrap-loop", policyId: decision.policyId };
+          idle = 0;
+          return false;
         }
         // Cool only on ninja-class jumpFwd — classic bank-cuts need to chain.
         if (longJump && boardCool > 0 && !recoverTap && nearBoardX && toFire.reason !== "wrap-bank") {
@@ -348,16 +376,18 @@ export function createAiController(): AiController {
       idle += world.dt;
       if (idle >= AI_WATCHDOG && cooldown <= 0) {
         const floor = world.world.floorY - world.ball.r;
-        const grounded = world.ball.y >= floor - 10 && world.ball.vy > -50;
+        const groundedWatch = world.ball.y >= floor - 10 && world.ball.vy > -50;
         const sky = world.ball.y + world.ball.r * 0.15 < world.hoop.y;
         // jumpVy from above the rim is how rubber/glass/classic sail into orbit.
-        if (sky && !grounded) {
+        if (sky && !groundedWatch) {
           idle = 0;
           return false;
         }
         if (
           locked ||
           wrapLoop ||
+          fruitlessFarJump ||
+          (longJump && fruitlessWraps > 0 && !lastWasClose) ||
           (longJump && (boardCool > 0 || wrapCool > 0 || contactCool > 0))
         ) {
           idle = 0;
