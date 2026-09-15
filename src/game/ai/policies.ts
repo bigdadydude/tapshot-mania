@@ -439,14 +439,15 @@ export const defaultPolicy: BallAiPolicy = {
       }
       // HQ gold: after a make, next tap is |dx| ~259 (~0.17s later), not a
       // full jump from the old hoop (~400) that sails through and wraps.
-      // Chain as soon as we're inside 0.76w (on-court); only hold a true sail.
+      // Chain only in the demo launch band (≲0.67w / ~260px). 0.76w launches
+      // wrapped more, not longer streaks.
       if (
         longJumpFwd(world) &&
         !world.onApproachSide &&
         !world.ballHidden
       ) {
         const chainDx = Math.abs(world.ball.x - world.hoop.x);
-        if (chainDx >= world.world.w * 0.76) {
+        if (chainDx >= world.world.w * NINJA_OPENER.launchMax) {
           if (onFloor(world)) return hold("wait-window");
           return hold("carry-flight");
         }
@@ -565,9 +566,7 @@ export const defaultPolicy: BallAiPolicy = {
     }
 
     if (
-      (clockPanic(world, 1.6) ||
-        (comboPressure(world) && !longJumpFwd(world)) ||
-        comboDying(world)) &&
+      (clockPanic(world, 1.6) || (comboPressure(world) && !longJumpFwd(world))) &&
       !(longJumpFwd(world) && closeToHoop(world) && !demoPriors(world).comboPokeNearHoop)
     ) {
       return tap("shot-clock");
@@ -926,9 +925,10 @@ export const physPolicy: BallAiPolicy = {
     if (longOrSlip) {
       if (!world.onApproachSide && !current.scores && pastBoard(world)) {
         // Climbing just behind the glass can still fall into a bank.
-        // Wrapping at jump speed from here is the post-make chain killer.
-        // Live combo: ride/drop — a wrap + 3s roll-in breaks the 4s streak.
-        if (world.ball.vy > 8 && !comboLive(world)) return tap("wrap-escape");
+        // Already falling/heading out: wrap now. Waiting until comboDying
+        // (~2.35s) then rolling in from a ground wrap burns the 4s streak.
+        // 310: 4/8 wraps scored within 2.5s — start that clock immediately.
+        if (world.ball.vy > 8) return tap("wrap-escape");
         return hold("let-drop");
       }
       if (!world.onApproachSide && under && !current.scores) {

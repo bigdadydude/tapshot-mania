@@ -1332,8 +1332,10 @@ describe("ball AI registry", () => {
       }),
       helpers,
     );
-    assert.equal(liveCombo.tap, false);
-    assert.equal(liveCombo.reason, "let-drop");
+    // Already past glass and falling: wrap now so the 4s window can cover
+    // the roll-in (310: wraps that score do so within 2.5s).
+    assert.equal(liveCombo.tap, true);
+    assert.equal(liveCombo.reason, "wrap-escape");
 
     const headingOut = decideShot(
       world({
@@ -1409,7 +1411,22 @@ describe("ball AI registry", () => {
     assert.equal(go.tap, true);
     assert.equal(go.reason, "chain-next");
 
-    const nearBand = world({
+    const hoopGap = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotMade: true,
+      scored: true,
+      ball: { x: hoop.x - 256, y: hoop.y + 80, vx: 80, vy: 40, r: 19.5 },
+    });
+    const chain = decideShot(hoopGap, helpers);
+    assert.equal(chain.tap, true);
+    assert.equal(chain.reason, "chain-next");
+
+    // Just outside launchMax (~261): waiting beats a 0.70w sail/wrap.
+    const tooFar = world({
       hoop,
       kit: flags({ ninja: true }),
       jumpVx: 390 * 0.76 * 1.2,
@@ -1419,9 +1436,12 @@ describe("ball AI registry", () => {
       scored: true,
       ball: { x: hoop.x - 273, y: hoop.y + 80, vx: 80, vy: 40, r: 19.5 },
     });
-    const chain = decideShot(nearBand, helpers);
-    assert.equal(chain.tap, true);
-    assert.equal(chain.reason, "chain-next");
+    const waitFar = decideShot(tooFar, helpers);
+    assert.equal(waitFar.tap, false);
+    assert.ok(
+      waitFar.reason === "carry-flight" || waitFar.reason === "wait-window",
+      waitFar.reason,
+    );
   });
 
   it("ninja rides a live arc instead of combo-pace poking", () => {
@@ -1449,6 +1469,17 @@ describe("ball AI registry", () => {
     assert.ok(d.reason === "ride-flight" || d.reason === "let-drop");
     assert.notEqual(d.reason, "shot-clock");
     assert.notEqual(d.reason, "apex-boost");
+
+    const dying = decideShot(
+      world({
+        ...w,
+        comboClock: 2.6,
+      }),
+      helpers,
+    );
+    assert.equal(dying.tap, false);
+    assert.ok(dying.reason === "ride-flight" || dying.reason === "let-drop");
+    assert.notEqual(dying.reason, "shot-clock");
   });
 
   it("ninja taps out of a floor stall under the rim instead of freezing", () => {
@@ -2442,6 +2473,54 @@ describe("AI controller", () => {
       ball: { x: hoop.x - 200, y: floorY - r, vx: 8, vy: 10, r },
     });
     assert.equal(ai.tick(spaced), false);
+  });
+
+  it("live ninja combo rides after two air taps; opener still gets four", () => {
+    const ai = createAiController();
+    registerBallAiPolicy({
+      id: "force-chain-climb",
+      priority: 99,
+      match: () => true,
+      vote: () => ({ action: "tap", reason: "early-jump" }),
+    });
+    ai.setEnabled(true);
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const ninja = {
+      dt: 1 / 60,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoop,
+      combo: 8,
+      streak: 8,
+      comboCounting: true,
+      comboClock: 0.4,
+    };
+    const first = world({
+      ...ninja,
+      ball: { x: hoop.x - 200, y: hoop.y + 80, vx: 328, vy: -671, r: 19.5 },
+    });
+    assert.equal(ai.tick(first), true);
+    const second = world({
+      ...ninja,
+      dt: 0.16,
+      ball: { x: hoop.x - 122, y: hoop.y + 50, vx: 328, vy: -671, r: 19.5 },
+    });
+    assert.equal(ai.tick(second), true);
+    assert.equal(ai.lastDecision()?.reason, "early-jump");
+    const third = world({
+      ...ninja,
+      dt: 0.15,
+      ball: { x: hoop.x - 95, y: hoop.y + 40, vx: 328, vy: -671, r: 19.5 },
+    });
+    assert.equal(ai.tick(third), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
   });
 
   it("prefers one board-kiss tap over an empty wrap cycle (wrap-bank)", () => {

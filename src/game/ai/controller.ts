@@ -261,8 +261,11 @@ export function createAiController(): AiController {
         dx >= world.world.w * NINJA_OPENER.launchMin &&
         Math.hypot(world.ball.x - lastTap.x, world.ball.y - lastTap.y) < POSE_MATCH &&
         Math.hypot(world.jumpVx - lastTap.jvx, world.jumpVy - lastTap.jvy) < JUMP_VEL_MATCH;
-      const extraClimb =
-        launched && !grounded && airTaps >= NINJA_OPENER.maxAirTaps;
+      // Opener (streak 0): floor + up to 3 air taps (HQ 4-tap). Live combo:
+      // demos chain with ~2 taps (259 → 122), then ride — a 3rd air tap
+      // writes through the glass and breaks the streak.
+      const climbCap = world.streak >= 1 ? 2 : NINJA_OPENER.maxAirTaps;
+      const extraClimb = launched && !grounded && airTaps >= climbCap;
       const inOpenerBand =
         dx > world.world.w * NINJA_OPENER.launchMin &&
         dx < world.world.w * NINJA_OPENER.launchMax;
@@ -271,7 +274,8 @@ export function createAiController(): AiController {
         dx > world.world.w * NINJA_OPENER.climbMin &&
         dx < world.world.w * NINJA_OPENER.climbMax;
       // Empty-cycle only: off-screen FAR_JUMP, in-air jump-speed spam at
-      // far-court / identical pose (±328/-671), or a 5th air tap.
+      // far-court / identical pose (±328/-671), or extra air taps (5th
+      // opener / 3rd once streak ≥ 1).
       // Do NOT wrap-loop a grounded on-court roll after a real wrap — that
       // is the demo attack (floor ~190–260, then climb).
       const offscreenSpam =
