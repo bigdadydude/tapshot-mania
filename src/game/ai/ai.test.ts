@@ -1976,12 +1976,19 @@ describe("AI controller", () => {
       ball: { x: hoop.x - 200, y: hoop.y + 80, vx: 40, vy: -20, r: 19.5 },
     });
     assert.equal(ai.tick(climb), true);
-    const again = world({
+    const recatch = world({
       ...climb,
       dt: 0.05,
       ball: { x: hoop.x - 160, y: hoop.y + 40, vx: 328, vy: -671, r: 19.5 },
     });
-    assert.equal(ai.tick(again), false);
+    assert.equal(ai.tick(recatch), true);
+    assert.equal(ai.lastDecision()?.reason, "early-jump");
+    const spam = world({
+      ...climb,
+      dt: 0.05,
+      ball: { x: hoop.x - 120, y: hoop.y + 10, vx: 328, vy: -671, r: 19.5 },
+    });
+    assert.equal(ai.tick(spam), false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
 
     const afterRim = world({

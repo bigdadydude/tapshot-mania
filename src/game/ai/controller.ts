@@ -253,7 +253,9 @@ export function createAiController(): AiController {
           });
           if (recentTaps.length > 8) recentTaps.shift();
           poseFresh = 0.45;
-          airTaps = grounded ? 0 : airTaps + 1;
+          // Only a tap that already has jump speed counts as the recatch.
+          // A first tap from rest/crawl (title leftover vx, wrap roll) is the launch.
+          airTaps = grounded || !launched ? 0 : airTaps + 1;
         }
         return fired;
       }
