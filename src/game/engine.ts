@@ -52,7 +52,7 @@ import { createAiController, flagsFromKit } from "./ai";
 import { predictCurrent, predictTap } from "./ai/predict.ts";
 import { createPlayRecorder } from "./record";
 
-export const GAME_REV = 371;
+export const GAME_REV = 372;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;

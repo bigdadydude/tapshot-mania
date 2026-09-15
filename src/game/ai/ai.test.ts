@@ -1884,19 +1884,31 @@ describe("AI controller", () => {
     assert.equal(ai.tick(afterWrap), false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
 
-    // Cool expired and this is a new attempt at the same parked miss.
+    // Cool expired — identical parked pose + jump vector is still the loop.
     const afterCool = world({
       ...under,
       dt: 1.7,
       wraps: 1,
       ball: { x: hoop.x + 58, y: hoop.y + 110, vx: 8, vy: 12, r: 19.5 },
     });
-    assert.equal(ai.tick(afterCool), true);
+    assert.equal(ai.tick(afterCool), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    // New attempt: bounced to a different pose / spacing.
+    const shifted = world({
+      ...under,
+      dt: 0.05,
+      wraps: 1,
+      ball: { x: hoop.x + 140, y: hoop.y + 110, vx: 8, vy: 12, r: 19.5 },
+    });
+    assert.equal(ai.tick(shifted), true);
     assert.equal(ai.lastDecision()?.reason, "wrap-escape");
   });
 
   it("breaks the right-hoop empty wrap cycle (stuck-1)", () => {
     // tap (-72,487) → (15,378) → wrap at ~(432,379), identical (328,-671).
+    // Cool firing once is not enough — the same pose+velocity sequence
+    // must stay a loop, while a spaced launch may still fire.
     const ai = createAiController();
     registerBallAiPolicy({
       id: "force-stuck-1",
@@ -1913,10 +1925,13 @@ describe("AI controller", () => {
       tube: 4.3,
       moving: false,
     };
+    const floorY = 844 * 0.765;
+    const r = 19.5;
     const ninja = {
       dt: 1 / 60,
       kit: flags({ ninja: true }),
       jumpVx: 390 * 0.76 * 1.2,
+      jumpVy: -671,
       hoopMul: 0.8,
       boardFric: 0.7,
       hoop,
@@ -1925,7 +1940,7 @@ describe("AI controller", () => {
       ...ninja,
       onApproachSide: true,
       ballHidden: true,
-      ball: { x: -72, y: 487, vx: 44, vy: 0, r: 19.5 },
+      ball: { x: -72, y: 487, vx: 44, vy: 0, r },
     });
     assert.equal(ai.tick(first), false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
@@ -1934,10 +1949,22 @@ describe("AI controller", () => {
       dt: 0.05,
       onApproachSide: false,
       ballHidden: false,
-      ball: { x: 15, y: 378, vx: 328, vy: -671, r: 19.5 },
+      ball: { x: 15, y: 378, vx: 328, vy: -671, r },
     });
     assert.equal(ai.tick(second), false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    const launch = world({
+      ...ninja,
+      ball: { x: hoop.x - 224, y: floorY - r, vx: 40, vy: 0, r },
+    });
+    assert.equal(ai.tick(launch), true);
+    const recatch = world({
+      ...ninja,
+      dt: 0.05,
+      ball: { x: hoop.x - 160, y: hoop.y + 40, vx: 328, vy: -671, r },
+    });
+    assert.equal(ai.tick(recatch), true);
 
     const back = world({
       ...ninja,
@@ -1945,9 +1972,30 @@ describe("AI controller", () => {
       wraps: 1,
       onApproachSide: true,
       ballHidden: true,
-      ball: { x: -72, y: 487, vx: 44, vy: 0, r: 19.5 },
+      ball: { x: -72, y: 487, vx: 44, vy: 0, r },
     });
     assert.equal(ai.tick(back), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    // Wrap-cool already elapsed; identical (15,378)+(328,-671) is still a loop.
+    const afterCool = world({
+      ...ninja,
+      dt: 1.7,
+      wraps: 1,
+      onApproachSide: false,
+      ballHidden: false,
+      ball: { x: 15, y: 378, vx: 328, vy: -671, r },
+    });
+    assert.equal(ai.tick(afterCool), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    const sameBand = world({
+      ...ninja,
+      dt: 0.05,
+      wraps: 1,
+      ball: { x: hoop.x - 224, y: floorY - r, vx: 8, vy: 10, r },
+    });
+    assert.equal(ai.tick(sameBand), false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
   });
 
@@ -1999,6 +2047,39 @@ describe("AI controller", () => {
     });
     assert.equal(ai.tick(afterRim), false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    // Same climb start after wrap-cool expired — identical (328,-671) chain.
+    const afterWrapSame = world({
+      ...climb,
+      dt: 1.7,
+      wraps: 1,
+      ball: { x: hoop.x - 200, y: hoop.y + 80, vx: 40, vy: -20, r: 19.5 },
+    });
+    assert.equal(ai.tick(afterWrapSame), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    const floorY = 844 * 0.765;
+    const r = 19.5;
+    // Landed after rim, contact cool gone, same pose — still no full jump.
+    const landSame = world({
+      ...climb,
+      dt: 1.0,
+      wraps: 1,
+      hitRim: false,
+      ball: { x: hoop.x - 200, y: floorY - r, vx: 8, vy: 10, r },
+    });
+    assert.equal(ai.tick(landSame), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+
+    // Land-reset with spacing: closer pose may try a new release.
+    const spaced = world({
+      ...climb,
+      dt: 0.05,
+      wraps: 1,
+      ball: { x: hoop.x - 90, y: floorY - r, vx: 8, vy: 10, r },
+    });
+    assert.equal(ai.tick(spaced), true);
+    assert.equal(ai.lastDecision()?.reason, "early-jump");
   });
 
   it("still launches from the demo band after a fruitless wrap", () => {

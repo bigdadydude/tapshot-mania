@@ -71,7 +71,18 @@ export type AiController = {
   lastDecision: () => AiDecision | null;
 };
 
-type LoopPose = { x: number; y: number; side: -1 | 1 };
+type LoopPose = {
+  x: number;
+  y: number;
+  side: -1 | 1;
+  jvx: number;
+  jvy: number;
+  dx: number;
+};
+
+const POSE_MATCH = 48;
+const JUMP_VEL_MATCH = 28;
+const LAUNCH_SPACING = 56;
 
 function ballOnFloor(world: AiWorld): boolean {
   const floor = world.world.floorY - world.ball.r;
@@ -93,6 +104,9 @@ export function createAiController(): AiController {
   let lastWraps = 0;
   let airTaps = 0;
   let sawContact = false;
+  let fruitlessWraps = 0;
+  let fruitlessContact = 0;
+  let lastLaunchDx = -1;
   let recentTaps: LoopPose[] = [];
 
   function clearLoop() {
@@ -101,6 +115,9 @@ export function createAiController(): AiController {
     poseFresh = 0;
     airTaps = 0;
     sawContact = false;
+    fruitlessWraps = 0;
+    fruitlessContact = 0;
+    lastLaunchDx = -1;
     recentTaps = [];
   }
 
@@ -159,6 +176,7 @@ export function createAiController(): AiController {
         contactCool = 0;
         if (!world.shotMade && !world.scored) {
           wrapCool = Math.max(wrapCool, 1.65);
+          fruitlessWraps += 1;
         }
       }
 
@@ -191,10 +209,11 @@ export function createAiController(): AiController {
         world.onApproachSide ||
         world.ballHidden ||
         dx > world.world.w * 0.76;
-      const samePose = recentTaps.some(
+      const sameShot = recentTaps.some(
         (p) =>
           p.side === world.hoop.side &&
-          Math.hypot(world.ball.x - p.x, world.ball.y - p.y) < 48,
+          Math.hypot(world.ball.x - p.x, world.ball.y - p.y) < POSE_MATCH &&
+          Math.hypot(world.jumpVx - p.jvx, world.jumpVy - p.jvy) < JUMP_VEL_MATCH,
       );
       const launched =
         Math.abs(world.ball.vx) > Math.abs(world.jumpVx) * 0.55;
@@ -203,11 +222,25 @@ export function createAiController(): AiController {
       if (world.hitRim || world.hitBoard) {
         if (longJump && !world.scored && !world.shotMade && !sawContact) {
           contactCool = Math.max(contactCool, 0.9);
+          fruitlessContact += 1;
         }
         sawContact = true;
       } else {
         sawContact = false;
       }
+      const fruitless = fruitlessWraps > 0 || fruitlessContact > 0;
+      const sameLaunch =
+        lastLaunchDx >= 0 && Math.abs(dx - lastLaunchDx) < LAUNCH_SPACING;
+      // Same pose+jump vector stays a loop after wrap-cool expires (stuck-1/2
+      // replayed the identical (vx,vy) chain). New attempts need spacing or a
+      // different pose — not another full jump from the same band.
+      const wrapLoop =
+        longJump &&
+        (farRestart ||
+          (sameShot && (wrapCool > 0 || poseFresh > 0 || fruitless)) ||
+          (fruitless && sameLaunch && grounded) ||
+          (contactCool > 0 && (!grounded || sameLaunch || sameShot)) ||
+          (launched && !grounded && airTaps >= 1));
       if (decision.tap) {
         // Long jumpFwd near glass/rim: ZERO extra taps. bank-cut / apex /
         // combo-pressure / wrap-in-pocket / watchdog is the ninja death loop.
@@ -216,23 +249,10 @@ export function createAiController(): AiController {
           idle = 0;
           return false;
         }
-        // stuck-1: repeating pose after wrap, including far approach-enter.
-        // stuck-2: same full jumpVx after bank/rim, or extra air taps at jump speed.
-        // Pose match only during wrap-cool / just-tapped — a permanent pose
-        // ban froze the whole visit at 0 (same launch spot after a miss).
-        if (longJump && decision.reason !== "chain-next") {
-          const poseLoop = samePose && (wrapCool > 0 || poseFresh > 0);
-          const tooFar = farRestart;
-          const loop =
-            poseLoop ||
-            tooFar ||
-            (contactCool > 0 && !grounded) ||
-            (launched && !grounded && airTaps >= 1);
-          if (loop) {
-            last = { tap: false, reason: "wrap-loop", policyId: decision.policyId };
-            idle = 0;
-            return false;
-          }
+        if (wrapLoop && decision.reason !== "chain-next") {
+          last = { tap: false, reason: "wrap-loop", policyId: decision.policyId };
+          idle = 0;
+          return false;
         }
         // Cool only on ninja-class jumpFwd — classic bank-cuts need to chain.
         if (longJump && boardCool > 0 && !recoverTap && nearBoardX) {
@@ -250,9 +270,13 @@ export function createAiController(): AiController {
             x: world.ball.x,
             y: world.ball.y,
             side: world.hoop.side,
+            jvx: world.jumpVx,
+            jvy: world.jumpVy,
+            dx,
           });
           if (recentTaps.length > 8) recentTaps.shift();
           poseFresh = 0.45;
+          lastLaunchDx = dx;
           // Only a tap that already has jump speed counts as the recatch.
           // A first tap from rest/crawl (title leftover vx, wrap roll) is the launch.
           airTaps = grounded || !launched ? 0 : airTaps + 1;
@@ -286,6 +310,7 @@ export function createAiController(): AiController {
         }
         if (
           locked ||
+          wrapLoop ||
           (longJump && (boardCool > 0 || wrapCool > 0 || contactCool > 0))
         ) {
           idle = 0;
