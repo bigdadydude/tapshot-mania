@@ -219,6 +219,8 @@ export function createAiController(): AiController {
         decision.reason === "chain-next" || decision.reason === "early-jump";
       const nearBoardX = Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36;
       const dx = Math.abs(world.ball.x - world.hoop.x);
+      // Off-screen or past the human |dx| band (~195–290). Do NOT tighten
+      // this for ninja — 0.62w (~242) wrap-loops the first demo-band jump.
       const farRestart =
         world.onApproachSide ||
         world.ballHidden ||
@@ -249,28 +251,28 @@ export function createAiController(): AiController {
         Math.hypot(world.ball.x - lastTap.x, world.ball.y - lastTap.y) < POSE_MATCH &&
         Math.hypot(world.jumpVx - lastTap.jvx, world.jumpVy - lastTap.jvy) < JUMP_VEL_MATCH;
       const airSpam = launched && !grounded && airTaps >= 1;
-      // Break-glass only: off-screen / identical pose spam / extra jump-speed
-      // recatch. Do NOT hold the demo-band launch or the too-low recatch.
+      // Human 2-tap: floor launch, too-low recatch in the 195–290 band, ride.
+      // contactCool must not freeze that 2nd tap after a rim graze.
+      const demoRecatch =
+        recoverTap &&
+        !airSpam &&
+        dx > world.world.w * 0.4 &&
+        dx <= world.world.w * 0.76;
+      // Break-glass only: off-screen / identical pose / extra jump-speed tap.
+      // Demo-band launch + too-low recatch stay the attack, even after a graze.
       let wrapLoop =
         longJump &&
         (farRestart ||
           (sameShot && (wrapCool > 0 || poseFresh > 0)) ||
           (fruitless && persistShot) ||
-          (contactCool > 0 && !grounded) ||
+          (contactCool > 0 && !grounded && !demoRecatch) ||
           airSpam);
       if (wrapLoop && grounded && !farRestart) sitHold += world.dt;
       else if (!wrapLoop) sitHold = 0;
       const inbound = helpers.predictCurrent(world);
       const nextShot = helpers.predictTap(world);
       const wrapEscapeSpam =
-        longJump &&
-        fruitlessWraps > 0 &&
-        decision.reason === "wrap-escape";
-      const closePoke =
-        longJump &&
-        fruitlessContact > 0 &&
-        dx < world.world.w * 0.4 &&
-        (decision.reason === "wrap-escape" || decision.reason === "early-jump");
+        longJump && fruitlessWraps > 0 && decision.reason === "wrap-escape";
       const closeForBank = dx < world.world.w * 0.28;
       // Break-glass board-kiss: empty wrap-escape, or a close reset after a
       // wrap whose tap would kiss glass. Demo-band / recatch stay the attack.
@@ -303,7 +305,7 @@ export function createAiController(): AiController {
           boardTapUsed = true;
           toFire = { tap: true, reason: "wrap-bank", policyId: decision.policyId };
         } else if (
-          (wrapLoop || wrapEscapeSpam || closePoke) &&
+          (wrapLoop || wrapEscapeSpam) &&
           decision.reason !== "chain-next"
         ) {
           last = { tap: false, reason: "wrap-loop", policyId: decision.policyId };
@@ -376,7 +378,6 @@ export function createAiController(): AiController {
           locked ||
           wrapLoop ||
           wrapEscapeSpam ||
-          closePoke ||
           (longJump && fruitlessContact > 0 && FAR_JUMP.has(decision.reason)) ||
           (longJump && (boardCool > 0 || contactCool > 0))
         ) {

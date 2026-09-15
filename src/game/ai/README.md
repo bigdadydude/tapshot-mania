@@ -96,7 +96,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `bank-half` | Contact around half board height, moving into glass — **hold** | board geom + vy |
 | `bank-steep` | Steeper cut into the board (`\|vy\| > 0.52·\|vx\|`) — **hold** | velocity vs board |
 | `protect-finish` | Long jumpFwd in the glass/rim pocket — ZERO extra taps (overshoot loop) | `finishPocketLocked` |
-| `wrap-loop` | Break-glass: off-screen / identical last tap pose / extra jump-speed recatch / wrap-escape after a fruitless wrap | recent poses + jump vel |
+| `wrap-loop` | Break-glass only: off-screen / identical last tap pose / extra jump-speed recatch / wrap-escape after a fruitless wrap. Not the demo-band launch or too-low recatch (including after a rim graze) | recent poses + jump vel |
 | `wrap-bank` | Break-glass: wrap-escape (or a close reset) after a fruitless wrap whose tap would kiss glass, then ride | `predictTap.willBoard` once |
 | `bank-cut` | Classic only (demo `bankCutTap`): current path misses glass, jump-reset would kiss | `demoPriors.bankCutTap` |
 | `rim-swirl` | Inner-rim rattle (刷马桶) — hold, don't reset `jumpVx` | `hitRim` + inner side |
