@@ -864,10 +864,6 @@ export const physPolicy: BallAiPolicy = {
     const feel = shotFeel(world);
     const current = helpers.predictCurrent(world);
     if (confidentMake(world, current.scores)) return hold("flight-scores");
-    // HQ gold 9806: tap 3–4 at |dx| 96 / 118 while still rising. Those x
-    // values sit inside nearFinishPocket (~0.32w) — holding them skipped
-    // the 4-tap opener and the post-rim recatch.
-    if (ninjaClimbTap(world)) return tap("early-jump");
     if (mustHoldFinish(world, current)) {
       return hold(current.scores ? "flight-scores" : "protect-finish");
     }
