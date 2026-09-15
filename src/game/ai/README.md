@@ -84,7 +84,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 ### Oral tactics kept (demos agree)
 
 - Half-board / steep **holds** when the current path already hits glass (`holdInboundBank`)
-- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap, do not wrap-escape the same pose or full-jump from off-screen (`wrap-loop`). A parked ball *inside* the launch band still wrap-escapes to the far side (blocking that froze classic at 0). Prefer one `wrap-bank` when a *close* reset would kiss glass. Demo-band launch + too-low recatch remain the attack. After wrap, wait only while still rolling into the 195–273 band; a dead crawl launches instead of sitting until timeout.
+- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap, do not wrap-escape the same pose or full-jump from off-screen (`wrap-loop`). A parked ball *inside* the launch band still wrap-escapes to the far side (blocking that froze classic at 0). Prefer one `wrap-bank` when a *close* reset would kiss glass. Demo-band launch + too-low recatch remain the attack. After wrap, wait for the 195–265 band before the next floor jump so recatch geometry still works.
 - `hole-spam` / `hole-ride` after the hole opens (anti packs)
 - `pop-away` on a hot bounce
 - Glass `seek-swish` (+4 HP) and drop-finish (10156 / 5992)
@@ -104,7 +104,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 | `exit-space` | Under-rim but opening court — let spacing grow, then jump back | under + bounce away |
 | `pop-away` | Elastic pop near the rim — let spacing open, then re-attack | `hotBounce` / `hoopRest` |
 | `wrap-escape` | Stuck under the rim: tap/wrap to the far side (穿屏) | `longJump` or `slipperyGlass` |
-| `early-jump` | Far floor launch (`|dx|` ~195–273; wait while still rolling in from farther), then recatch near a too-low apex after flying in (`|dx|` ~110–133) so the reset peaks at the rim | `longJump` + dx / vy |
+| `early-jump` | Far floor launch (`|dx|` ~195–265; wait while crawling in from farther), then recatch near a too-low apex after flying in (`|dx|` ~110–140) so the reset peaks at the rim | `longJump` + dx / vy |
 | `far-climb` | Distant rapid taps so the ball falls near **90°** | far + rising, not `longJump` |
 | `ride-flight` | Descending live arc on a long jump — don't poke | `longJump` + `vy > 0` |
 | `carry-flight` | Already flying at the hoop while still rising at jump speed — don't reset `jumpVx` | `longJump` + `flyingAtHoop` |

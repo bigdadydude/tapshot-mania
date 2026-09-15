@@ -883,18 +883,6 @@ describe("ball AI registry", () => {
     assert.equal(d.tap, false);
     assert.equal(d.reason, "wait-window");
     assert.notEqual(d.reason, "early-jump");
-
-    const stalled = world({
-      hoop,
-      kit: flags({ ninja: true }),
-      jumpVx: 390 * 0.76 * 1.2,
-      hoopMul: 0.8,
-      boardFric: 0.7,
-      ball: { x: hoop.x - 280, y: floorY - r, vx: 10, vy: 0, r },
-    });
-    const go = decideShot(stalled, helpers);
-    assert.equal(go.tap, true);
-    assert.equal(go.reason, "early-jump");
   });
 
   it("ninja recatches mid-climb after flying in (human 2nd tap)", () => {
@@ -916,6 +904,29 @@ describe("ball AI registry", () => {
       ball: { x: hoop.x - 125, y: hoop.y + 170, vx: 280, vy: -150, r: 19.5 },
     });
     const d = decideShot(mid, helpers);
+    assert.equal(d.tap, true);
+    assert.equal(d.reason, "early-jump");
+  });
+
+  it("ninja recatches at the outer too-low edge so the reset peaks at the rim", () => {
+    const hoop = {
+      x: 390 - 28 - 390 * 0.1,
+      y: 330,
+      inner: 28,
+      side: 1 as const,
+      tube: 4.3,
+      moving: false,
+    };
+    const edge = world({
+      hoop,
+      kit: flags({ ninja: true }),
+      jumpVx: 390 * 0.76 * 1.2,
+      hoopMul: 0.8,
+      boardFric: 0.7,
+      shotOpen: true,
+      ball: { x: hoop.x - 137, y: hoop.y + 155, vx: 300, vy: -180, r: 19.5 },
+    });
+    const d = decideShot(edge, helpers);
     assert.equal(d.tap, true);
     assert.equal(d.reason, "early-jump");
   });

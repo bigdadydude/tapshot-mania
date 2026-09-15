@@ -263,7 +263,7 @@ export function createAiController(): AiController {
         recoverTap &&
         !airSpam &&
         dx > world.world.w * 0.28 &&
-        dx < world.world.w * 0.34;
+        dx < world.world.w * 0.36;
       // Break-glass only: off-screen / identical pose / extra jump-speed tap.
       // Demo-band launch + too-low recatch stay the attack, even after a graze.
       let wrapLoop =
@@ -398,9 +398,8 @@ export function createAiController(): AiController {
         !farRestart &&
         !world.onApproachSide &&
         !world.ballHidden &&
-        dx >= world.world.w * 0.7 &&
-        (world.hoop.x - world.ball.x) * world.ball.vx > 12 &&
-        Math.hypot(world.ball.vx, world.ball.vy) > 24;
+        dx >= world.world.w * 0.68 &&
+        (world.hoop.x - world.ball.x) * world.ball.vx > 12;
       if (
         world.scored ||
         crawlWait ||

@@ -293,9 +293,10 @@ function ninjaBandRecatch(
   if (!tooLowApex(world) || onFloor(world)) return false;
   if (current.scores || current.willBoard) return false;
   const dx = Math.abs(world.ball.x - world.hoop.x);
-  // Apex travel ~129px: recatch in ~110–133 so the reset peaks at the rim.
-  // Upper 0.5w recaught at ~141 from a 230 launch — rim graze, not a make.
-  return dx > world.world.w * 0.28 && dx < world.world.w * 0.34;
+  // Apex travel ~129px: recatch near |dx| ~110–140 so the reset peaks on
+  // the court side of the rim. 0.34w (~133) missed the live too-low frame
+  // and the 2nd jump peaked past the hoop into a rim graze.
+  return dx > world.world.w * 0.28 && dx < world.world.w * 0.36;
 }
 
 /**
@@ -894,10 +895,10 @@ export const physPolicy: BallAiPolicy = {
     const far = feel.longJump
       ? dx > world.world.w * 0.5
       : dx > world.world.w * 0.38 * hangScale;
-    // Human p25–p75 |dx| ≈ 195–290. Apex travel ~129px: jump from ≳0.70w
-    // (~273) while still rolling in; a dead crawl above that still launches.
+    // Human p25–p75 |dx| ≈ 195–290. Apex travel ~129px: jump from ≳0.68w
+    // (~265) peaks too far for the recatch window.
     const launchFar = feel.longJump
-      ? dx > world.world.w * 0.5 && dx < world.world.w * 0.7
+      ? dx > world.world.w * 0.5 && dx < world.world.w * 0.68
       : dx > world.world.w * 0.48;
     const crawlingIn = (world.hoop.x - world.ball.x) * world.ball.vx > 12;
     const belowRim = world.ball.y > world.hoop.y + world.ball.r * 0.12;
@@ -1005,24 +1006,12 @@ export const physPolicy: BallAiPolicy = {
         onFloor(world) &&
         !world.onApproachSide &&
         !world.ballHidden &&
-        dx >= world.world.w * 0.7 &&
-        crawlingIn &&
-        Math.hypot(world.ball.vx, world.ball.vy) > 24
+        dx >= world.world.w * 0.68 &&
+        crawlingIn
       ) {
         return hold("wait-window");
       }
       if (feel.longJump && onFloor(world) && launchFar) {
-        return tap("early-jump");
-      }
-      // Crawl friction can die above the band — jump rather than sit until timeout.
-      if (
-        feel.longJump &&
-        onFloor(world) &&
-        !world.onApproachSide &&
-        !world.ballHidden &&
-        dx > world.world.w * 0.5 &&
-        Math.hypot(world.ball.vx, world.ball.vy) <= 24
-      ) {
         return tap("early-jump");
       }
       if (ninjaBandRecatch(world, current)) return tap("early-jump");
