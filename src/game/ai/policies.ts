@@ -632,22 +632,11 @@ export const physPolicy: BallAiPolicy = {
         const tooLow = world.ball.y > world.hoop.y + world.hoop.inner * 2.2;
         if (tooLow) return hold("let-drop");
       }
-      if (
-        flyingAtHoop(world) &&
-        !onFloor(world) &&
-        !nearBoard(world) &&
-        !under
-      ) {
-        if (world.ball.vy > 12) return hold("ride-flight");
-        // Rising: tap until we clear the near rim, then carry. A floor
-        // hold here is how the 1.2 jump tunnels under (0-pt benches).
-        if (
-          feel.longJump &&
-          world.ball.y > world.hoop.y + world.hoop.inner * 1.4
-        ) {
-          return tap("early-jump");
-        }
-        return hold("carry-flight");
+      // Descending live arc — don't poke. Rising + far: keep climbing
+      // (human 2–3 taps, first |dx| ~224). Rising + close: fall through
+      // so default can apex-boost / bank / swirl.
+      if (flyingAtHoop(world) && world.ball.vy > 12 && !onFloor(world)) {
+        return hold("ride-flight");
       }
       if (feel.longJump && onFloor(world) && launchFar) {
         return tap("early-jump");

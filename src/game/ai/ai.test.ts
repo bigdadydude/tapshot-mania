@@ -541,11 +541,11 @@ describe("ball AI registry", () => {
       hoopMul: 0.8,
       boardFric: 0.7,
       shotOpen: true,
-      ball: { x: hoop.x - 224, y: hoop.y + 20, vx: 280, vy: -200, r: 19.5 },
+      ball: { x: hoop.x - 224, y: hoop.y + 20, vx: 280, vy: 80, r: 19.5 },
     });
     const d = decideShot(rising, helpers);
     assert.equal(d.tap, false);
-    assert.ok(d.reason === "carry-flight" || d.reason === "ride-flight");
+    assert.ok(d.reason === "ride-flight" || d.reason === "let-drop");
   });
 
   it("ninja early-jumps a rising far shot that is not yet flying at the hoop", () => {
