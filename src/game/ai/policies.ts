@@ -274,8 +274,11 @@ function tooLowApex(world: AiWorld): boolean {
   const belowFinish = world.ball.y > world.hoop.y + world.hoop.inner * 1.2;
   const nearApex = world.ball.vy > -200 && world.ball.vy < 55;
   if (!belowFinish || !nearApex) return false;
-  // Parked / dying under the rim — a full jumpVy from here flies over.
-  if (Math.abs(world.ball.vx) < 50) return false;
+  // Parked under the rim — a full jumpVy from here flies over.
+  // Demo 2nd tap can recatch with modest vx (oral |vx|<50 ate the recatch).
+  if (Math.abs(world.ball.vx) < 28 && Math.hypot(world.ball.vx, world.ball.vy) < 70) {
+    return false;
+  }
   return true;
 }
 
