@@ -633,13 +633,14 @@ export const physPolicy: BallAiPolicy = {
           if (spd < 90 && bounceOpening(world)) return hold("exit-space");
           return hold("let-drop");
         }
-        // Rising through the net — hold (old 144-pt tube-up). Too low
-        // beside the hoop: don't jump over. Near-rim descent → swirl/bank.
+        // Rising through the net only — not from 150px below (that was a
+        // wrap drought). Too low beside the hoop: don't jump over; wrap
+        // or drop. Near-rim descent → swirl/bank.
+        const tooLow = world.ball.y > world.hoop.y + world.hoop.inner * 2.2;
+        if (tooLow) return hold("let-drop");
         if (world.ball.vy < -12 && world.ball.y > world.hoop.y) {
           return hold("tube-up");
         }
-        const tooLow = world.ball.y > world.hoop.y + world.hoop.inner * 2.2;
-        if (tooLow) return hold("let-drop");
       }
       // Floor launch, then one recatch after vy decays (~2 taps). A single
       // floor tap peaks ~150px under the rim — carry-flight for the whole
