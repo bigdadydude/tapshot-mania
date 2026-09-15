@@ -187,12 +187,6 @@ export function createAiController(): AiController {
         decision.reason === "chain-next" || decision.reason === "early-jump";
       const nearBoardX = Math.abs(world.ball.x - world.hoop.x) < world.world.w * 0.36;
       const dx = Math.abs(world.ball.x - world.hoop.x);
-      const wrapTap =
-        decision.reason === "wrap-escape" ||
-        decision.reason === "wrap-boost" ||
-        decision.reason === "wrap-approach" ||
-        decision.reason === "approach-enter" ||
-        (decision.reason === "early-jump" && nearBoardX);
       const farRestart =
         world.onApproachSide ||
         world.ballHidden ||
@@ -228,9 +222,10 @@ export function createAiController(): AiController {
         // ban froze the whole visit at 0 (same launch spot after a miss).
         if (longJump && decision.reason !== "chain-next") {
           const poseLoop = samePose && (wrapCool > 0 || poseFresh > 0);
+          const tooFar = farRestart;
           const loop =
             poseLoop ||
-            (wrapCool > 0 && (farRestart || wrapTap)) ||
+            tooFar ||
             (contactCool > 0 && !grounded) ||
             (launched && !grounded && airTaps >= 1);
           if (loop) {

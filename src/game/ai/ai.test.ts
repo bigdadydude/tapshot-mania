@@ -1927,7 +1927,8 @@ describe("AI controller", () => {
       ballHidden: true,
       ball: { x: -72, y: 487, vx: 44, vy: 0, r: 19.5 },
     });
-    assert.equal(ai.tick(first), true);
+    assert.equal(ai.tick(first), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
     const second = world({
       ...ninja,
       dt: 0.05,
