@@ -194,6 +194,7 @@ export function createAiController(): AiController {
         if (!world.shotMade && !world.scored) {
           wrapCool = Math.max(wrapCool, 1.65);
           fruitlessWraps += 1;
+          lastLaunchDx = -1;
         }
       }
 
@@ -271,11 +272,13 @@ export function createAiController(): AiController {
       const nextShot = helpers.predictTap(world);
       const airSpam = launched && !grounded && airTaps >= 1;
       const stuck = wrapLoop || fruitlessWraps > 0 || fruitlessContact > 0;
-      const lastWasClose = lastLaunchDx >= 0 && lastLaunchDx < world.world.w * 0.4;
-      // After a far full-jump wrap, don't replay wrap-escape / demo-band
-      // (±328,-671). A launch that started close may still re-attack from mid-court.
+      // After a wrap, empty wrap-escape is the stuck loop. Demo-band
+      // early-jump is still a human re-attack (lastLaunchDx cleared on wrap).
       const fruitlessFarJump =
-        longJump && fruitless && FAR_JUMP.has(decision.reason) && !lastWasClose;
+        longJump &&
+        fruitlessWraps > 0 &&
+        (decision.reason === "wrap-escape" ||
+          (decision.reason === "early-jump" && dx < world.world.w * 0.4));
       // One board-kiss when stuck: inbound glass still holds. Jump-speed
       // recatch is the overshoot death loop — don't wrap-bank that.
       // Parked under the rim: tap once for a rebound chance even if the
@@ -288,7 +291,6 @@ export function createAiController(): AiController {
         stuck &&
         longJump &&
         !boardTapUsed &&
-        fruitlessContact === 0 &&
         !farRestart &&
         !world.hitRim &&
         !world.hitBoard &&
@@ -387,7 +389,7 @@ export function createAiController(): AiController {
           locked ||
           wrapLoop ||
           fruitlessFarJump ||
-          (longJump && fruitlessWraps > 0 && !lastWasClose) ||
+          (longJump && fruitlessContact > 0 && FAR_JUMP.has(decision.reason)) ||
           (longJump && (boardCool > 0 || wrapCool > 0 || contactCool > 0))
         ) {
           idle = 0;

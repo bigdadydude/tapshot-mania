@@ -84,7 +84,7 @@ The recording analyzer (`analyze-recording.ts`) is the miner. It is not deleted.
 ### Oral tactics kept (demos agree)
 
 - Half-board / steep **holds** when the current path already hits glass (`holdInboundBank`)
-- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap from a far launch, do not full-jump the same vector (`wrap-loop`); prefer one `wrap-bank` when the reset would kiss glass. Mid-court demo-band launches still fire when the previous launch started close, or on a fresh shot.
+- Wrap recoveries (`wrap-escape` past the board / parked miss) — 310: 4/8 wraps scored within 2.5s. **Not** the stuck-loop: after a 0-score wrap, do not wrap-escape the same pose or full-jump from off-screen (`wrap-loop`). Prefer one `wrap-bank` when the reset would kiss glass. Mid-court demo-band launches still fire after wrapping around (human next shot).
 - `hole-spam` / `hole-ride` after the hole opens (anti packs)
 - `pop-away` on a hot bounce
 - Glass `seek-swish` (+4 HP) and drop-finish (10156 / 5992)

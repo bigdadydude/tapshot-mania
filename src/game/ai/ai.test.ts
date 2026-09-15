@@ -1895,15 +1895,16 @@ describe("AI controller", () => {
     assert.equal(ai.tick(afterCool), false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
 
-    // New attempt: bounced to a different pose / spacing.
+    // Spaced pose after a wrap: don't wrap-escape again; wait for a board-kiss
+    // or a demo-band floor launch.
     const shifted = world({
       ...under,
       dt: 0.05,
       wraps: 1,
       ball: { x: hoop.x + 140, y: hoop.y + 110, vx: 8, vy: 12, r: 19.5 },
     });
-    assert.equal(ai.tick(shifted), true);
-    assert.equal(ai.lastDecision()?.reason, "wrap-escape");
+    assert.equal(ai.tick(shifted), false);
+    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
   });
 
   it("breaks the right-hoop empty wrap cycle (stuck-1)", () => {
@@ -1996,10 +1997,10 @@ describe("AI controller", () => {
       wraps: 1,
       ball: { x: hoop.x - 224, y: floorY - r, vx: 8, vy: 10, r },
     });
-    assert.equal(ai.tick(sameBand), false);
-    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+    assert.equal(ai.tick(sameBand), true, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "approach-enter");
 
-    // Parked in that band: sit thaw must not re-fire the same demo-band jump.
+    // Immediate replay of that same floor pose is still a loop.
     const thawed = world({
       ...ninja,
       dt: 2.5,
@@ -2082,7 +2083,7 @@ describe("AI controller", () => {
 
     const floorY = 844 * 0.765;
     const r = 19.5;
-    // Landed after rim, contact cool gone, same pose — still no full jump.
+    // After wrapping around, a demo-band floor launch may re-attack.
     const landSame = world({
       ...climb,
       dt: 1.0,
@@ -2090,15 +2091,15 @@ describe("AI controller", () => {
       hitRim: false,
       ball: { x: hoop.x - 200, y: floorY - r, vx: 8, vy: 10, r },
     });
-    assert.equal(ai.tick(landSame), false);
-    assert.equal(ai.lastDecision()?.reason, "wrap-loop");
+    assert.equal(ai.tick(landSame), true, ai.lastDecision()?.reason);
+    assert.equal(ai.lastDecision()?.reason, "early-jump");
 
-    // Closer floor still has the same far-jump vector — hold, don't wrap again.
+    // Immediate replay of that floor pose stays a loop.
     const spaced = world({
       ...climb,
       dt: 0.05,
       wraps: 1,
-      ball: { x: hoop.x - 90, y: floorY - r, vx: 8, vy: 10, r },
+      ball: { x: hoop.x - 200, y: floorY - r, vx: 8, vy: 10, r },
     });
     assert.equal(ai.tick(spaced), false);
     assert.equal(ai.lastDecision()?.reason, "wrap-loop");
