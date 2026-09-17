@@ -142,8 +142,26 @@ export type RogueHud = {
   fusePicked: boolean;
 };
 
-const STAGE_SCORE = 200;
-export const ROGUE_CAMPAIGN_STAGES = 5;
+/** Campaign length (v1). Fusion slots planned at clears of stages 3 and 6. */
+export const ROGUE_CAMPAIGN_STAGES = 9;
+/**
+ * Per-stage score targets for campaign stages 1..9.
+ * Curves up so the finale sits above 10k; endless keeps climbing after that.
+ */
+const STAGE_TARGETS = [
+  0,
+  400, // 1
+  700, // 2
+  1_100, // 3 — planned fusion gate
+  1_700, // 4
+  2_600, // 5
+  4_000, // 6 — planned fusion gate
+  6_000, // 7
+  8_500, // 8
+  11_000, // 9 finale
+] as const;
+/** Stage-1 target; kept for callers that still import STAGE_SCORE. */
+const STAGE_SCORE = STAGE_TARGETS[1];
 const REVIVE_CAP = 2;
 const SOFT_DECAY = 0.988;
 
@@ -163,8 +181,12 @@ export const ROGUE_ORNAMENTS: Record<
   ]),
 );
 
-export function stageTarget(_stage: number): number {
-  return STAGE_SCORE;
+export function stageTarget(stage: number): number {
+  const s = Math.max(1, Math.floor(stage));
+  if (s <= ROGUE_CAMPAIGN_STAGES) return STAGE_TARGETS[s]!;
+  // Endless: keep raising the bar after the campaign finale.
+  const over = s - ROGUE_CAMPAIGN_STAGES;
+  return Math.round(STAGE_TARGETS[ROGUE_CAMPAIGN_STAGES]! * Math.pow(1.22, over));
 }
 
 export function createRogueRun(): RogueRun {

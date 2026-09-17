@@ -150,7 +150,7 @@ export const BALLS: BallKit[] = [
   {
     id: "glass",
     name: "玻璃球",
-    skill: "基础分从20起；打铁−1、打板−1、落地−4，空心+4，上限50",
+    skill: "基础分从30起；打铁/打板按冲击扣0–2/0–1，落地按下落高度扣0–10，空心+4，上限50",
     heat: false,
     src: "/game/balls/glass.webp?v=5",
     fallback: "/game/balls/glass.png?v=5",

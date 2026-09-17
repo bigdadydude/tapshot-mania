@@ -77,15 +77,12 @@ const ANTI_HOLE_DUR_MIN = 10;
 const ANTI_HOLE_DUR_MAX = 20;
 /** Antimatter field linger (sec) × this = seconds shaved off hole duration. */
 const ANTI_LINGER_PENALTY = 0.75;
-const GLASS_BASE_START = 20;
+const GLASS_BASE_START = 30;
 const GLASS_BASE_MAX = 50;
-const GLASS_RIM_HURT = 1;
-const GLASS_BANK_HURT = 1;
-const GLASS_BOARD_TOP_HURT = 1;
-const GLASS_LAND_HURT = 4;
+const GLASS_RIM_HURT_MAX = 2;
+const GLASS_BOARD_HURT_MAX = 1;
+const GLASS_LAND_HURT_MAX = 10;
 const GLASS_SWISH_HEAL = 4;
-/** Ignore soft scrapes / stuck contacts (glass restitution is 0). */
-const GLASS_IMPACT_MIN = 95;
 const MOVE_CHANCE_STEP = 0.004;
 const MOVE_CHANCE_MAX = 0.5;
 const BOLT_TICK = 0.1;
@@ -779,6 +776,8 @@ export function createGame(
   let glassRimHurtShot = false;
   let glassBoardHurtShot = false;
   let glassFloorHurtShot = false;
+  /** Highest point (lowest Y) reached while this glass shot is armed for floor hurt. */
+  let glassPeakY = 0;
   /** Lightning ball charge 0�?00. */
   let boltCharge = 0;
   let boltTickAcc = 0;
@@ -821,6 +820,7 @@ export function createGame(
     glassBoardHurtShot = false;
     glassFloorHurtShot = false;
     glassLand = true;
+    glassPeakY = ball.y;
   }
 
   function clearGlassShotHurts() {
@@ -828,6 +828,7 @@ export function createGame(
     glassBoardHurtShot = false;
     glassFloorHurtShot = false;
     glassLand = false;
+    glassPeakY = 0;
   }
 
   function isMinuteMode() {
@@ -1004,6 +1005,18 @@ export function createGame(
 
   function isGlass() {
     return kit().glass;
+  }
+
+  function glassScaledHurt(
+    speed: number,
+    dist: number,
+    maxHurt: number,
+    speedRef: number,
+    distRef: number,
+  ) {
+    const s = clamp(speed / Math.max(1, speedRef), 0, 1);
+    const d = clamp(dist / Math.max(1, distRef), 0, 1);
+    return Math.round(maxHurt * clamp(0.7 * s + 0.3 * d, 0, 1));
   }
 
   function hurtGlass(n: number, x: number, y: number) {
@@ -1456,7 +1469,7 @@ export function createGame(
     }
     if (id === "streakSave") {
       callouts.push({
-        text: "杩炲嚮淇濅綇",
+        text: "断连且连击≥3时询问",
         x: world.w * 0.5,
         y: world.h * 0.28,
         life: 1.1,
@@ -1473,7 +1486,7 @@ export function createGame(
       const sec = catalogOf("comboboost")?.comboBoostSec ?? 5;
       rogueRun.buffComboLeft = Math.max(rogueRun.buffComboLeft, sec);
       callouts.push({
-        text: "杩炲嚮淇濅綇",
+        text: "连击兴奋剂",
         x: world.w * 0.5,
         y: world.h * 0.28,
         life: 1,
@@ -1493,7 +1506,7 @@ export function createGame(
       const sec = catalogOf("ineedpower")?.powerBoostSec ?? 4;
       rogueRun.buffPowerLeft = Math.max(rogueRun.buffPowerLeft, sec);
       callouts.push({
-        text: "杩炲嚮淇濅綇",
+        text: "大力丸",
         x: world.w * 0.5,
         y: world.h * 0.28,
         life: 1,
@@ -1744,6 +1757,8 @@ export function createGame(
     h.couple = true;
     h.moving = false;
     h.targetX = h.x;
+    h.baseX = h.x;
+    h.baseY = h.y;
     h.active = true;
   }
 
@@ -2377,7 +2392,7 @@ export function createGame(
 
   function confirmRogueSettle() {
     if (!isRogueMode() || !rogueRun || phase !== "settle") return;
-    // Campaign clear (stage 5): stay on settle for End / Endless UI.
+    // Campaign clear (final stage): stay on settle for End / Endless UI.
     if (rogueRun.stage >= ROGUE_CAMPAIGN_STAGES) return;
     if (devOn) openDevRogueShop(rogueRun);
     else openRogueShop(rogueRun, ballId);
@@ -3347,7 +3362,15 @@ export function createGame(
         }
       }
       const ox = other.x;
-      other.x += (other.targetX - other.x) * (1 - Math.exp(-7.5 * dt));
+      // Keep frosted secondary stands still; only slide out after thaw.
+      if (other.frostLeft <= 0) {
+        other.x += (other.targetX - other.x) * (1 - Math.exp(-7.5 * dt));
+      } else {
+        other.moving = false;
+        other.targetX = other.x;
+        other.baseX = other.x;
+        other.baseY = other.y;
+      }
       nudgeNet(other, other.x - ox, 0);
       const gone = other.side < 0 ? other.x < -world.w * 0.28 : other.x > world.w * 1.28;
       if (gone) {
@@ -3470,6 +3493,9 @@ export function createGame(
         if (antiMatter && !holeOn && isAnti()) antiMatter.age += dt;
         tickRogueBuffs(dt);
       }
+      if (phase === "playing" && isGlass() && glassLand) {
+        glassPeakY = Math.min(glassPeakY, ball.y);
+      }
       collideFloor();
       stepBoltBoardTop(dt);
       stepBoltCharge(dt);
@@ -3541,6 +3567,14 @@ export function createGame(
 
   function stepHoop(h: Hoop, dt: number) {
     if (h.jolt > 0) h.jolt = Math.max(0, h.jolt - dt / 0.28);
+    // Frozen stands stay locked in place — no travel, no baseY settle.
+    if (h.frostLeft > 0 && h.frost > 0) {
+      h.moving = false;
+      h.targetX = h.x;
+      h.baseX = h.x;
+      h.baseY = h.y;
+      return;
+    }
     const ox = h.x;
     const oy = h.y;
     if (h.moving && h.active) {
@@ -3695,18 +3729,21 @@ export function createGame(
         score += 1;
         boltCharge = Math.max(0, boltCharge - 1);
         if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
-        callouts.push({ text: "+1 / -1%", x: ball.x, y: ball.y - ball.r * 2, life: 0.6, max: 0.6, kind: "base" });
+        callouts.push({ text: "+1", x: ball.x, y: ball.y - ball.r * 2, life: 0.6, max: 0.6, kind: "base" });
         noteBest();
       }
       if (
         !ball.scored &&
         !throughHole &&
         isGlass() &&
-        !glassRimHurtShot &&
-        impact >= GLASS_IMPACT_MIN
+        !glassRimHurtShot
       ) {
-        glassRimHurtShot = true;
-        hurtGlass(GLASS_RIM_HURT, ball.x, ball.y);
+        const rimDist = Math.hypot(ball.x - h.x, ball.y - h.y);
+        const dmg = glassScaledHurt(impact, rimDist, GLASS_RIM_HURT_MAX, 520, h.inner * 2.4);
+        if (dmg > 0) {
+          glassRimHurtShot = true;
+          hurtGlass(dmg, ball.x, ball.y);
+        }
       }
     }
     if (rimAudioArmed && !ball.scored && !throughHole && impact > 160) {
@@ -3783,13 +3820,21 @@ export function createGame(
     if (impact > 90) audio.board(Math.min(1, (impact - 60) / 520));
     if (h.active && boardHitLock <= 0 && !ball.scored) {
       boardHitLock = 0.08;
-      if (isGlass() && !glassBoardHurtShot && impact >= GLASS_IMPACT_MIN) {
-        glassBoardHurtShot = true;
-        hurtGlass(
-          topHit ? GLASS_BOARD_TOP_HURT : GLASS_BANK_HURT,
-          ball.x,
-          ball.y,
+      if (isGlass() && !glassBoardHurtShot) {
+        const boardCx = (left + right) * 0.5;
+        const boardCy = (top + bottom) * 0.5;
+        const boardDist = Math.hypot(ball.x - boardCx, ball.y - boardCy);
+        const dmg = glassScaledHurt(
+          impact,
+          boardDist,
+          GLASS_BOARD_HURT_MAX,
+          520,
+          Math.max(g.visW, g.bh) * 0.75,
         );
+        if (dmg > 0) {
+          glassBoardHurtShot = true;
+          hurtGlass(dmg, ball.x, ball.y);
+        }
       }
     }
   }
@@ -3981,6 +4026,21 @@ export function createGame(
     if (ball.y + ball.r < world.floorY) return;
     const incoming = ball.vy;
     ball.y = world.floorY - ball.r;
+    if (
+      isGlass() &&
+      glassLand &&
+      !glassFloorHurtShot &&
+      phase === "playing"
+    ) {
+      const floorContact = world.floorY - ball.r;
+      const fallH = Math.max(0, floorContact - glassPeakY);
+      // Map fall height to [0, 10]: short hops barely hurt, near full-court drop maxes out.
+      const heightRef = Math.max(140, world.h * 0.52);
+      const dmg = Math.round(GLASS_LAND_HURT_MAX * clamp(fallH / heightRef, 0, 1));
+      glassFloorHurtShot = true;
+      glassLand = false;
+      if (dmg > 0) hurtGlass(dmg, ball.x, ball.y - ball.r * 2.2);
+    }
     if (incoming > 40) {
       const rest = bounceRest(incoming > 140 ? "floorHi" : "floorLo");
       const rebound = incoming * rest;
@@ -3994,17 +4054,6 @@ export function createGame(
         if (phase !== "title" && incoming > 120) {
           audio.bounce(Math.min(1, incoming / 900));
         }
-      }
-      if (
-        isGlass() &&
-        glassLand &&
-        !glassFloorHurtShot &&
-        phase === "playing" &&
-        incoming > 40
-      ) {
-        glassFloorHurtShot = true;
-        glassLand = false;
-        hurtGlass(GLASS_LAND_HURT, ball.x, ball.y - ball.r * 2.2);
       }
     } else if (incoming > 0) {
       ball.vy = 0;
@@ -4489,7 +4538,7 @@ export function createGame(
     }
     if (freed && prisonBonus > 0) {
       callouts.push({
-        text: "杩炲嚮淇濅綇",
+        text: `+${prisonBonus}`,
         x: popX,
         y: popY - popInner * RIM_RY + 18,
         capY: boardTop + 8,
@@ -4503,7 +4552,7 @@ export function createGame(
     }
     if (frostGain > 0) {
       callouts.push({
-        text: "杩炲嚮淇濅綇",
+        text: `+${frostBonus}`,
         x: popX,
         y: popY - popInner * RIM_RY + 18,
         capY: boardTop + 8,
@@ -4609,6 +4658,10 @@ export function createGame(
 
     if (scored.frostLeft > 0) {
       scored.active = true;
+      scored.moving = false;
+      scored.baseX = scored.x;
+      scored.baseY = scored.y;
+      scored.targetX = scored.x;
     } else {
       scored.active = false;
       // Shattered stands are already dismissed (couple false).

@@ -596,7 +596,7 @@ function TitleCard({
           {playMode === "minute"
             ? "首球后倒计时 60 秒，拼高分"
             : playMode === "rogue"
-              ? "闯关攒金，商店强化，通关后无限"
+              ? "9 关闯关攒金，商店强化，终关上万，通关后无限"
               : "点击弹跳，把球投进左右篮筐"}
         </p>
         <p className="mt-1 text-xs text-subtle">
