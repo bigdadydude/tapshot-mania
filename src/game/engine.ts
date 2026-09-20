@@ -5411,17 +5411,14 @@ export function createGame(
 }
 
 function layout(cssW: number, cssH: number): World {
-  // Always contain into 9:16 so wall UV / searchlights match the authored frame
-  // on every phone and desktop pane (side bars when wide, top/bottom when tall).
+  // Fill the canvas. Wide desktops still get side bars so gameplay stays
+  // portrait; tall phones use the full height — searchlights stay on wall UV.
   const target = 9 / 16;
   let w = cssW;
   let h = cssH;
   if (cssW / cssH > target) {
     h = cssH;
     w = h * target;
-  } else if (cssW / cssH < target) {
-    w = cssW;
-    h = w / target;
   }
   const ballR = Math.max(17, Math.min(w, h) * 0.05);
   return {

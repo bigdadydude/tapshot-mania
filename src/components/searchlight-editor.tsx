@@ -131,21 +131,9 @@ export function SearchlightEditor({ onClose }: { onClose: () => void }) {
   const metrics = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    // Same 9:16 contain as engine layout — UV authored here matches every phone.
-    const target = 9 / 16;
-    let w = canvas.width;
-    let h = canvas.height;
-    let ox = 0;
-    let oy = 0;
-    if (w / h > target) {
-      h = canvas.height;
-      w = h * target;
-      ox = (canvas.width - w) * 0.5;
-    } else if (w / h < target) {
-      w = canvas.width;
-      h = w / target;
-      oy = (canvas.height - h) * 0.5;
-    }
+    // Full canvas (same as tall phones). Lamp UV is on the wall quad, not the screen.
+    const w = canvas.width;
+    const h = canvas.height;
     const floorY = h * FLOOR_Y_FRAC;
     const wall = arts.current.wall;
     const quad = wallQuad(
@@ -153,7 +141,7 @@ export function SearchlightEditor({ onClose }: { onClose: () => void }) {
       wall?.naturalWidth || undefined,
       wall?.naturalHeight || undefined,
     );
-    return { canvasW: canvas.width, canvasH: canvas.height, w, h, ox, oy, floorY, quad };
+    return { w, h, floorY, quad };
   }, []);
 
   const draw = useCallback(() => {
@@ -162,19 +150,13 @@ export function SearchlightEditor({ onClose }: { onClose: () => void }) {
     if (!canvas || !m) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const { canvasW, canvasH, w, h, ox, oy, floorY, quad } = m;
+    const { w, h, floorY, quad } = m;
     const { wall, court, sprite } = arts.current;
     const left = layoutRef.current.light;
     const lights = expandedLights(layoutRef.current);
     const showPreview = previewRef.current;
 
-    ctx.clearRect(0, 0, canvasW, canvasH);
-    ctx.fillStyle = "#0c1016";
-    ctx.fillRect(0, 0, canvasW, canvasH);
-
-    ctx.save();
-    ctx.translate(ox, oy);
-
+    ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = "#1b2430";
     ctx.fillRect(0, 0, w, h);
 
@@ -303,7 +285,6 @@ export function SearchlightEditor({ onClose }: { onClose: () => void }) {
     ctx.font = `600 ${Math.round(w * 0.028)}px system-ui,sans-serif`;
     ctx.textAlign = "left";
     ctx.fillText("监狱 · 探照灯布置（只编左灯，右灯自动镜像）", w * 0.04, h * 0.045);
-    ctx.restore();
   }, [metrics, emitSub]);
 
   useEffect(() => {
@@ -351,11 +332,9 @@ export function SearchlightEditor({ onClose }: { onClose: () => void }) {
     const m = metrics();
     if (!canvas || !m) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width / Math.max(1, rect.width);
-    const sy = canvas.height / Math.max(1, rect.height);
     return {
-      x: ((e.clientX - rect.left) * sx - m.ox) ,
-      y: ((e.clientY - rect.top) * sy - m.oy),
+      x: ((e.clientX - rect.left) / rect.width) * m.w,
+      y: ((e.clientY - rect.top) / rect.height) * m.h,
     };
   };
 
