@@ -61,6 +61,9 @@ const KEY_V3 = "tq-prison-searchlights-v3";
 const KEY_V2 = "tq-prison-searchlights-v2";
 const KEY_V1 = "tq-prison-searchlights-v1";
 
+/** Layout from /public JSON once fetched; falls back to in-code defaults. */
+let shippedLayout: SearchlightLayout | null = null;
+
 export const SEARCHLIGHT_SPRITE_FALLBACK = "/game/modifiers/searchlight.png?v=1";
 export const FLOOR_Y_FRAC = 0.765;
 export const PRISON_WALL_W = 1792;
@@ -68,7 +71,6 @@ export const PRISON_WALL_H = 2432;
 export const WALL_CROP = 0.962;
 export const SEARCHLIGHT_ASPECT = 185 / 118;
 
-const DEFAULT_CONE = 0.09;
 const DEFAULT_REACH = 0.85;
 
 export function wallQuad(
@@ -76,8 +78,10 @@ export function wallQuad(
   wallW = PRISON_WALL_W,
   wallH = PRISON_WALL_H,
 ): WallQuad {
-  const sw = wallW;
-  const sh = wallH * WALL_CROP;
+  // Match render.ts wallLayout: fit width, then shrink to floorY, bottom-align.
+  // UV (x,y) on this quad is resolution-independent — same tower seat on every phone.
+  const sw = wallW > 0 ? wallW : PRISON_WALL_W;
+  const sh = (wallH > 0 ? wallH : PRISON_WALL_H) * WALL_CROP;
   let scale = world.w / sw;
   if (sh * scale > world.floorY) scale = world.floorY / sh;
   const dw = sw * scale;
@@ -90,24 +94,35 @@ export function wallQuad(
   };
 }
 
+/** Sprite size scales with the wall quad so lamps stay glued to towers on all aspects. */
+export function spriteSize(
+  light: SearchlightPlacement,
+  worldW: number,
+  wallDw?: number,
+) {
+  const basis = wallDw && wallDw > 0 ? wallDw : worldW;
+  const dw = light.scale * basis;
+  return { dw, dh: dw / SEARCHLIGHT_ASPECT };
+}
+
 function leftTemplate(): SearchlightPlacement {
   return {
     id: "left",
     side: "left",
-    x: 0.21782269122081632,
-    y: 0.26616149475450884,
+    x: 0.09611733607267993,
+    y: 0.2561770653507554,
     scale: 0.16,
-    angle: 0.5231207360303503,
+    angle: 0.7491390445104689,
     pivotU: 0.37071914021031327,
     pivotV: 0.8065719322526332,
-    emitU: 0.6466769007772668,
-    emitV: 0.48266258261619127,
-    emitRX: 0.18,
-    emitRY: 0.12,
+    emitU: 0.6138473961411212,
+    emitV: 0.4815138214420872,
+    emitRX: 0.18929977728850222,
+    emitRY: 0.1199511442680537,
     // Long axis across the aperture; beam (⊥ major) faces along the body toward court.
-    emitRot: Math.PI * 0.5,
-    beamOffset: 0,
-    cone: DEFAULT_CONE,
+    emitRot: 1.500853318924632,
+    beamOffset: -0.06994300787026453,
+    cone: 0.09697279579996654,
     beamReach: DEFAULT_REACH,
     flipX: false,
   };
@@ -218,15 +233,28 @@ export function normalizeSearchlightLayout(raw: unknown): SearchlightLayout {
   };
 }
 
-export function loadSearchlightLayout(): SearchlightLayout {
-  if (typeof localStorage === "undefined") return defaultSearchlightLayout();
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return defaultSearchlightLayout();
-    return normalizeSearchlightLayout(JSON.parse(raw));
-  } catch {
-    return defaultSearchlightLayout();
+export function loadSearchlightLayout(_opts?: { allowLocal?: boolean }): SearchlightLayout {
+  // Prefer editor draft in localStorage (same browser), else shipped JSON, else code defaults.
+  if (typeof localStorage !== "undefined") {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) return normalizeSearchlightLayout(JSON.parse(raw));
+    } catch {
+      /* fall through */
+    }
   }
+  return shippedLayout ?? defaultSearchlightLayout();
+}
+
+/** Prefetch the repo layout so phones don't depend on desktop localStorage edits. */
+export function primeSearchlightLayout() {
+  if (typeof fetch === "undefined") return;
+  void fetch("/game/modifiers/searchlight-layout.json?v=3")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => {
+      if (j) shippedLayout = normalizeSearchlightLayout(j);
+    })
+    .catch(() => {});
 }
 
 export function saveSearchlightLayout(layout: SearchlightLayout): SearchlightLayout {
@@ -244,11 +272,6 @@ export function clearSearchlightLayout() {
     localStorage.removeItem(KEY_V2);
     localStorage.removeItem(KEY_V1);
   }
-}
-
-export function spriteSize(light: SearchlightPlacement, worldW: number) {
-  const dw = light.scale * worldW;
-  return { dw, dh: dw / SEARCHLIGHT_ASPECT };
 }
 
 export function placementPivot(
@@ -269,7 +292,7 @@ export function placementEmit(
   quad: WallQuad = wallQuad(world),
 ) {
   const piv = placementPivot(world, light, quad);
-  const { dw, dh } = spriteSize(light, world.w);
+  const { dw, dh } = spriteSize(light, world.w, quad.dw);
   let lx = (light.emitU - light.pivotU) * dw;
   const ly = (light.emitV - light.pivotV) * dh;
   if (light.flipX) lx = -lx;
@@ -342,8 +365,12 @@ export function beamLocalOffset(
   return worldBeamAngle(light, bodyAngle, world, quad) - bodyAngle;
 }
 
-export function emitEllipseAxes(world: { w: number }, light: SearchlightPlacement) {
-  const { dw } = spriteSize(light, world.w);
+export function emitEllipseAxes(
+  world: { w: number },
+  light: SearchlightPlacement,
+  wallDw?: number,
+) {
+  const { dw } = spriteSize(light, world.w, wallDw);
   return {
     rx: Math.max(3, light.emitRX * dw),
     ry: Math.max(3, light.emitRY * dw),
@@ -369,7 +396,7 @@ export function emitMajorEnds(
   quad: WallQuad = wallQuad(world),
 ) {
   const emit = placementEmit(world, light, bodyAngle, quad);
-  const { rx, ry } = emitEllipseAxes(world, light);
+  const { rx, ry } = emitEllipseAxes(world, light, quad.dw);
   const rot = worldEmitRot(light, bodyAngle);
   const major = Math.max(rx, ry);
   const majorAng = rx >= ry ? rot : rot + Math.PI * 0.5;
@@ -442,7 +469,7 @@ export function drawEmitEllipse(
   style?: { stroke?: string; fill?: boolean; cold?: boolean; alpha?: number },
 ) {
   const emit = placementEmit(world, light, bodyAngle, quad);
-  const { rx, ry } = emitEllipseAxes(world, light);
+  const { rx, ry } = emitEllipseAxes(world, light, quad.dw);
   const rot = worldEmitRot(light, bodyAngle);
   const a = style?.alpha ?? 1;
   ctx.save();

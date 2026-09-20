@@ -76,7 +76,7 @@ function drawLamp(
   selected: boolean,
 ) {
   const piv = placementPivot(world, light, quad);
-  const { dw, dh } = spriteSize(light, world.w);
+  const { dw, dh } = spriteSize(light, world.w, quad.dw);
   ctx.save();
   ctx.translate(piv.x, piv.y);
   ctx.rotate(light.angle);
@@ -131,8 +131,21 @@ export function SearchlightEditor({ onClose }: { onClose: () => void }) {
   const metrics = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    const w = canvas.width;
-    const h = canvas.height;
+    // Same 9:16 contain as engine layout — UV authored here matches every phone.
+    const target = 9 / 16;
+    let w = canvas.width;
+    let h = canvas.height;
+    let ox = 0;
+    let oy = 0;
+    if (w / h > target) {
+      h = canvas.height;
+      w = h * target;
+      ox = (canvas.width - w) * 0.5;
+    } else if (w / h < target) {
+      w = canvas.width;
+      h = w / target;
+      oy = (canvas.height - h) * 0.5;
+    }
     const floorY = h * FLOOR_Y_FRAC;
     const wall = arts.current.wall;
     const quad = wallQuad(
@@ -140,7 +153,7 @@ export function SearchlightEditor({ onClose }: { onClose: () => void }) {
       wall?.naturalWidth || undefined,
       wall?.naturalHeight || undefined,
     );
-    return { w, h, floorY, quad };
+    return { canvasW: canvas.width, canvasH: canvas.height, w, h, ox, oy, floorY, quad };
   }, []);
 
   const draw = useCallback(() => {
@@ -149,13 +162,19 @@ export function SearchlightEditor({ onClose }: { onClose: () => void }) {
     if (!canvas || !m) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const { w, h, floorY, quad } = m;
+    const { canvasW, canvasH, w, h, ox, oy, floorY, quad } = m;
     const { wall, court, sprite } = arts.current;
     const left = layoutRef.current.light;
     const lights = expandedLights(layoutRef.current);
     const showPreview = previewRef.current;
 
-    ctx.clearRect(0, 0, w, h);
+    ctx.clearRect(0, 0, canvasW, canvasH);
+    ctx.fillStyle = "#0c1016";
+    ctx.fillRect(0, 0, canvasW, canvasH);
+
+    ctx.save();
+    ctx.translate(ox, oy);
+
     ctx.fillStyle = "#1b2430";
     ctx.fillRect(0, 0, w, h);
 
@@ -284,6 +303,7 @@ export function SearchlightEditor({ onClose }: { onClose: () => void }) {
     ctx.font = `600 ${Math.round(w * 0.028)}px system-ui,sans-serif`;
     ctx.textAlign = "left";
     ctx.fillText("监狱 · 探照灯布置（只编左灯，右灯自动镜像）", w * 0.04, h * 0.045);
+    ctx.restore();
   }, [metrics, emitSub]);
 
   useEffect(() => {
@@ -331,15 +351,17 @@ export function SearchlightEditor({ onClose }: { onClose: () => void }) {
     const m = metrics();
     if (!canvas || !m) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / Math.max(1, rect.width);
+    const sy = canvas.height / Math.max(1, rect.height);
     return {
-      x: ((e.clientX - rect.left) / rect.width) * m.w,
-      y: ((e.clientY - rect.top) / rect.height) * m.h,
+      x: ((e.clientX - rect.left) * sx - m.ox) ,
+      y: ((e.clientY - rect.top) * sy - m.oy),
     };
   };
 
   const worldToSpriteUv = (light: SearchlightPlacement, wx: number, wy: number, m: NonNullable<ReturnType<typeof metrics>>) => {
     const { w, floorY, quad } = m;
-    const { dw, dh } = spriteSize(light, w);
+    const { dw, dh } = spriteSize(light, w, m.quad.dw);
     const piv = placementPivot({ w, floorY }, light, quad);
     const lx = wx - piv.x;
     const ly = wy - piv.y;
@@ -381,11 +403,11 @@ export function SearchlightEditor({ onClose }: { onClose: () => void }) {
       } else if (emitSub === "rx") {
         dragRef.current = { kind: "emit-rx" };
         const dist = Math.hypot(p.x - emit.x, p.y - emit.y);
-        patchLeft({ emitRX: clamp(dist / spriteSize(light, w).dw, 0.03, 0.7) });
+        patchLeft({ emitRX: clamp(dist / spriteSize(light, w, quad.dw).dw, 0.03, 0.7) });
       } else if (emitSub === "ry") {
         dragRef.current = { kind: "emit-ry" };
         const dist = Math.hypot(p.x - emit.x, p.y - emit.y);
-        patchLeft({ emitRY: clamp(dist / spriteSize(light, w).dw, 0.03, 0.7) });
+        patchLeft({ emitRY: clamp(dist / spriteSize(light, w, quad.dw).dw, 0.03, 0.7) });
       } else if (emitSub === "ellipse") {
         dragRef.current = { kind: "emit-ellipse" };
         patchLeft({ emitRot: Math.atan2(p.y - emit.y, p.x - emit.x) - light.angle });
@@ -420,7 +442,7 @@ export function SearchlightEditor({ onClose }: { onClose: () => void }) {
     const { w, floorY, quad } = m;
     const piv = placementPivot({ w, floorY }, light, quad);
     const emit = placementEmit({ w, floorY }, light, light.angle, quad);
-    const { dw } = spriteSize(light, w);
+    const { dw } = spriteSize(light, w, quad.dw);
 
     if (drag.kind === "move") {
       patchLeft({

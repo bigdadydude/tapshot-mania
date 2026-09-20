@@ -2,6 +2,7 @@
 
 import type { Ball, Hoop, World } from "../types";
 import type { ModifierHost, StageModifier, YardLightsHud } from "../modifiers";
+import { artImage } from "../art";
 import {
   coneGeometry,
   drawSearchlightBeam,
@@ -15,7 +16,14 @@ import {
   worldBeamAngle,
   type SearchlightLayout,
   type SearchlightPlacement,
+  type WallQuad,
 } from "../searchlight-layout";
+
+/** Same wall quad the renderer draws — lamps stay glued across all aspects. */
+function yardWall(world: World): WallQuad {
+  const img = artImage("wall");
+  return wallQuad(world, img?.naturalWidth, img?.naturalHeight);
+}
 
 function angleDelta(a: number, b: number) {
   return ((a - b + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
@@ -171,10 +179,10 @@ function liveBodyAngle(
   aimX: number,
   aimY: number,
 ) {
-  const piv = placementPivot(world, light);
+  const q = yardWall(world);
+  const piv = placementPivot(world, light, q);
   const side: -1 | 1 = light.side === "left" ? -1 : 1;
   const clamped = clampAimHemisphere(side, piv.x, piv.y, aimX, aimY);
-  const q = wallQuad(world);
   const want = Math.atan2(clamped.y - piv.y, clamped.x - piv.x);
   const ml = majorLocalAngle(light);
   // Two bodies whose major-perp can emit along `want` (differ by π).
@@ -230,13 +238,14 @@ function clampSpotAim(
   ay: number,
 ) {
   if (!light) return { x: ax, y: ay };
-  const piv = placementPivot(world, light);
+  const piv = placementPivot(world, light, yardWall(world));
   return clampAimHemisphere(side, piv.x, piv.y, ax, ay);
 }
 
 function homeAim(world: World, light: SearchlightPlacement) {
-  const piv = placementPivot(world, light);
-  const beam = worldBeamAngle(light, light.angle, world, wallQuad(world));
+  const q = yardWall(world);
+  const piv = placementPivot(world, light, q);
+  const beam = worldBeamAngle(light, light.angle, world, q);
   const reach = Math.hypot(world.w, world.floorY) * 0.42;
   return clampAimHemisphere(
     light.side === "left" ? -1 : 1,
@@ -268,9 +277,9 @@ function drawSearchlightSprite(
   fx: LightFx,
   time: number,
 ) {
-  const quad = wallQuad(world);
+  const quad = yardWall(world);
   const piv = placementPivot(world, light, quad);
-  const { dw, dh } = spriteSize(light, world.w);
+  const { dw, dh } = spriteSize(light, world.w, quad.dw);
   const img = ensureSprite(layout.spriteSrc);
   const shake =
     fx.shake > 0
@@ -316,7 +325,7 @@ function pickTarget(
     y = world.floorY * (0.45 + Math.random() * 0.42);
   }
   if (side !== undefined && light) {
-    const piv = placementPivot(world, light);
+    const piv = placementPivot(world, light, yardWall(world));
     return clampAimHemisphere(side, piv.x, piv.y, x, y);
   }
   return { x, y };
@@ -463,7 +472,8 @@ function hoopHitRadius(h: Hoop) {
 }
 
 function lightHitRadius(world: World, light: SearchlightPlacement) {
-  const { dw } = spriteSize(light, world.w);
+  const quad = yardWall(world);
+  const { dw } = spriteSize(light, world.w, quad.dw);
   return Math.max(18, dw * 0.28);
 }
 
@@ -731,7 +741,7 @@ export function createYardLights(): StageModifier {
               spot?.ax ?? world.w * 0.5,
               spot?.ay ?? world.floorY * 0.7,
             );
-      const emit = placementEmit(world, light, bodyAng, wallQuad(world));
+      const emit = placementEmit(world, light, bodyAng, yardWall(world));
       const r = lightHitRadius(world, light) * 1.5;
       if (Math.abs(emit.x - x) <= r) hitLight(key, host);
     }
@@ -845,18 +855,14 @@ export function createYardLights(): StageModifier {
         if (!lightHunting(lightFx[sideKey])) continue;
         const light = lightForSide(layout, s.side);
         if (!light) continue;
-        const aim = clampAimHemisphere(
-          s.side,
-          placementPivot(world, light).x,
-          placementPivot(world, light).y,
-          s.ax,
-          s.ay,
-        );
+        const quad = yardWall(world);
+        const piv = placementPivot(world, light, quad);
+        const aim = clampAimHemisphere(s.side, piv.x, piv.y, s.ax, s.ay);
         s.ax = aim.x;
         s.ay = aim.y;
         const bodyAng = liveBodyAngle(world, light, s.ax, s.ay);
         const maxLen = Math.hypot(world.w, world.floorY) * 1.05;
-        const geo = coneGeometry(world, light, bodyAng, wallQuad(world), aim);
+        const geo = coneGeometry(world, light, bodyAng, quad, aim);
         if (inCone(geo.apex.x, geo.apex.y, s.ax, s.ay, ball.x, ball.y, geo.half, maxLen + geo.back)) {
           if (sideKey === "left") litLeft = true;
           else litRight = true;
@@ -887,7 +893,7 @@ export function createYardLights(): StageModifier {
           s.ax += (s.tx - s.ax) * k;
           s.ay += (s.ty - s.ay) * k;
           if (light) {
-            const piv = placementPivot(world, light);
+            const piv = placementPivot(world, light, yardWall(world));
             const c = clampAimHemisphere(s.side, piv.x, piv.y, s.ax, s.ay);
             s.ax = c.x;
             s.ay = c.y;
@@ -914,7 +920,7 @@ export function createYardLights(): StageModifier {
           let tx = lead.x;
           let ty = lead.y;
           if (light) {
-            const piv = placementPivot(world, light);
+            const piv = placementPivot(world, light, yardWall(world));
             const c = clampAimHemisphere(s.side, piv.x, piv.y, tx, ty);
             tx = c.x;
             ty = c.y;
@@ -941,7 +947,7 @@ export function createYardLights(): StageModifier {
               let bx = ball.x;
               let by = ball.y;
               if (light) {
-                const piv = placementPivot(world, light);
+                const piv = placementPivot(world, light, yardWall(world));
                 const c = clampAimHemisphere(s.side, piv.x, piv.y, bx, by);
                 bx = c.x;
                 by = c.y;
@@ -972,7 +978,7 @@ export function createYardLights(): StageModifier {
           let bx = ball.x;
           let by = ball.y;
           if (light) {
-            const piv = placementPivot(world, light);
+            const piv = placementPivot(world, light, yardWall(world));
             const c = clampAimHemisphere(s.side, piv.x, piv.y, bx, by);
             bx = c.x;
             by = c.y;
@@ -1078,7 +1084,7 @@ export function createYardLights(): StageModifier {
                   spot?.ax ?? world.w * 0.5,
                   spot?.ay ?? world.floorY * 0.7,
                 );
-          const emit = placementEmit(world, light, bodyAng, wallQuad(world));
+          const emit = placementEmit(world, light, bodyAng, yardWall(world));
           if (segmentHitsCircle(x0, y0, b.x, b.y, emit.x, emit.y, lightHitRadius(world, light))) {
             hitLight(key, host);
             b.x = -9999;
@@ -1158,7 +1164,7 @@ export function createYardLights(): StageModifier {
           drawSearchlightBeam(ctx, world, light, {
             locking: s.lock > 0.02 && lightHunting(fx),
             bodyAngle: bodyAng,
-            quad: wallQuad(world),
+            quad: yardWall(world),
             disabled: fx.out > 0,
             pulse: wakePulse(fx),
             aim: { x: s.ax, y: s.ay },

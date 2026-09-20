@@ -1,6 +1,7 @@
 import { createAudio } from "./audio";
 import { primeArt, artProgress, reloadSceneArt } from "./art";
 import { canvasDpr } from "./perf";
+import { primeSearchlightLayout } from "./searchlight-layout";
 import {
   buildNet,
   collapseNet,
@@ -167,6 +168,7 @@ export function createGame(
   setScene(save.scene === "prison" ? "prison" : "street");
   reloadSceneArt();
   primeArt();
+  primeSearchlightLayout();
   const audio = createAudio();
   const reduced =
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -5409,12 +5411,17 @@ export function createGame(
 }
 
 function layout(cssW: number, cssH: number): World {
+  // Always contain into 9:16 so wall UV / searchlights match the authored frame
+  // on every phone and desktop pane (side bars when wide, top/bottom when tall).
   const target = 9 / 16;
   let w = cssW;
   let h = cssH;
   if (cssW / cssH > target) {
     h = cssH;
     w = h * target;
+  } else if (cssW / cssH < target) {
+    w = cssW;
+    h = w / target;
   }
   const ballR = Math.max(17, Math.min(w, h) * 0.05);
   return {
@@ -5424,7 +5431,7 @@ function layout(cssW: number, cssH: number): World {
     oy: (cssH - h) / 2,
     cssW,
     cssH,
-    floorY: h * 0.765,
+    floorY: h * 0.765, // keep in sync with FLOOR_Y_FRAC (searchlight-layout)
     ballR,
     hoopInner: Math.max(22, ballR * 1.42),
     tube: Math.max(4, ballR * 0.22),
