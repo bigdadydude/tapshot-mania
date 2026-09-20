@@ -1,6 +1,7 @@
 /** Roguelike run tables and pure helpers. */
 
 import type { BallId } from "./balls";
+import { rollStageModifier, type ModifierId } from "./modifiers";
 import {
   activeCatalog,
   RARITY_WEIGHT,
@@ -101,6 +102,8 @@ export type RogueRun = {
   fuseBall: BallId | null;
   /** Whether the open-run fuse picker was dismissed (incl. 不融合). */
   fusePicked: boolean;
+  /** Active stage modifier for this stage (shared with story later). */
+  modifier: ModifierId;
 };
 
 export type RogueHud = {
@@ -140,6 +143,7 @@ export type RogueHud = {
   pendingFlameReuse: boolean;
   fuseBall: BallId | null;
   fusePicked: boolean;
+  modifier: ModifierId;
 };
 
 /** Campaign length (v1). Fusion slots planned at clears of stages 3 and 6. */
@@ -230,6 +234,7 @@ export function createRogueRun(): RogueRun {
     rollGoldAcc: 0,
     fuseBall: null,
     fusePicked: false,
+    modifier: rollStageModifier(1),
   };
 }
 
@@ -723,6 +728,7 @@ export function advanceRogueStage(run: RogueRun): void {
   run.buffFlameLeft = 0;
   run.pendingFlameReuse = false;
   run.whatsThatAcc = 0;
+  run.modifier = rollStageModifier(run.stage);
 }
 
 export function toRogueHud(run: RogueRun | null): RogueHud | null {
@@ -764,6 +770,7 @@ export function toRogueHud(run: RogueRun | null): RogueHud | null {
     pendingFlameReuse: run.pendingFlameReuse,
     fuseBall: run.fuseBall,
     fusePicked: run.fusePicked,
+    modifier: run.modifier,
   };
 }
 

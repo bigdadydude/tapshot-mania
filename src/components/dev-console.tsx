@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, Pause } from "lucide-react";
 import {
   DEV_FX,
   DEV_GRAF,
+  DEV_MODIFIERS,
   DEV_MOVES,
   DEV_PHYS,
   DEV_PLAY_MODES,
@@ -14,6 +15,7 @@ import {
 import type { DevHud } from "@/game/dev";
 import { playableBalls } from "@/game/balls";
 import type { PlayMode } from "@/game/types";
+import { modifierName } from "@/game/modifiers";
 import { cn } from "@/lib/utils";
 
 type Tab = "match" | "fx" | "phys" | "world";
@@ -24,12 +26,14 @@ export function DevConsole({
   combo,
   onCmd,
   onMenu,
+  onSearchlights,
 }: {
   dev: DevHud;
   score: number;
   combo: number;
   onCmd: (cmd: DevCmd) => void;
   onMenu: () => void;
+  onSearchlights: () => void;
 }) {
   const [open, setOpen] = useState(true);
   const [tab, setTab] = useState<Tab>("match");
@@ -90,7 +94,10 @@ export function DevConsole({
                 ballId={dev.ballId}
                 fuseBall={dev.fuseBall}
                 playMode={dev.playMode}
+                modifierForce={dev.modifierForce}
+                modifier={dev.modifier}
                 onCmd={onCmd}
+                onSearchlights={onSearchlights}
               />
             ) : null}
           </div>
@@ -263,13 +270,19 @@ function WorldTab({
   ballId,
   fuseBall,
   playMode,
+  modifierForce,
+  modifier,
   onCmd,
+  onSearchlights,
 }: {
   scene: DevHud["scene"];
   ballId: DevHud["ballId"];
   fuseBall: DevHud["fuseBall"];
   playMode: PlayMode;
+  modifierForce: DevHud["modifierForce"];
+  modifier: DevHud["modifier"];
   onCmd: (cmd: DevCmd) => void;
+  onSearchlights: () => void;
 }) {
   return (
     <div>
@@ -290,6 +303,16 @@ function WorldTab({
             <Chip label="分数清零" onClick={() => onCmd({ t: "rogueTool", kind: "clearScore" })} />
             <Chip label="开商店" onClick={() => onCmd({ t: "rogueTool", kind: "shop" })} />
             <Chip label="通关结算" onClick={() => onCmd({ t: "rogueTool", kind: "clearSettle" })} />
+          </Row>
+          <Row title={`关卡词条 · 当前 ${modifierName(modifier)}`}>
+            {DEV_MODIFIERS.map((m) => (
+              <Chip
+                key={m.id}
+                label={m.label}
+                on={m.id === "auto" ? modifierForce == null : modifierForce === m.id}
+                onClick={() => onCmd({ t: "modifier", id: m.id })}
+              />
+            ))}
           </Row>
           <Row title="融合球">
             {playableBalls()
@@ -320,11 +343,14 @@ function WorldTab({
           <Chip key={b.id} label={b.name} on={ballId === b.id} onClick={() => onCmd({ t: "skin", id: b.id })} />
         ))}
       </Row>
+      <Row title="监狱工具">
+        <Chip label="探照灯布置" onClick={onSearchlights} />
+      </Row>
       <Row title="沙盒">
         <Chip label="退出开发者" onClick={() => onCmd({ t: "exit" })} />
       </Row>
       <p className="text-xs leading-relaxed text-subtle">
-        选「肉鸽」可在沙盒里测关卡/商店/饰品。空空间没有墙和天空，街头会载入当前场景包。融合球即时叠加技能，外观仍用主球。
+        选「肉鸽」可在沙盒里测关卡/商店/饰品。空空间没有墙和天空，街头会载入当前场景包。融合球即时叠加技能，外观仍用主球。「探照灯布置」打开监狱墙面编辑页，可拖动灯位与旋转锚点并保存。
       </p>
     </div>
   );

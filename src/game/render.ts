@@ -44,7 +44,7 @@ export function drawScene(
   cloudSy = 1,
   graf: { show: GrafKey | null; incoming: { key: GrafKey; p: number } | null } | null = null,
   gfx: Gfx = DEFAULT_GFX,
-  backdrop: "void" | "street" = "street",
+  backdrop: "void" | "street" | "prison" = "street",
   ballId: BallId = DEFAULT_BALL,
   glassBase = -1,
   chain: Chain | null = null,
@@ -57,6 +57,9 @@ export function drawScene(
   scoreOverride: string | null = null,
   boltCharge = -1,
   boltTrail: { x: number; y: number }[] = [],
+  barLabel: string | null = null,
+  scoreFlash = false,
+  afterCourt?: ((ctx: CanvasRenderingContext2D) => void) | null,
 ) {
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
@@ -65,12 +68,13 @@ export function drawScene(
 		drawWall(ctx, world, cloudT, cloudSx, cloudSy, graf, gfx.clouds !== "off");
 		drawCourt(ctx, world);
 	}
+	afterCourt?.(ctx);
 	if (hole) drawBlackHole(ctx, hole, time);
 	if (antimatter) drawAntiMatter(ctx, antimatter, time);
 	if (boltTrail.length > 1) drawBoltTrail(ctx, boltTrail, time);
 	if (gfx.ballShadow) drawGroundShadow(ctx, ball, world);
 	if (chain) drawChain(ctx, chain, true);
-	if (showHud) drawCountdown(ctx, world, timer01, buzzer);
+	if (showHud) drawCountdown(ctx, world, timer01, buzzer, barLabel);
 	const distH = Math.hypot(ball.x - hoop.x, ball.y - hoop.y);
 	const distO = other ? Math.hypot(ball.x - other.x, ball.y - other.y) : Infinity;
 	const ballWithOther = Boolean(other && distO < distH);
@@ -131,6 +135,7 @@ export function drawScene(
 			hole?.left ?? -1,
 			scoreOverride,
 			boltCharge,
+			scoreFlash,
 		);
 	}
 }
@@ -250,32 +255,54 @@ function drawBuzzerSpot(ctx: CanvasRenderingContext2D, world: World, ball: Ball)
 	ctx.restore();
 }
 function drawHoopStack(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, ball: Ball | null, combo: number, time: number, trail: TrailPt[] = [], gfx: Gfx = DEFAULT_GFX, ballId: BallId = DEFAULT_BALL) {
-	ctx.save();
-	if (hoop.jolt > 0 && hoop.active) {
-		const p = bracePivot(hoop, world);
-		const stage = fireStage(combo);
-		const boost = stage >= 4 ? 1.7 : stage >= 3 ? 1.35 : 1;
-		const elapsed = (1 - hoop.jolt) * 0.28;
-		const ang =
-			hoop.jolt *
-			hoop.joltDir *
-			-hoop.side *
-			boost *
-			0.024 *
-			Math.sin(elapsed * Math.PI * 2 * 11);
-		ctx.translate(p.x, p.y);
-		ctx.rotate(ang);
-		ctx.translate(-p.x, -p.y);
+	const drawBallLayer = () => {
+		if (!ball) return;
+		if (gfx.particles) {
+			drawMotionTrail(ctx, trail, ball, combo, time, ballId === "frost");
+			drawBall(ctx, ball, combo, world, time, gfx.ballShade, ballId);
+		} else {
+			drawBall(ctx, ball, combo, world, time, gfx.ballShade, ballId);
+		}
+	};
+	const alpha = hoop.fxAlpha ?? 1;
+	if (alpha <= 0.02) {
+		drawBallLayer();
+		return;
 	}
-	drawBackboard(ctx, hoop, world, time, combo);
+	const beginHoopFx = () => {
+		ctx.save();
+		const scale = hoop.fxScale ?? 1;
+		if (scale !== 1) {
+			ctx.translate(hoop.x, hoop.y);
+			ctx.scale(scale, scale);
+			ctx.translate(-hoop.x, -hoop.y);
+		}
+		if (alpha < 0.999) ctx.globalAlpha = alpha;
+		if (hoop.jolt > 0 && hoop.active) {
+			const p = bracePivot(hoop, world);
+			const stage = fireStage(combo);
+			const boost = stage >= 4 ? 1.7 : stage >= 3 ? 1.35 : 1;
+			const elapsed = (1 - hoop.jolt) * 0.28;
+			const ang =
+				hoop.jolt *
+				hoop.joltDir *
+				-hoop.side *
+				boost *
+				0.024 *
+				Math.sin(elapsed * Math.PI * 2 * 11);
+			ctx.translate(p.x, p.y);
+			ctx.rotate(ang);
+			ctx.translate(-p.x, -p.y);
+		}
+	};
+	beginHoopFx();
+	if (!hoop.noBoard) drawBackboard(ctx, hoop, world, time, combo);
 	drawRim(ctx, hoop, "back", combo);
 	drawNet(ctx, hoop, "back", ball, combo);
-	if (ball && gfx.particles) {
-		drawMotionTrail(ctx, trail, ball, combo, time, ballId === "frost");
-		drawBall(ctx, ball, combo, world, time, gfx.ballShade, ballId);
-	} else if (ball) {
-		drawBall(ctx, ball, combo, world, time, gfx.ballShade, ballId);
-	}
+	ctx.restore();
+	// Ball stays in world space — hoop fade/scale must not suck it toward the rim.
+	drawBallLayer();
+	beginHoopFx();
 	drawNet(ctx, hoop, "front", ball, combo);
 	drawRim(ctx, hoop, "front", combo);
 	if (hoop.frostLeft > 0) drawFrostVeil(ctx, hoop, world);
@@ -305,12 +332,42 @@ function wallLayout(world: World, img: HTMLImageElement) {
 	};
 }
 
+/** Street wall / graffiti sheet reference (1792×1634). Keep spray size+seat
+ *  identical on taller prison walls instead of stretching to the full wall quad. */
+const STREET_GRAF_W = 1792;
+const STREET_GRAF_H = 1634;
+
+function graffitiLayout(world: World) {
+	const { w, floorY } = world;
+	const sw = STREET_GRAF_W;
+	const sh = STREET_GRAF_H * 0.962;
+	let scale = w / sw;
+	if (sh * scale > floorY) scale = floorY / sh;
+	const dw = sw * scale;
+	const dh = sh * scale;
+	return {
+		ox: (w - dw) * 0.5,
+		oy: floorY - dh,
+		dw,
+		dh,
+	};
+}
+
 let skyLayer: HTMLCanvasElement | null = null;
 let wallLayer: HTMLCanvasElement | null = null;
 let courtLayer: HTMLCanvasElement | null = null;
 let skyLayerKey = "";
 let wallLayerKey = "";
 let courtLayerKey = "";
+
+export function clearSceneLayers() {
+	skyLayer = null;
+	wallLayer = null;
+	courtLayer = null;
+	skyLayerKey = "";
+	wallLayerKey = "";
+	courtLayerKey = "";
+}
 
 function layerCanvas(w: number, h: number) {
 	const c = document.createElement("canvas");
@@ -354,7 +411,7 @@ function ensureSkyLayer(world: World, layout: ReturnType<typeof wallLayout>) {
 function ensureWallLayer(world: World, layout: ReturnType<typeof wallLayout>, grafShow: GrafKey | null) {
 	const img = artImage("wall");
 	if (!img) return null;
-	const key = `${world.w | 0}x${world.floorY | 0}:${img.naturalWidth}:${grafShow || ""}`;
+	const key = `${world.w | 0}x${world.floorY | 0}:${img.naturalWidth}x${img.naturalHeight}:${grafShow || ""}`;
 	if (wallLayer && wallLayerKey === key) return wallLayer;
 	const c = layerCanvas(world.w, world.floorY);
 	const x = c.getContext("2d");
@@ -364,7 +421,12 @@ function ensureWallLayer(world: World, layout: ReturnType<typeof wallLayout>, gr
 	x.drawImage(img, 0, 0, layout.sw, layout.sh, layout.ox, layout.oy, layout.dw, layout.dh);
 	if (grafShow) {
 		const spray = graffitiImage(grafShow);
-		if (spray) x.drawImage(spray, 0, 0, layout.sw, layout.sh, layout.ox, layout.oy, layout.dw, layout.dh);
+		if (spray) {
+			const g = graffitiLayout(world);
+			const gsw = spray.naturalWidth;
+			const gsh = spray.naturalHeight * 0.962;
+			x.drawImage(spray, 0, 0, gsw, gsh, g.ox, g.oy, g.dw, g.dh);
+		}
 	}
 	wallLayer = c;
 	wallLayerKey = key;
@@ -390,6 +452,47 @@ function ensureCourtLayer(world: World) {
 
 let fillRed: HTMLCanvasElement | null = null;
 let fillRedId = "";
+
+const YARD_TIMER_BASE = "/game/scenes/prison/timer-yard-base.png?v=6";
+const YARD_TIMER_FILL = "/game/scenes/prison/timer-yard-fill.png?v=6";
+const LOCK_TIMER_BASE = "/game/scenes/prison/timer-lockdown-base.png?v=1";
+const LOCK_TIMER_FILL = "/game/scenes/prison/timer-lockdown-fill.png?v=1";
+const INFRACTION_TIMER_BASE = "/game/scenes/prison/timer-Infraction-base.png?v=1";
+const INFRACTION_TIMER_FILL = "/game/scenes/prison/timer-Infraction-fill.png?v=1";
+const prisonTimerImgs: Record<string, HTMLImageElement | null> = {};
+
+function ensurePrisonTimer(src: string) {
+	const cached = prisonTimerImgs[src];
+	if (cached && cached.complete && cached.naturalWidth > 0) return cached;
+	if (!cached) {
+		const img = new Image();
+		img.decoding = "async";
+		img.src = src;
+		prisonTimerImgs[src] = img;
+	}
+	const img = prisonTimerImgs[src];
+	return img && img.complete && img.naturalWidth > 0 ? img : null;
+}
+
+/** Preload all three pairs so art swaps stay seamless. */
+function primePrisonTimers() {
+	ensurePrisonTimer(YARD_TIMER_BASE);
+	ensurePrisonTimer(YARD_TIMER_FILL);
+	ensurePrisonTimer(LOCK_TIMER_BASE);
+	ensurePrisonTimer(LOCK_TIMER_FILL);
+	ensurePrisonTimer(INFRACTION_TIMER_BASE);
+	ensurePrisonTimer(INFRACTION_TIMER_FILL);
+}
+
+function prisonBarPair(label: string | null): {
+	base: string;
+	fill: string;
+} | null {
+	if (label === "Yard Time") return { base: YARD_TIMER_BASE, fill: YARD_TIMER_FILL };
+	if (label === "Lock Down") return { base: LOCK_TIMER_BASE, fill: LOCK_TIMER_FILL };
+	if (label === "Infraction") return { base: INFRACTION_TIMER_BASE, fill: INFRACTION_TIMER_FILL };
+	return null;
+}
 
 function timerFillRed() {
 	const img = artImage("timerFill");
@@ -591,10 +694,18 @@ function drawWall(
 		ctx.rect(0, 0, w, floorY);
 		ctx.clip();
 		const layout = wallLayout(world, img);
-		const skyH = layout.skyBot - layout.skyTop;
-		const sky = ensureSkyLayer(world, layout);
-		if (sky && skyH > 1) ctx.drawImage(sky, 0, layout.skyTop, w, skyH);
-		if (drawClouds) drawSkyClouds(ctx, world, time, layout.skyTop, layout.skyBot, cloudSx, cloudSy);
+		// Sky fills behind the full wall quad so PNG alpha (open sky + glass) shows through.
+		const behind = {
+			...layout,
+			skyTop: 0,
+			skyBot: Math.max(layout.skyBot, layout.oy + layout.dh),
+		};
+		const skyH = behind.skyBot - behind.skyTop;
+		const sky = ensureSkyLayer(world, behind);
+		if (sky && skyH > 1) ctx.drawImage(sky, 0, behind.skyTop, w, skyH);
+		// Drift clouds through the open sky + tower window band (opaque masonry covers the rest).
+		const cloudBot = Math.max(layout.skyBot, layout.oy + layout.dh * 0.32);
+		if (drawClouds) drawSkyClouds(ctx, world, time, layout.skyTop, cloudBot, cloudSx, cloudSy);
 		const wall = ensureWallLayer(world, layout, graf?.show ?? null);
 		if (wall) ctx.drawImage(wall, 0, 0, w, floorY);
 		else {
@@ -605,9 +716,12 @@ function drawWall(
 		if (graf?.incoming) {
 			const spray = graffitiImage(graf.incoming.key);
 			if (spray) {
+				const g = graffitiLayout(world);
 				ctx.save();
-				clipSpray(ctx, layout.ox, layout.oy, layout.dw, layout.dh, graf.incoming.p, false);
-				ctx.drawImage(spray, 0, 0, layout.sw, layout.sh, layout.ox, layout.oy, layout.dw, layout.dh);
+				clipSpray(ctx, g.ox, g.oy, g.dw, g.dh, graf.incoming.p, false);
+				const gsw = spray.naturalWidth;
+				const gsh = spray.naturalHeight * 0.962;
+				ctx.drawImage(spray, 0, 0, gsw, gsh, g.ox, g.oy, g.dw, g.dh);
 				ctx.restore();
 			}
 		}
@@ -844,9 +958,9 @@ function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
   ctx.fillStyle = greenLo;
   ctx.fillRect(visX - 0.5, padDrawY + padH - 2, visW + 1, 2);
 
-  const orangeBase = mixHex("#e24a28", "#4a4038", ch);
-  const orangeHiBase = mixHex("#f07a4a", "#6a625c", ch);
-  const orangeLoBase = mixHex("#b83218", "#3a3632", ch);
+  const orangeBase = mixHex(scene.hoop.rim, "#4a4038", ch);
+  const orangeHiBase = mixHex(scene.hoop.rimHi, "#6a625c", ch);
+  const orangeLoBase = mixHex(scene.hoop.rimLo, "#3a3632", ch);
   const orange = fr > 0 ? mixHex(rgbToHex(orangeBase), "#6eb0e8", fr * 0.85) : orangeBase;
   const orangeHi = fr > 0 ? mixHex(rgbToHex(orangeHiBase), "#a8d8ff", fr * 0.8) : orangeHiBase;
   const orangeLo = fr > 0 ? mixHex(rgbToHex(orangeLoBase), "#3a6a98", fr * 0.85) : orangeLoBase;
@@ -900,12 +1014,13 @@ function drawRim(ctx: CanvasRenderingContext2D, hoop: Hoop, part: "back" | "fron
 	const rx = inner;
 	const ry = inner * RIM_RY;
 	const tw = Math.max(3.2, tube * 1.18);
+	const look = getScene().hoop;
 	ctx.save();
 	ctx.lineCap = "round";
 	ctx.lineJoin = "round";
 	if (part === "back") {
 		ctx.lineWidth = tw;
-		const rimBack = mixHex("#c43820", "#4a4038", ch);
+		const rimBack = mixHex(look.rimBack, "#4a4038", ch);
 		ctx.strokeStyle = fr > 0 ? mixHex(rgbToHex(rimBack), "#7ec8ff", fr) : rimBack;
 		ctx.beginPath();
 		ctx.ellipse(x, y, rx, ry, 0, Math.PI, Math.PI * 2);
@@ -913,14 +1028,14 @@ function drawRim(ctx: CanvasRenderingContext2D, hoop: Hoop, part: "back" | "fron
 	} else {
 		ctx.lineWidth = tw;
 		if (gecko) {
-			const rimG = mixHex("#e84828", "#6a625c", ch);
+			const rimG = mixHex(look.rimHi, "#6a625c", ch);
 			ctx.strokeStyle = fr > 0 ? mixHex(rgbToHex(rimG), "#9ad4ff", fr) : rimG;
 		} else {
 			const metal = ctx.createLinearGradient(x - rx, y, x + rx, y + ry);
-			const c0 = mixHex("#a82818", "#4a4038", ch);
-			const c1 = mixHex("#f05632", "#8a8078", ch);
-			const c2 = mixHex("#e84828", "#6a625c", ch);
-			const c3 = mixHex("#9a2416", "#3a3632", ch);
+			const c0 = mixHex(look.rimLo, "#4a4038", ch);
+			const c1 = mixHex(look.rimHi, "#8a8078", ch);
+			const c2 = mixHex(look.rim, "#6a625c", ch);
+			const c3 = mixHex(look.rimBack, "#3a3632", ch);
 			metal.addColorStop(0, fr > 0 ? mixHex(rgbToHex(c0), "#5a9ad0", fr) : c0);
 			metal.addColorStop(.32, fr > 0 ? mixHex(rgbToHex(c1), "#b8e0ff", fr) : c1);
 			metal.addColorStop(.62, fr > 0 ? mixHex(rgbToHex(c2), "#7ec8ff", fr) : c2);
@@ -1600,6 +1715,39 @@ function drawBoltBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean, t
 	ctx.restore();
 }
 
+/** Draw the active ball kit at an arbitrary point (cinematics / overlays). */
+export function paintBallSprite(
+	ctx: CanvasRenderingContext2D,
+	x: number,
+	y: number,
+	r: number,
+	spin: number,
+	ballId: BallId,
+	time = 0,
+) {
+	drawBall(
+		ctx,
+		{
+			x,
+			y,
+			r,
+			vx: 0,
+			vy: 0,
+			spin,
+			omega: 0,
+			squash: 1,
+			scored: false,
+			hitRim: false,
+			hitBoard: false,
+		},
+		0,
+		{ w: 1, h: 1, ox: 0, oy: 0, cssW: 1, cssH: 1, floorY: 1, ballR: r, hoopInner: r, tube: 1 },
+		time,
+		true,
+		ballId,
+	);
+}
+
 function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _world: World, time = 0, lit = true, ballId: BallId = DEFAULT_BALL) {
 	if (ballId === "prison") {
 		drawPrisonBall(ctx, ball, lit);
@@ -2104,17 +2252,34 @@ function hudGeom(world: World) {
 	};
 }
 
-function drawCountdown(ctx: CanvasRenderingContext2D, world: World, timer01: number, buzzer: boolean) {
+function drawCountdown(
+	ctx: CanvasRenderingContext2D,
+	world: World,
+	timer01: number,
+	buzzer: boolean,
+	barLabel: string | null = null,
+) {
 	const { w } = world;
 	const g = hudGeom(world);
 	const fill = Math.max(0, Math.min(1, timer01));
-	const baseImg = artImage("timerBase");
-	const fillImg = artImage("timerFill");
+	const pair = prisonBarPair(barLabel);
+	if (pair) primePrisonTimers();
+	const baseImg = pair
+		? ensurePrisonTimer(pair.base) || artImage("timerBase")
+		: artImage("timerBase");
+	const fillImg = pair
+		? ensurePrisonTimer(pair.fill) || artImage("timerFill")
+		: artImage("timerFill");
+	// Prison letter bars already spell the label — no extra text.
+	const drawTextLabel = Boolean(barLabel) && !pair;
 	if (baseImg && fillImg) {
 		const dw = g.barW;
-		const dh = g.barH;
+		// Same plate size for Yard / Lock / Infraction so art swaps don't jump.
+		const dh = pair ? Math.floor(dw * (367 / 1817)) : g.barH;
 		const bx = (w - dw) / 2;
 		const by = g.barY;
+		// Full base always on; only the fill is clipped by remaining cool-down.
+		// Art swaps share timer01 (street cool-down) → time stays continuous.
 		ctx.drawImage(baseImg, bx, by, dw, dh);
 		if (fill > 0.004) {
 			ctx.save();
@@ -2123,7 +2288,7 @@ function drawCountdown(ctx: CanvasRenderingContext2D, world: World, timer01: num
 			ctx.clip();
 			const danger = buzzer ? 1 : fill >= 0.4 ? 0 : Math.min(1, Math.pow((0.4 - fill) / 0.2, 0.55));
 			ctx.drawImage(fillImg, bx, by, dw, dh);
-			if (danger > 0) {
+			if (danger > 0 && !pair) {
 				const red = timerFillRed();
 				if (red) {
 					ctx.globalAlpha = danger;
@@ -2135,6 +2300,19 @@ function drawCountdown(ctx: CanvasRenderingContext2D, world: World, timer01: num
 					ctx.filter = "none";
 				}
 			}
+			ctx.restore();
+		}
+		if (drawTextLabel && barLabel) {
+			const labelSize = Math.max(11, Math.floor(w * 0.028));
+			ctx.save();
+			ctx.font = `800 ${labelSize}px 'Segoe UI', 'Noto Sans SC', sans-serif`;
+			ctx.textAlign = "center";
+			ctx.textBaseline = "middle";
+			ctx.lineWidth = Math.max(3, labelSize * 0.2);
+			ctx.strokeStyle = "rgba(18,22,30,0.55)";
+			ctx.fillStyle = "#f7f4ef";
+			ctx.strokeText(barLabel, w / 2, by + dh * 0.52);
+			ctx.fillText(barLabel, w / 2, by + dh * 0.52);
 			ctx.restore();
 		}
 		return;
@@ -2158,16 +2336,16 @@ function drawHud(
 	antiHoleLeft = -1,
 	scoreOverride: string | null = null,
 	boltCharge = -1,
+	scoreFlash = false,
 ) {
 	const { w } = world;
 	const g = hudGeom(world);
 	const shackled = prison?.mode === "shackle";
-	const freed = prison?.mode === "free";
 	ctx.save();
 	ctx.textAlign = "center";
 	ctx.textBaseline = "top";
 	const scoreFont = scoreOverride
-		? Math.max(28, Math.floor(g.scoreSize * 0.62))
+		? Math.max(26, Math.floor(g.scoreSize * (scoreOverride.length > 8 ? 0.42 : 0.58)))
 		: g.scoreSize;
 	ctx.font = `900 ${scoreFont}px 'Noto Sans SC', Impact, sans-serif`;
 	ctx.lineWidth = Math.max(6, scoreFont * 0.12);
@@ -2175,44 +2353,38 @@ function drawHud(
 	ctx.fillStyle = "#f7f4ef";
 	if (!shackled) {
 		const scoreText = scoreOverride ?? String(score);
+		const flashA =
+			scoreFlash && scoreOverride
+				? 0.42 + 0.58 * (0.5 + 0.5 * Math.sin(time * 9.5))
+				: 1;
+		ctx.save();
+		ctx.globalAlpha = flashA;
 		ctx.strokeText(scoreText, w / 2, g.scoreY);
 		ctx.fillText(scoreText, w / 2, g.scoreY);
+		ctx.restore();
 	}
 	if (prison) {
 		const label = Math.max(11, Math.floor(w * 0.032));
 		const num = Math.max(22, Math.floor(w * 0.068));
 		const x = Math.max(12, Math.floor(w * 0.035));
-		ctx.save();
-		ctx.textAlign = "left";
-		ctx.textBaseline = "top";
-		ctx.strokeStyle = "rgba(18,22,30,0.55)";
-		ctx.fillStyle = shackled ? "#d8dde6" : "#9aa3ad";
-		ctx.font = `700 ${label}px 'Noto Sans SC', sans-serif`;
-		ctx.lineWidth = Math.max(3, label * 0.18);
-		const leftLabel = shackled ? "目标" : "自由";
-		ctx.strokeText(leftLabel, x, g.scoreY + 4);
-		ctx.fillText(leftLabel, x, g.scoreY + 4);
-		ctx.font = `900 ${num}px 'Noto Sans SC', Impact, sans-serif`;
-		ctx.lineWidth = Math.max(4, num * 0.12);
-		ctx.fillStyle = shackled ? "#f7f4ef" : "#ffe082";
-		const val = shackled
-			? String(prison.target)
-			: `${Math.max(0, Math.ceil(prison.freeLeft))}s`;
-		ctx.strokeText(val, x, g.scoreY + 4 + label + 1);
-		ctx.fillText(val, x, g.scoreY + 4 + label + 1);
-		if (freed && prison.bonus > 0) {
-			const rx = w - Math.max(12, Math.floor(w * 0.035));
-			ctx.textAlign = "right";
-			ctx.fillStyle = "#9aa3ad";
+		if (shackled) {
+			ctx.save();
+			ctx.textAlign = "left";
+			ctx.textBaseline = "top";
+			ctx.strokeStyle = "rgba(18,22,30,0.55)";
+			ctx.fillStyle = "#d8dde6";
 			ctx.font = `700 ${label}px 'Noto Sans SC', sans-serif`;
-			ctx.strokeText("铐奖", rx, g.scoreY + 4);
-			ctx.fillText("铐奖", rx, g.scoreY + 4);
-			ctx.fillStyle = "#ffe082";
+			ctx.lineWidth = Math.max(3, label * 0.18);
+			ctx.strokeText("目标", x, g.scoreY + 4);
+			ctx.fillText("目标", x, g.scoreY + 4);
 			ctx.font = `900 ${num}px 'Noto Sans SC', Impact, sans-serif`;
-			ctx.strokeText(String(prison.bonus), rx, g.scoreY + 4 + label + 1);
-			ctx.fillText(String(prison.bonus), rx, g.scoreY + 4 + label + 1);
+			ctx.lineWidth = Math.max(4, num * 0.12);
+			ctx.fillStyle = "#f7f4ef";
+			const val = String(prison.target);
+			ctx.strokeText(val, x, g.scoreY + 4 + label + 1);
+			ctx.fillText(val, x, g.scoreY + 4 + label + 1);
+			ctx.restore();
 		}
-		ctx.restore();
 	} else if (glassBase >= 0) {
 		const label = Math.max(11, Math.floor(w * 0.032));
 		const num = Math.max(22, Math.floor(w * 0.068));

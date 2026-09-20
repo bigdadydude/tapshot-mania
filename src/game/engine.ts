@@ -1,5 +1,5 @@
 import { createAudio } from "./audio";
-import { primeArt, artProgress } from "./art";
+import { primeArt, artProgress, reloadSceneArt } from "./art";
 import { canvasDpr } from "./perf";
 import {
   buildNet,
@@ -12,12 +12,13 @@ import {
   tugNet,
   RIM_RY,
 } from "./net";
-import { boardGeom, braceColliders, drawBoot, drawScene } from "./render";
+import { boardGeom, braceColliders, clearSceneLayers, drawBoot, drawScene, paintBallSprite } from "./render";
 import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { DEFAULT_PHYS, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevPhys, type DevSceneId } from "./dev";
-import type { GrafKey } from "./scenes";
+import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
+import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
 import {
@@ -69,8 +70,6 @@ const FROST_CHANCE_PER_STREAK = 0.01;
 /** Champ: bank this fraction of leftover timer per make. */
 const CHAMP_BANK_RATE = 0.2;
 const CHAMP_SCORE_MULT = 2;
-/** After a make in champion moment, this long without another �?clutch then over. */
-const CHAMP_IDLE = 5;
 /** Anti ball: chance to spawn antimatter pickup after a make. */
 const ANTI_SPAWN_CHANCE = 0.55;
 const ANTI_HOLE_DUR_MIN = 10;
@@ -120,6 +119,7 @@ export type GameHandle = {
   setGfx: (next: Partial<Gfx>) => void;
   setBall: (id: BallId) => void;
   setPlayMode: (mode: PlayMode) => void;
+  setScene: (id: SceneId) => void;
   buyRogue: (uid: string) => void;
   /** Dev catalog: grant / revoke one stack. */
   grantRogue: (id: string) => void;
@@ -163,9 +163,11 @@ export function createGame(
   const rawCtx = canvas.getContext("2d", { alpha: false });
   if (!rawCtx) throw new Error("Canvas 2D unavailable");
   const ctx = rawCtx;
+  const save = loadSave();
+  setScene(save.scene === "prison" ? "prison" : "street");
+  reloadSceneArt();
   primeArt();
   const audio = createAudio();
-  const save = loadSave();
   const reduced =
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -182,6 +184,8 @@ export function createGame(
   let rogueRun: RogueRun | null = null;
   /** Active for current rogue stage only (from rest "缓时"). */
   let rogueStageDecay: number | null = null;
+  let stageMod: StageModifier = createModifier("none");
+  let devModifierForce: ModifierId | null = null;
   let combo = 0;
   let streak = 0;
   let mix = {
@@ -632,6 +636,8 @@ export function createGame(
     const rims: Hoop[] = [hoop];
     if (other) rims.push(other);
     for (const h of rims) {
+      // Fading / waiting ghost rings should not shove the chain ball.
+      if (!h.active || h.scoreable === false) continue;
       const rad = h.tube * 0.92;
       for (const p of [
         { x: h.x - h.inner, y: h.y },
@@ -647,6 +653,8 @@ export function createGame(
           hit = true;
         }
       }
+      // Naked rims: no invisible backboard solid.
+      if (h.noBoard) continue;
       const g = boardGeom(h, world);
       const left = g.visX;
       const right = g.visX + g.visW;
@@ -747,11 +755,7 @@ export function createGame(
   let frostBonus = 0;
   let champBank = 0;
   let champMode = false;
-  /** Seconds left to score again in champ mode; <0 = not armed. */
-  let champIdleLeft = -1;
-  /** Idle timeout opened the final clutch window �?make or miss ends the run. */
-  let champFinishing = false;
-  /** Anti ball: antimatter charge 0�?00, pickups, timed black hole. */
+  /** Anti ball: antimatter charge 0–100, pickups, timed black hole. */
   let antiCharge = 0;
   let antiMatter: { x: number; y: number; r: number; pct: number; age: number } | null =
     null;
@@ -938,9 +942,12 @@ export function createGame(
         fuseBall: fuseId(),
         phys: { ...devPhys },
         playMode,
+        modifierForce: devModifierForce,
+        modifier: stageMod.id,
       },
       ballId,
       playMode,
+      sceneId: getSceneId(),
       prison: prisonHud(),
       rogue: toRogueHud(isRogueMode() ? rogueRun : null),
     });
@@ -948,11 +955,12 @@ export function createGame(
 
   function persist() {
     writeSave({
-      version: 10,
+      version: 11,
       best,
       bestMinute,
       bestRogue,
       playMode,
+      scene: getSceneId(),
       master: mix.master,
       music: mix.music,
       sfx: mix.sfx,
@@ -1082,11 +1090,13 @@ export function createGame(
   }
 
   function gravity() {
-    return world.h * 3.1 * pMul("grav");
+    return world.h * 3.1 * pMul("grav") * (stageMod.gravMul?.() ?? 1);
   }
 
   function jumpVy() {
-    return -Math.sqrt(2 * gravity() * world.h * 0.185 * pMul("jumpUp"));
+    return -Math.sqrt(
+      2 * gravity() * world.h * 0.185 * pMul("jumpUp") * (stageMod.jumpMul?.() ?? 1),
+    );
   }
 
   function bounceRest(kind: "floorHi" | "floorLo" | "rim" | "board") {
@@ -1132,6 +1142,146 @@ export function createGame(
 
   function isBolt() {
     return kit().bolt;
+  }
+
+  function modifierHost() {
+    return {
+      world,
+      getHoop: () => hoop,
+      setHoop: (h: Hoop) => {
+        hoop = h;
+      },
+      clearOther: () => {
+        other = null;
+        otherOverRim = false;
+      },
+      makeGhostHoop: (side: -1 | 1) => {
+        const h = makeHoop(world, side, false, madeCount);
+        h.moving = false;
+        h.moveAmp = 0;
+        h.noBoard = true;
+        h.fxAlpha = 0;
+        h.fxScale = 0.72;
+        h.scoreable = false;
+        const x = side < 0 ? h.inner + world.w * 0.1 : world.w - h.inner - world.w * 0.1;
+        h.x = x;
+        h.targetX = x;
+        h.baseX = x;
+        return h;
+      },
+      applyHoopScale: (h: Hoop) => applyRogueHoopScale(h),
+      getBall: () => ({ x: ball.x, y: ball.y, r: ball.r }),
+      getBallBody: () => ball,
+      getMadeCount: () => madeCount,
+      notePrev: () => {
+        prevBallX = ball.x;
+        prevBallY = ball.y;
+      },
+      hoopYRange: () => hoopYLimits(world),
+      hit: (kind: "bone" | "glass") => {
+        if (kind === "glass") {
+          camShake = 0.22;
+          whiteFlash = Math.max(whiteFlash, 0.14);
+          audio.board(1);
+        } else {
+          camShake = Math.max(camShake, 0.07);
+          audio.bounce(0.5);
+        }
+      },
+      tag: (text: string) => {
+        callouts.push({
+          text,
+          x: ball.x,
+          y: ball.y - ball.r * 2.4,
+          life: 0.75,
+          max: 0.75,
+          kind: "tag",
+        });
+      },
+      rollFromOpposite: () => {
+        const fromRight = hoop.side < 0;
+        const spd = 52;
+        ball.y = world.floorY - ball.r;
+        ball.vy = 0;
+        ball.squash = 1;
+        ball.scored = false;
+        ball.hitRim = false;
+        ball.hitBoard = false;
+        if (fromRight) {
+          ball.x = world.w + ball.r + 8;
+          ball.vx = -spd;
+        } else {
+          ball.x = -ball.r - 8;
+          ball.vx = spd;
+        }
+        ball.omega = ball.vx / Math.max(8, ball.r);
+        prevBallX = ball.x;
+        prevBallY = ball.y;
+        shotAirborne = false;
+        resetTrail();
+        syncChain();
+      },
+      paintBall: (
+        ctx: CanvasRenderingContext2D,
+        x: number,
+        y: number,
+        r: number,
+        spin: number,
+      ) => {
+        paintBallSprite(ctx, x, y, r, spin, ballId, time);
+      },
+    };
+  }
+
+  function applyScenePack(id: SceneId) {
+    if (getSceneId() === id) return;
+    setScene(id);
+    clearSceneLayers();
+    reloadSceneArt();
+    persist();
+  }
+
+  function bootStageModifier(opts?: { announce?: boolean }) {
+    if (stageMod.holdsBall?.()) {
+      ball.x = world.w * 0.32;
+      ball.y = world.floorY - ball.r;
+      ball.vx = 0;
+      ball.vy = 0;
+      ball.scored = false;
+    }
+    stageMod.end();
+    let id: ModifierId = "none";
+    const sceneDefault = getScene().defaultModifier;
+    if (sceneDefault && sceneDefault !== "none") {
+      id = sceneDefault;
+      if (isRogueMode() && rogueRun) rogueRun.modifier = sceneDefault;
+    } else if (isRogueMode() && rogueRun) {
+      if (devModifierForce) {
+        rogueRun.modifier = devModifierForce;
+      }
+      id = rogueRun.modifier;
+    }
+    if (devModifierForce && isRogueMode()) {
+      id = devModifierForce;
+      if (rogueRun) rogueRun.modifier = devModifierForce;
+    }
+    // Title / hub: only scene-bound modifiers (e.g. prison daytime), never rogue rolls.
+    if (phase === "title" || phase === "hub" || phase === "over" || phase === "settle") {
+      id = sceneDefault && sceneDefault !== "none" ? sceneDefault : "none";
+    }
+    stageMod = createModifier(id);
+    stageMod.begin(modifierHost());
+    const announce = opts?.announce !== false && phase === "playing" && id !== "none";
+    if (announce) {
+      callouts.push({
+        text: modifierName(id),
+        x: world.w * 0.5,
+        y: world.h * 0.26,
+        life: 1.05,
+        max: 1.05,
+        kind: "tag",
+      });
+    }
   }
 
   function resetBoltRun() {
@@ -1198,6 +1348,8 @@ export function createGame(
       x1,
       y1,
     };
+    // Prison: bolt ult can knock out searchlights in this vertical column.
+    stageMod.strikeColumn?.(modifierHost(), x0);
   }
 
   function startBoltStorm() {
@@ -1717,8 +1869,6 @@ export function createGame(
     const bank = champBank;
     champBank = 0;
     champMode = true;
-    champIdleLeft = -1;
-    champFinishing = false;
     timeUp = false;
     buzzer = false;
     buzzerTimer = 0;
@@ -1729,15 +1879,6 @@ export function createGame(
     return true;
   }
 
-  function enterClutchFromChampIdle() {
-    champIdleLeft = -1;
-    champFinishing = true;
-    timer = 0;
-    timeUp = true;
-    buzzer = true;
-    buzzerTimer = BUZZER_WINDOW;
-    audio.buzzer();
-  }
 
   function frostChance() {
     return Math.min(1, FROST_CHANCE_BASE + streak * FROST_CHANCE_PER_STREAK);
@@ -1832,8 +1973,6 @@ export function createGame(
     if (!isChamp()) {
       champBank = 0;
       champMode = false;
-      champIdleLeft = -1;
-      champFinishing = false;
     }
     if (!isAnti()) {
       antiCharge = 0;
@@ -1937,8 +2076,6 @@ export function createGame(
     if (!isChamp()) {
       champBank = 0;
       champMode = false;
-      champIdleLeft = -1;
-      champFinishing = false;
     }
     if (!isAnti()) {
       antiCharge = 0;
@@ -2246,8 +2383,6 @@ export function createGame(
     frostBonus = 0;
     champBank = 0;
     champMode = false;
-    champIdleLeft = -1;
-    champFinishing = false;
     resetAntiRun();
     resetBoltRun();
     otherOverRim = false;
@@ -2277,6 +2412,7 @@ export function createGame(
       paused = true;
       hint = false;
     }
+    bootStageModifier();
     emitHud();
   }
 
@@ -2286,8 +2422,6 @@ export function createGame(
     paused = false;
     buzzer = false;
     buzzerTimer = 0;
-    champIdleLeft = -1;
-    champFinishing = false;
     if (isAnti()) {
       holeOn = false;
       holeLeft = 0;
@@ -2384,8 +2518,6 @@ export function createGame(
     timeUp = false;
     champMode = false;
     champBank = 0;
-    champIdleLeft = -1;
-    champFinishing = false;
     noteBest();
     emitHud();
   }
@@ -2447,8 +2579,6 @@ export function createGame(
     buzzerTimer = 0;
     timeUp = false;
     champMode = false;
-    champIdleLeft = -1;
-    champFinishing = false;
     if (isGlass() && glassBase <= 0) glassBase = GLASS_BASE_START;
     clearGlassShotHurts();
     remakeBall(hoop.side < 0 ? 1 : -1);
@@ -2546,8 +2676,6 @@ export function createGame(
     frostBonus = 0;
     champBank = 0;
     champMode = false;
-    champIdleLeft = -1;
-    champFinishing = false;
     glassBase = GLASS_BASE_START;
     resetPrisonRun();
     resetNinjaPath();
@@ -2571,6 +2699,7 @@ export function createGame(
       const holeSec = rogueBlackholeSec(rogueRun);
       if (holeSec > 0) openAntiHole(holeSec);
     }
+    bootStageModifier();
   }
 
   function continueRogueFromHub() {
@@ -2665,11 +2794,12 @@ export function createGame(
     }
     if (phase !== "playing") return;
     if (paused) return;
+    if (stageMod.holdsBall?.()) return;
     const heroClutch =
       isRogueMode() && rogueRun && hasHeroMoment(rogueRun) && (buzzer || timeUp);
     if ((buzzer || timeUp) && !heroClutch) return;
     if (tapLock > 0) return;
-    if (ballHidden() && !onApproachSide()) return;
+    if (ballHidden() && !onApproachSide() && !stageMod.allowHiddenTap?.()) return;
     // Mid-air re-tap on an unfinished attempt: boost only �?do not break combo.
     if (shotOpen && !shotMade && !shotMissed) {
       hint = false;
@@ -2691,6 +2821,7 @@ export function createGame(
       armGlassShotHurts();
       tapLock = 0.03;
       audio.whoosh(0.5);
+      stageMod.onTap?.(modifierHost());
       emitHud();
       return;
     }
@@ -2718,6 +2849,7 @@ export function createGame(
     armGlassShotHurts();
     tapLock = 0.03;
     audio.whoosh(0.5);
+    stageMod.onTap?.(modifierHost());
     emitHud();
   }
 
@@ -2838,6 +2970,8 @@ export function createGame(
     leaveSandbox();
     resetPrisonRun();
     resetNinjaPath();
+    // Restore scene daytime / clear foreign modifiers (e.g. prison searchlights).
+    bootStageModifier({ announce: false });
     emitHud();
   }
 
@@ -2901,7 +3035,11 @@ export function createGame(
       case "scene":
         if (!devOn) enterSandbox();
         devScene = cmd.id;
-        if (cmd.id !== "void") resetGraf();
+        if (cmd.id === "street" || cmd.id === "prison") {
+          applyScenePack(cmd.id);
+          resetGraf();
+          bootStageModifier({ announce: phase === "playing" });
+        }
         emitHud();
         return;
       case "playMode": {
@@ -3026,6 +3164,17 @@ export function createGame(
           max: 0.9,
           kind: "tag",
         });
+        return;
+      }
+      case "modifier": {
+        if (cmd.id === "auto") {
+          devModifierForce = null;
+        } else {
+          devModifierForce = cmd.id;
+          if (isRogueMode() && rogueRun) rogueRun.modifier = cmd.id;
+        }
+        if (phase === "playing") bootStageModifier();
+        emitHud();
         return;
       }
       case "score":
@@ -3229,7 +3378,7 @@ export function createGame(
       }
     }
 
-    if (phase === "playing" && timerArmed && !buzzer && !timeUp && !devFreeze) {
+    if (phase === "playing" && timerArmed && !buzzer && !timeUp && !devFreeze && !stageMod.holdsBall?.()) {
       let drain = dt;
       if (holeOn) {
         // Far from hole �?timer drains slower; at center �?normal speed.
@@ -3249,7 +3398,6 @@ export function createGame(
           // Converted gold �?score / settle.
         } else {
           timeUp = true;
-          champIdleLeft = -1;
           // 肉鸽非无限关：倒计时耗尽一律进入绝杀窗，进球达目标即可过�?
           const forceClutch = isRogueMode() && rogueRun && !rogueRun.endless;
           if (forceClutch || predictBuzzerMake()) {
@@ -3299,17 +3447,6 @@ export function createGame(
       }
     }
 
-    if (
-      phase === "playing" &&
-      champMode &&
-      champIdleLeft >= 0 &&
-      !buzzer &&
-      !timeUp &&
-      !devFreeze
-    ) {
-      champIdleLeft -= dt;
-      if (champIdleLeft <= 0) enterClutchFromChampIdle();
-    }
 
     if (phase === "playing" && isPrison() && prisonMode === "free" && !buzzer && !devFreeze) {
       prisonFreeLeft -= dt;
@@ -3349,6 +3486,9 @@ export function createGame(
 
     stepHoop(hoop, dt);
     tickFrost(hoop, dt, false);
+    if (phase === "playing" && !paused) {
+      stageMod.update(dt, modifierHost());
+    }
     if (other) {
       if (other.jolt > 0) other.jolt = Math.max(0, other.jolt - dt / 0.28);
       tickFrost(other, dt, true);
@@ -3389,7 +3529,8 @@ export function createGame(
     prevBallX = ball.x;
     prevBallY = ball.y;
     const live =
-      phase === "playing" || phase === "over" || phase === "title" || phase === "hub" || phase === "settle";
+      (phase === "playing" || phase === "over" || phase === "title" || phase === "hub" || phase === "settle") &&
+      !stageMod.holdsBall?.();
     if (live) {
       const gScale = buzzer ? 0.42 : 1;
       // High-bounce kits skip fallBoost �?otherwise each landing gains height.
@@ -3467,6 +3608,10 @@ export function createGame(
       ball.x += ball.vx * dt * move;
       ball.y += ball.vy * dt * move;
       if (ball.y + ball.r < 0) wentOffTop = true;
+      // Leash before wrap so a taut chain yanks the ball and can block side-respawn.
+      if (phase === "playing" && !stageMod.holdsBall?.()) {
+        stageMod.afterPhysics?.(dt, modifierHost());
+      }
       wrapX();
       pushNinjaPath(dt);
       stepNinjaGhosts(dt);
@@ -3477,14 +3622,14 @@ export function createGame(
       if (phase === "playing") checkScore();
       if (phase !== "title" && !ballHidden()) {
         if (scoredLock <= 0) {
-          collideRim(hoop);
-          if (other) collideRim(other);
+          if (stageMod.canScore(hoop)) collideRim(hoop);
+          if (other && stageMod.canScore(other)) collideRim(other);
         }
-        collideBoard(hoop);
-        collideBrace(hoop);
+        if (!hoop.noBoard && !stageMod.skipBoard(hoop)) collideBoard(hoop);
+        if (!hoop.noBoard && !stageMod.skipBrace(hoop)) collideBrace(hoop);
         if (other) {
-          collideBoard(other);
-          collideBrace(other);
+          if (!other.noBoard && !stageMod.skipBoard(other)) collideBoard(other);
+          if (!other.noBoard && !stageMod.skipBrace(other)) collideBrace(other);
         }
       }
       if (phase === "playing") {
@@ -3496,10 +3641,11 @@ export function createGame(
       if (phase === "playing" && isGlass() && glassLand) {
         glassPeakY = Math.min(glassPeakY, ball.y);
       }
-      collideFloor();
+      const caught = phase === "playing" && stageMod.touchBall?.(modifierHost()) === true;
+      if (!caught) collideFloor();
       stepBoltBoardTop(dt);
       stepBoltCharge(dt);
-      if (chain && hasChain()) {
+      if (chain && hasChain() && !caught && !stageMod.holdsBall?.()) {
         stepChain(
           chain,
           ball,
@@ -3525,7 +3671,8 @@ export function createGame(
     const farOther = !other || Math.hypot(ball.x - other.x, ball.y - other.y) > rimClear;
     if (farHoop && farOther) rimAudioArmed = true;
 
-    const nearHoop = netNearHoop(hoop, ball);
+    const ghostQuiet = hoop.noBoard && hoop.scoreable === false;
+    const nearHoop = !ghostQuiet && netNearHoop(hoop, ball);
     stepNet(hoop, ball, prevBallX, prevBallY, world, dt, time, nearHoop && netShouldCollide(hoop, ball));
     if (other) {
       const nearOther = netNearHoop(other, ball);
@@ -3573,6 +3720,11 @@ export function createGame(
       h.targetX = h.x;
       h.baseX = h.x;
       h.baseY = h.y;
+      return;
+    }
+    // Ghost rings: modifier owns position — do not lerp / travel.
+    if (h.noBoard) {
+      h.moving = false;
       return;
     }
     const ox = h.x;
@@ -3753,6 +3905,7 @@ export function createGame(
   }
 
   function collideBoard(h: Hoop) {
+    if (h.noBoard) return;
     const g = boardGeom(h, world);
     const left = g.visX;
     const right = g.visX + g.visW;
@@ -3839,20 +3992,19 @@ export function createGame(
     }
   }
 
-  /** Collide with hoop support brace �?swept so small/fast balls cannot tunnel. */
+  /** Collide with hoop support brace — swept so small/fast balls cannot tunnel. */
   function collideBrace(h: Hoop) {
+    if (h.noBoard) return;
     const segs = braceColliders(h, world);
     const hitR = ball.r;
-    const ax = prevBallX;
-    const ay = prevBallY;
+    const ax0 = prevBallX;
+    const ay0 = prevBallY;
     const bx = ball.x;
     const by = ball.y;
     for (const s of segs) {
       const need = hitR + s.halfW;
-      // Closest points between travel segment and brace segment
-      const hit = closestSegSeg(ax, ay, bx, by, s.x0, s.y0, s.x1, s.y1);
+      const hit = closestSegSeg(ax0, ay0, bx, by, s.x0, s.y0, s.x1, s.y1);
       if (hit.dist >= need) {
-        // Also catch rest-overlap at end position (stationary / slow)
         const end = closestPointOnSeg(bx, by, s.x0, s.y0, s.x1, s.y1);
         if (end.dist >= need) continue;
         resolveBraceHit(end.x, end.y, s.x1 - s.x0, s.y1 - s.y0, need, end.dist);
@@ -3984,7 +4136,7 @@ export function createGame(
     shotAirborne = false;
     if (getBall(ballId).wrap === "height") {
       // Spawn on the approach side of the active hoop (same rule as classic wrap).
-      // hoop.side > 0 �?basket on right �?enter from left; else enter from right.
+      // hoop.side > 0 → basket on right → enter from left; else enter from right.
       const spd = Math.max(44, Math.abs(ball.vx));
       if (hoop.side > 0) {
         ball.x = -r - pad * 0.5;
@@ -4091,6 +4243,7 @@ export function createGame(
     bothWays: boolean,
     slack: number,
   ): boolean {
+    if (!stageMod.canScore(h)) return false;
     const holePad = -ball.r * 0.1 + slack;
     const openR = h.inner + holePad;
     const stickyR = h.inner + ball.r * 0.35 + slack;
@@ -4419,11 +4572,9 @@ export function createGame(
                     : "";
     if (clutch) {
       if (!ninjaGhost) gain += 5;
-      if (!champFinishing) {
-        buzzer = false;
-        buzzerTimer = 0;
-        timeUp = false;
-      }
+      buzzer = false;
+      buzzerTimer = 0;
+      timeUp = false;
     }
     if (champMode && !bunshinGhost && !ninjaGhost) gain *= CHAMP_SCORE_MULT;
     if (isAnti() && holeOn) gain = 0;
@@ -4580,27 +4731,6 @@ export function createGame(
     }
     if (!champMode) {
       refillShotClock();
-    } else if (!ghost && !champFinishing) {
-      champIdleLeft = CHAMP_IDLE;
-    }
-    if (champFinishing && clutch && !ghost) {
-      syncNinjaGhosts();
-      champFinishing = false;
-      champMode = false;
-      champIdleLeft = -1;
-      // 肉鸽：绝杀进球若已达目标则过关，否则本关失败；经典模式仍直接结�?
-      if (isRogueMode() && rogueRun) {
-        emitHud();
-        if (!rogueRun.endless && rogueRun.stageScore >= rogueRun.target) {
-          enterRogueSettle();
-        } else {
-          failRogueOrOver();
-        }
-        return;
-      }
-      emitHud();
-      gameOver({ quiet: true });
-      return;
     }
     const stage = fireStage(heatN());
     if (!ghost) {
@@ -4618,18 +4748,20 @@ export function createGame(
         });
         frostSmoke(hoop);
       }
-      nextHoop();
-      if (!isFrost() && other && stage >= 2) {
-        const sear = (stage === 2 ? 1 : stage === 3 ? 2 : 3) as 1 | 2 | 3;
-        if (sear > other.sear) other.sear = sear;
-        other.hold = Math.max(
-          other.hold,
-          stage >= 4 ? FIRE_HOLD : stage >= 3 ? 1.05 : 0.88,
-        );
-        if (stage >= 4) {
-          other.burning = true;
-          audio.burn();
-          if (gfx.flash) burnFlash = 0.16;
+      if (!stageMod.onScored(modifierHost())) {
+        nextHoop();
+        if (!isFrost() && other && stage >= 2) {
+          const sear = (stage === 2 ? 1 : stage === 3 ? 2 : 3) as 1 | 2 | 3;
+          if (sear > other.sear) other.sear = sear;
+          other.hold = Math.max(
+            other.hold,
+            stage >= 4 ? FIRE_HOLD : stage >= 3 ? 1.05 : 0.88,
+          );
+          if (stage >= 4) {
+            other.burning = true;
+            audio.burn();
+            if (gfx.flash) burnFlash = 0.16;
+          }
         }
       }
     }
@@ -4926,7 +5058,19 @@ export function createGame(
           ctx.beginPath();
           ctx.rect(0, 0, world.w, world.h);
           ctx.clip();
-          const timer01 = phase === "over" ? 1 : timerMax > 0 ? timer / timerMax : 0;
+          const yardHud = stageMod.hud?.() ?? null;
+          const clock01 = timerMax > 0 ? timer / timerMax : 0;
+          // Prison bar ART swaps Yard / Lock / Infraction; FILL always follows street cool-down.
+          // Background recess/curfew phase pauses on hunt; fill does not.
+          const timer01 = phase === "over" ? 1 : clock01;
+          let scoreOverride: string | null =
+            isRogueMode() && rogueRun
+              ? rogueRun.endless
+                ? "刷马桶"
+                : `${rogueRun.target}:${rogueRun.stageScore}`
+              : null;
+          let scoreFlash = false;
+          const barLabel = yardHud?.active ? yardHud.barLabel : null;
           const k = Number.isFinite(camShake) ? Math.min(1, Math.max(0, camShake) / 0.16) : 0;
           const amp = k > 0.002 ? 4.6 * k * k : 0;
           drawScene(
@@ -4964,7 +5108,7 @@ export function createGame(
                 : null,
             },
             gfx,
-            devOn && devScene === "void" ? "void" : "street",
+            devOn && devScene === "void" ? "void" : getSceneId(),
             ballId,
             isGlass() ? glassBase : -1,
             chain && hasChain() ? chain : null,
@@ -4974,15 +5118,16 @@ export function createGame(
             holeOn ? { x: holeX, y: holeY, r: holeR, left: holeLeft } : null,
             isAnti() ? antiCharge : -1,
             isAnti() ? antiMatter : null,
-            isRogueMode() && rogueRun
-              ? rogueRun.endless
-                ? "刷马桶"
-                : `${rogueRun.target}:${rogueRun.stageScore}`
-              : null,
+            scoreOverride,
             isBolt() ? boltCharge : -1,
             boltTrail,
+            barLabel,
+            scoreFlash,
+            (c) => stageMod.drawWorldBack?.(c, world, time),
           );
+          stageMod.drawWorld?.(ctx, world, time);
           ctx.restore();
+          stageMod.drawScreen?.(ctx, world);
           }
         }
       }
@@ -5115,6 +5260,15 @@ export function createGame(
         timerArmed = false;
       }
       persist();
+      emitHud();
+    },
+    setScene(id) {
+      if (id !== "street" && id !== "prison") return;
+      applyScenePack(id);
+      if (devOn && (devScene === "street" || devScene === "prison")) {
+        devScene = id;
+      }
+      bootStageModifier({ announce: phase === "playing" });
       emitHud();
     },
     buyRogue(uid) {

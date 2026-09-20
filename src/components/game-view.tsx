@@ -5,7 +5,9 @@ import { primeArt } from "@/game/art";
 import { DEFAULT_DEV, wantDevQuery } from "@/game/dev";
 import { BALLS, DEFAULT_BALL, ballFuseLabel, playableBalls, type BallId } from "@/game/balls";
 import { DEFAULT_GFX, type CloudMode, type Gfx, type HudState, type PlayMode } from "@/game/types";
+import { SCENE_LABELS, type SceneId } from "@/game/scenes";
 import { DevConsole } from "@/components/dev-console";
+import { SearchlightEditor } from "@/components/searchlight-editor";
 import {
   itemLabel,
   ornamentLabel,
@@ -15,6 +17,7 @@ import {
   type RogueOrnamentId,
 } from "@/game/rogue";
 import { ROGUE_CATALOG, RARITY_LABEL, type RogueCatalogEntry } from "@/game/rogue-catalog";
+import { modifierName } from "@/game/modifiers";
 import { cn } from "@/lib/utils";
 
 primeArt();
@@ -35,6 +38,7 @@ const idleHud: HudState = {
   dev: { ...DEFAULT_DEV },
   ballId: DEFAULT_BALL,
   playMode: "classic",
+  sceneId: "street",
   prison: null,
   rogue: null,
 };
@@ -49,6 +53,7 @@ export function GameView() {
   const [crash, setCrash] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu>("none");
   const [titleTaps, setTitleTaps] = useState(0);
+  const [searchlightEdit, setSearchlightEdit] = useState(false);
   const enteredDev = useRef(false);
 
   useEffect(() => {
@@ -181,9 +186,11 @@ export function GameView() {
               unlocked={hud.dev.unlocked}
               ballId={hud.ballId}
               playMode={hud.playMode}
+              sceneId={hud.sceneId}
               onStart={() => gameRef.current?.start()}
               onBall={(id) => gameRef.current?.setBall(id)}
               onMode={(mode) => gameRef.current?.setPlayMode(mode)}
+              onScene={(id) => gameRef.current?.setScene(id)}
               onTitleTap={() => {
                 const n = titleTaps + 1;
                 setTitleTaps(n);
@@ -341,7 +348,7 @@ export function GameView() {
         />
       ) : null}
 
-      {hud.dev.on && menu === "none" ? (
+      {hud.dev.on && menu === "none" && !searchlightEdit ? (
         <DevConsole
           dev={hud.dev}
           score={hud.score}
@@ -350,6 +357,17 @@ export function GameView() {
           onMenu={() => {
             gameRef.current?.pause();
             setMenu("pause");
+          }}
+          onSearchlights={() => {
+            gameRef.current?.dev({ t: "scene", id: "prison" });
+            setSearchlightEdit(true);
+          }}
+        />
+      ) : null}
+      {searchlightEdit ? (
+        <SearchlightEditor
+          onClose={() => {
+            setSearchlightEdit(false);
           }}
         />
       ) : null}
@@ -362,9 +380,11 @@ function TitleCard({
   unlocked,
   ballId,
   playMode,
+  sceneId,
   onStart,
   onBall,
   onMode,
+  onScene,
   onTitleTap,
   onDev,
 }: {
@@ -372,9 +392,11 @@ function TitleCard({
   unlocked: boolean;
   ballId: BallId;
   playMode: PlayMode;
+  sceneId: SceneId;
   onStart: () => void;
   onBall: (id: BallId) => void;
   onMode: (mode: PlayMode) => void;
+  onScene: (id: SceneId) => void;
   onTitleTap: () => void;
   onDev: () => void;
 }) {
@@ -597,11 +619,32 @@ function TitleCard({
             ? "首球后倒计时 60 秒，拼高分"
             : playMode === "rogue"
               ? "9 关闯关攒金，商店强化，终关上万，通关后无限"
-              : "点击弹跳，把球投进左右篮筐"}
+              : sceneId === "prison"
+                ? "放风随便投，宵禁后躲开探照灯"
+                : "点击弹跳，把球投进左右篮筐"}
         </p>
         <p className="mt-1 text-xs text-subtle">
           {playMode === "rogue" ? `最远第 ${best} 关` : `最高 ${best}`}
         </p>
+      </div>
+
+      <div className="pointer-events-auto mb-2 grid w-full max-w-xs grid-cols-2 gap-1.5">
+        {SCENE_LABELS.map((s) => {
+          const on = sceneId === s.id;
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => onScene(s.id)}
+              className={cn(
+                "rounded-xl border px-2 py-2 text-center text-sm font-medium",
+                on ? "border-accent bg-bg-elevated text-fg" : "border-border bg-bg-subtle/80 text-muted",
+              )}
+            >
+              {s.name}
+            </button>
+          );
+        })}
       </div>
 
       <div className="pointer-events-auto mb-3 grid w-full max-w-xs grid-cols-3 gap-1.5">
@@ -920,6 +963,9 @@ function SettleCard({
         <p className="text-center text-xs font-medium tracking-widest text-muted">
           {cleared ? "通关结算" : `第 ${rogue.stage} 关结算`}
         </p>
+        {rogue.modifier && rogue.modifier !== "none" ? (
+          <p className="mt-1 text-center text-xs text-subtle">词条 · {modifierName(rogue.modifier)}</p>
+        ) : null}
         <p className="mt-3 text-center font-sans text-4xl font-black tabular-nums text-fg">
           {rogue.stageScore}
           <span className="ml-1 text-sm font-medium text-subtle">分</span>
@@ -1764,6 +1810,9 @@ function PauseMenu({
               <span className="font-semibold tabular-nums">{rogue.gold}</span>
             </p>
             <p>球种 · {ballFuseLabel(ballId, rogue.fuseBall)}</p>
+            <p>
+              词条 · {rogue.modifier === "none" ? "无" : modifierName(rogue.modifier)}
+            </p>
             <p>
               总分 {rogue.runScore + rogue.stageScore} · 本关 {rogue.stageScore}
             </p>

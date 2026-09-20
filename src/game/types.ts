@@ -88,6 +88,14 @@ export type Hoop = {
   jolt: number;
   joltDir: number;
   net: NetNode[];
+  /** Stage modifier: hide backboard + brace (ghost rings). */
+  noBoard?: boolean;
+  /** Draw opacity override (ghost fade). */
+  fxAlpha?: number;
+  /** Draw scale about rim center (ghost spawn/despawn). */
+  fxScale?: number;
+  /** When false, rim-plane scoring is ignored. */
+  scoreable?: boolean;
 };
 
 export type Callout = {
@@ -151,6 +159,8 @@ export type HudState = {
   dev: DevHud;
   ballId: BallId;
   playMode: PlayMode;
+  /** Active ScenePack id (street / prison). */
+  sceneId: "street" | "prison";
   prison: PrisonHud | null;
   rogue: RogueHud | null;
 };

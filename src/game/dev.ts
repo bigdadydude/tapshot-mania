@@ -1,8 +1,10 @@
 import type { GrafKey } from "./scenes";
 import type { BallId } from "./balls";
 import type { PlayMode } from "./types";
+import type { ModifierId } from "./modifiers";
+import { MODIFIER_LABELS } from "./modifiers";
 
-export type DevSceneId = "void" | "street";
+export type DevSceneId = "void" | "street" | "prison";
 
 export type DevPhys = {
   ball: number;
@@ -48,6 +50,10 @@ export type DevHud = {
   fuseBall: BallId | null;
   phys: DevPhys;
   playMode: PlayMode;
+  /** Forced stage modifier; null = auto roll for rogue. */
+  modifierForce: ModifierId | null;
+  /** Currently active modifier (from run or force). */
+  modifier: ModifierId;
 };
 
 export const DEFAULT_DEV: DevHud = {
@@ -65,6 +71,8 @@ export const DEFAULT_DEV: DevHud = {
   fuseBall: null,
   phys: { ...DEFAULT_PHYS },
   playMode: "classic",
+  modifierForce: null,
+  modifier: "none",
 };
 
 export type DevCmd =
@@ -75,6 +83,7 @@ export type DevCmd =
   | { t: "playMode"; mode: PlayMode }
   | { t: "rogueTool"; kind: "gold" | "shop" | "clearSettle" | "clearScore" | "closeShop" }
   | { t: "rogueFuse"; id: BallId | null }
+  | { t: "modifier"; id: ModifierId | "auto" }
   | { t: "score"; n: number }
   | { t: "addScore"; n: number }
   | { t: "combo"; n: number }
@@ -94,6 +103,11 @@ export type DevCmd =
   | { t: "phys"; k: keyof DevPhys; n: number }
   | { t: "physReset" };
 
+export const DEV_MODIFIERS: { id: ModifierId | "auto"; label: string }[] = [
+  { id: "auto", label: "自动抽取" },
+  ...MODIFIER_LABELS.map((m) => ({ id: m.id, label: m.name })),
+];
+
 export const DEV_PLAY_MODES: { id: PlayMode; label: string }[] = [
   { id: "classic", label: "经典" },
   { id: "minute", label: "1分钟" },
@@ -103,6 +117,7 @@ export const DEV_PLAY_MODES: { id: PlayMode; label: string }[] = [
 export const DEV_SCENES: { id: DevSceneId; label: string }[] = [
   { id: "void", label: "空空间" },
   { id: "street", label: "街头" },
+  { id: "prison", label: "监狱" },
 ];
 
 export const DEV_STAGES: { n: number; label: string }[] = [

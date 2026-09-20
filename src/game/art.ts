@@ -1,7 +1,7 @@
 import { getScene, type GrafKey } from "./scenes";
 import { BALLS, type BallId } from "./balls";
 
-type ArtKey = "court" | "wall" | "sky" | "timerBase" | "timerFill";
+type ArtKey = "court" | "wall" | "sky" | "timerBase" | "timerFill" | "towers";
 
 type ArtSlot = {
   img: HTMLImageElement | null;
@@ -9,15 +9,17 @@ type ArtSlot = {
   settled: boolean;
 };
 
-function sceneSrc(): Record<ArtKey, { src: string; fallback: string }> {
+function sceneSrc(): Partial<Record<ArtKey, { src: string; fallback: string }>> {
   const scene = getScene();
-  return {
+  const out: Partial<Record<ArtKey, { src: string; fallback: string }>> = {
     court: scene.court,
     wall: scene.wall,
     sky: scene.skyArt,
     timerBase: { src: scene.timer.base, fallback: scene.timer.base },
     timerFill: { src: scene.timer.fill, fallback: scene.timer.fill },
   };
+  if (scene.towers) out.towers = scene.towers;
+  return out;
 }
 
 const slots: Record<ArtKey, ArtSlot> = {
@@ -26,6 +28,7 @@ const slots: Record<ArtKey, ArtSlot> = {
   sky: { img: null, ok: false, settled: false },
   timerBase: { img: null, ok: false, settled: false },
   timerFill: { img: null, ok: false, settled: false },
+  towers: { img: null, ok: false, settled: true },
 };
 
 function markReady(key: ArtKey, img: HTMLImageElement) {
@@ -58,13 +61,43 @@ export function primeArt() {
   const SRC = sceneSrc();
   primeBalls();
   (Object.keys(SRC) as ArtKey[]).forEach((key) => {
+    const spec = SRC[key];
+    if (!spec) return;
     const slot = slots[key];
     if (slot.img) {
       if (slot.img.complete && slot.img.naturalWidth > 0) markReady(key, slot.img);
       return;
     }
-    loadArt(key, SRC[key].src, SRC[key].fallback);
+    loadArt(key, spec.src, spec.fallback);
   });
+  // Clear optional layers not in this scene.
+  if (!SRC.towers) {
+    slots.towers = { img: null, ok: false, settled: true };
+  }
+  primeClouds();
+  primeGraffiti();
+}
+
+/** Drop cached scene images and reload from the active ScenePack. */
+export function reloadSceneArt() {
+  if (typeof Image === "undefined") return;
+  for (const key of Object.keys(slots) as ArtKey[]) {
+    slots[key] = { img: null, ok: false, settled: key === "towers" };
+  }
+  cloudSlots.length = 0;
+  for (const key of GRAF_KEYS) {
+    grafSlots[key] = { img: null, ok: false, settled: false };
+  }
+  const SRC = sceneSrc();
+  (Object.keys(SRC) as ArtKey[]).forEach((key) => {
+    const spec = SRC[key];
+    if (!spec) return;
+    slots[key] = { img: null, ok: false, settled: false };
+    loadArt(key, spec.src, spec.fallback);
+  });
+  if (!SRC.towers) {
+    slots.towers = { img: null, ok: false, settled: true };
+  }
   primeClouds();
   primeGraffiti();
 }

@@ -1,0 +1,23 @@
+{
+  "version": 3,
+  "spriteSrc": "/game/modifiers/searchlight.png?v=1",
+  "light": {
+    "id": "left",
+    "side": "left",
+    "x": 0.21782269122081632,
+    "y": 0.26616149475450884,
+    "scale": 0.16,
+    "angle": 0.5231207360303503,
+    "pivotU": 0.37071914021031327,
+    "pivotV": 0.8065719322526332,
+    "emitU": 0.6466769007772668,
+    "emitV": 0.48266258261619127,
+    "emitRX": 0.18,
+    "emitRY": 0.12,
+    "emitRot": 1.5707963267948966,
+    "beamOffset": 0,
+    "cone": 0.09,
+    "beamReach": 0.85,
+    "flipX": false
+  }
+}
