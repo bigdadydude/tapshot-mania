@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode
 import { AudioLines, Music, Pause, Volume2, VolumeX } from "lucide-react";
 import { createGame, rankFor, GAME_REV, type GameHandle } from "@/game/engine";
 import { primeArt } from "@/game/art";
-import { DEFAULT_DEV, wantDevQuery } from "@/game/dev";
+import { DEFAULT_DEV, wantDevQuery, type DevPhys } from "@/game/dev";
 import { BALLS, DEFAULT_BALL, ballFuseLabel, playableBalls, type BallId } from "@/game/balls";
 import { DEFAULT_GFX, type CloudMode, type Gfx, type HudState, type PlayMode } from "@/game/types";
 import { SCENE_LABELS, type SceneId } from "@/game/scenes";
@@ -218,6 +218,7 @@ export function GameView() {
               rogue={hud.rogue}
               devMode={hud.dev.on}
               onBuy={(uid) => gameRef.current?.buyRogue(uid)}
+              onTune={(key, dir) => gameRef.current?.tuneRogue(key, dir)}
               onGrant={(id) => gameRef.current?.grantRogue(id)}
               onRevoke={(id) => gameRef.current?.revokeRogue(id)}
               onContinue={() => gameRef.current?.rogueContinue()}
@@ -1064,6 +1065,7 @@ function HubCard({
   rogue,
   devMode = false,
   onBuy,
+  onTune,
   onGrant,
   onRevoke,
   onContinue,
@@ -1073,6 +1075,7 @@ function HubCard({
   rogue: NonNullable<HudState["rogue"]>;
   devMode?: boolean;
   onBuy: (uid: string) => void;
+  onTune: (key: keyof DevPhys, dir: -1 | 1) => void;
   onGrant?: (id: string) => void;
   onRevoke?: (id: string) => void;
   onContinue: () => void;
@@ -1081,6 +1084,7 @@ function HubCard({
 }) {
   const items = rogue.shop.filter((o) => o.kind === "item");
   const orns = rogue.shop.filter((o) => o.kind === "ornament");
+  const [tab, setTab] = useState<"shop" | "tune">("shop");
   // Same finger-up that opened the shop must not hit 下一关 / buy.
   const [armed, setArmed] = useState(false);
   useEffect(() => {
@@ -1094,6 +1098,9 @@ function HubCard({
     return (
       <DevCatalogHub
         rogue={rogue}
+        tab={tab}
+        onTab={setTab}
+        onTune={onTune}
         onGrant={onGrant}
         onRevoke={onRevoke}
         onContinue={onContinue}
@@ -1107,50 +1114,54 @@ function HubCard({
     <div className="pointer-events-none flex max-h-[70dvh] w-full flex-col items-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
       <div className="pointer-events-auto flex w-full max-w-xs flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-lg">
         <div className="border-b border-border px-4 py-3 text-center">
-          <p className="text-xs font-medium tracking-widest text-muted">商店</p>
-          <p className="mt-1 text-sm text-fg">
+          <ShopTabs tab={tab} onTab={setTab} />
+          <p className="mt-2 text-sm text-fg">
             金币 <span className="font-semibold tabular-nums">{rogue.gold}</span>
             {rogue.revives > 0 ? ` · 重生 ×${rogue.revives}` : ""}
           </p>
         </div>
-        <div className="max-h-[42dvh] space-y-3 overflow-y-auto px-3 py-3">
-          <div>
-            <p className="mb-1.5 text-[10px] font-medium tracking-widest text-subtle">道具</p>
-            <div className="space-y-1.5">
-              {items.length === 0 ? (
-                <p className="px-1 text-xs text-subtle">本关无道具上架</p>
-              ) : (
-                items.map((o) => (
-                  <ShopRow
-                    key={o.uid}
-                    offer={o}
-                    gold={rogue.gold}
-                    onBuy={onBuy}
-                    locked={!armed}
-                  />
-                ))
-              )}
+        {tab === "tune" ? (
+          <TuneList rogue={rogue} onTune={onTune} locked={!armed} />
+        ) : (
+          <div className="max-h-[42dvh] space-y-3 overflow-y-auto px-3 py-3">
+            <div>
+              <p className="mb-1.5 text-[10px] font-medium tracking-widest text-subtle">道具</p>
+              <div className="space-y-1.5">
+                {items.length === 0 ? (
+                  <p className="px-1 text-xs text-subtle">本关无道具上架</p>
+                ) : (
+                  items.map((o) => (
+                    <ShopRow
+                      key={o.uid}
+                      offer={o}
+                      gold={rogue.gold}
+                      onBuy={onBuy}
+                      locked={!armed}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+            <div>
+              <p className="mb-1.5 text-[10px] font-medium tracking-widest text-subtle">饰品</p>
+              <div className="space-y-1.5">
+                {orns.length === 0 ? (
+                  <p className="px-1 text-xs text-subtle">本关无饰品上架</p>
+                ) : (
+                  orns.map((o) => (
+                    <ShopRow
+                      key={o.uid}
+                      offer={o}
+                      gold={rogue.gold}
+                      onBuy={onBuy}
+                      locked={!armed}
+                    />
+                  ))
+                )}
+              </div>
             </div>
           </div>
-          <div>
-            <p className="mb-1.5 text-[10px] font-medium tracking-widest text-subtle">饰品</p>
-            <div className="space-y-1.5">
-              {orns.length === 0 ? (
-                <p className="px-1 text-xs text-subtle">本关无饰品上架</p>
-              ) : (
-                orns.map((o) => (
-                  <ShopRow
-                    key={o.uid}
-                    offer={o}
-                    gold={rogue.gold}
-                    onBuy={onBuy}
-                    locked={!armed}
-                  />
-                ))
-              )}
-            </div>
-          </div>
-        </div>
+        )}
         <div className="flex gap-2 border-t border-border p-3">
           <button
             type="button"
@@ -1180,8 +1191,115 @@ function HubCard({
   );
 }
 
+function ShopTabs({
+  tab,
+  onTab,
+}: {
+  tab: "shop" | "tune";
+  onTab: (tab: "shop" | "tune") => void;
+}) {
+  return (
+    <div className="mx-auto flex w-44 rounded-lg bg-bg-subtle p-0.5 text-xs font-medium">
+      {(
+        [
+          ["shop", "商店"],
+          ["tune", "改球"],
+        ] as const
+      ).map(([id, label]) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onTab(id)}
+          className={cn(
+            "h-8 flex-1 rounded-md",
+            tab === id ? "bg-bg-elevated text-fg shadow-sm" : "text-muted",
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TuneList({
+  rogue,
+  onTune,
+  locked,
+}: {
+  rogue: NonNullable<HudState["rogue"]>;
+  onTune: (key: keyof DevPhys, dir: -1 | 1) => void;
+  locked: boolean;
+}) {
+  const broke = rogue.gold < rogue.tuneCost;
+  return (
+    <div className="max-h-[42dvh] space-y-2.5 overflow-y-auto px-3 py-3">
+      <p className="text-center text-xs text-muted">
+        改一次 <span className="font-semibold tabular-nums text-fg">{rogue.tuneCost}</span> 金
+        <span className="text-subtle"> · 下次 {rogue.tuneNext} 金</span>
+      </p>
+      {rogue.tune.map((row) => {
+        const span = Math.max(0.001, row.max - row.min);
+        const pct = Math.max(0, Math.min(100, ((row.value - row.min) / span) * 100));
+        const shown = Math.round(row.value * 100);
+        return (
+          <div key={row.key}>
+            <div className="flex items-baseline justify-between">
+              <p className="text-xs font-medium text-fg">{row.label}</p>
+              <p className="text-xs tabular-nums text-muted">{shown}%</p>
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <TuneNudge
+                label="−"
+                disabled={locked || broke || row.atMin}
+                onClick={() => onTune(row.key, -1)}
+              />
+              <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-border">
+                <div className="absolute inset-y-0 left-0 bg-accent" style={{ width: `${pct}%` }} />
+              </div>
+              <TuneNudge
+                label="+"
+                disabled={locked || broke || row.atMax}
+                onClick={() => onTune(row.key, 1)}
+              />
+            </div>
+            <p className="mt-0.5 text-[10px] text-subtle">{row.hint}</p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TuneNudge({
+  label,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "h-9 w-9 shrink-0 rounded-md text-base font-medium",
+        disabled ? "bg-border text-subtle" : "bg-accent text-accent-fg",
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
 function DevCatalogHub({
   rogue,
+  tab,
+  onTab,
+  onTune,
   onGrant,
   onRevoke,
   onContinue,
@@ -1189,6 +1307,9 @@ function DevCatalogHub({
   onReset,
 }: {
   rogue: NonNullable<HudState["rogue"]>;
+  tab: "shop" | "tune";
+  onTab: (tab: "shop" | "tune") => void;
+  onTune: (key: keyof DevPhys, dir: -1 | 1) => void;
   onGrant: (id: string) => void;
   onRevoke: (id: string) => void;
   onContinue: () => void;
@@ -1214,12 +1335,15 @@ function DevCatalogHub({
     <div className="pointer-events-none flex max-h-[78dvh] w-full flex-col items-center px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       <div className="pointer-events-auto flex w-full max-w-sm flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-lg">
         <div className="border-b border-border px-4 py-3 text-center">
-          <p className="text-xs font-medium tracking-widest text-muted">开发者目录</p>
-          <p className="mt-1 text-sm text-fg">
+          <ShopTabs tab={tab} onTab={onTab} />
+          <p className="mt-2 text-sm text-fg">
             金币 <span className="font-semibold tabular-nums">{rogue.gold}</span>
             <span className="text-subtle"> · 无限分 · 全量目录</span>
           </p>
         </div>
+        {tab === "tune" ? (
+          <TuneList rogue={rogue} onTune={onTune} locked={false} />
+        ) : (
         <div className="max-h-[min(52dvh,22rem)] overflow-y-auto overscroll-contain px-2 py-2 [-webkit-overflow-scrolling:touch]">
           <p className="sticky top-0 z-10 bg-bg-elevated px-2 py-1.5 text-[10px] font-medium tracking-widest text-subtle">
             道具
@@ -1254,6 +1378,7 @@ function DevCatalogHub({
             ))}
           </div>
         </div>
+        )}
         <div className="flex gap-2 border-t border-border p-3">
           <button
             type="button"

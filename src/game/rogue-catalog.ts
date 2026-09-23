@@ -673,6 +673,29 @@ export const ROGUE_CATALOG: RogueCatalogEntry[] = [
   }),
 ];
 
+/** Feel ornaments replaced by 改球店. Kept in the catalog, not sold. */
+const SHELVED_BALL_PHYS = new Set<string>([
+  "rimGrip",
+  "ballBounce",
+  "smallshoe",
+  "jumphigher",
+  "biggershoe",
+  "jumplower",
+  "gravitywell",
+  "airglide",
+  "headwind",
+  "waxfloor",
+  "brakes",
+  "springfloor",
+  "softiron",
+  "sandpaper",
+]);
+for (const entry of ROGUE_CATALOG) {
+  if (!SHELVED_BALL_PHYS.has(entry.id)) continue;
+  entry.status = "off";
+  entry.note = entry.note ? `${entry.note}；已下架，改球店调节` : "已下架，改由改球店调节";
+}
+
 export const ROGUE_CATALOG_BY_ID: Record<string, RogueCatalogEntry> = Object.fromEntries(
   ROGUE_CATALOG.map((e) => [e.id, e]),
 );

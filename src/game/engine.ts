@@ -45,6 +45,9 @@ import {
   settleStagePayout,
   toRogueHud,
   tryBuyOffer,
+  tryTuneBall,
+  tuneRows,
+  TUNE_STEP,
   clearRogueLoadout,
   devGrantRogue,
   devRevokeRogue,
@@ -122,6 +125,8 @@ export type GameHandle = {
   setPlayMode: (mode: PlayMode) => void;
   setScene: (id: SceneId) => void;
   buyRogue: (uid: string) => void;
+  /** 改球店: nudge one phys bar. Costs gold; the next nudge costs more. */
+  tuneRogue: (key: keyof DevPhys, dir: -1 | 1) => void;
   /** Dev catalog: grant / revoke one stack. */
   grantRogue: (id: string) => void;
   revokeRogue: (id: string) => void;
@@ -951,7 +956,7 @@ export function createGame(
       playMode,
       sceneId: getSceneId(),
       prison: prisonHud(),
-      rogue: toRogueHud(isRogueMode() ? rogueRun : null),
+      rogue: rogueHud(),
     });
   }
 
@@ -975,6 +980,12 @@ export function createGame(
     });
   }
 
+  function rogueHud() {
+    const hud = toRogueHud(isRogueMode() ? rogueRun : null);
+    if (hud && rogueRun) hud.tune = tuneRows(rogueRun, kitPhys);
+    return hud;
+  }
+
   function kitPhys(k: keyof DevPhys): number {
     const v = getBall(ballId).phys?.[k];
     if (typeof v === "number") return v;
@@ -984,6 +995,8 @@ export function createGame(
   function pMul(k: keyof DevPhys): number {
     let v = clampPhysKey(k, devOn ? devPhys[k] : kitPhys(k));
     if (!devOn && isRogueMode() && rogueRun) {
+      const steps = rogueRun.tune[k] ?? 0;
+      if (steps) v = clampPhysKey(k, v + steps * TUNE_STEP);
       if (
         k === "rimFric" ||
         k === "ball" ||
@@ -2729,6 +2742,13 @@ export function createGame(
   function buyRogueOffer(uid: string) {
     if (!isRogueMode() || !rogueRun || phase !== "hub") return;
     const res = tryBuyOffer(rogueRun, uid);
+    if (!res.ok) return;
+    emitHud();
+  }
+
+  function tuneRogueBall(key: keyof DevPhys, dir: -1 | 1) {
+    if (!isRogueMode() || !rogueRun || phase !== "hub") return;
+    const res = tryTuneBall(rogueRun, key, dir, kitPhys(key));
     if (!res.ok) return;
     emitHud();
   }
@@ -5284,6 +5304,9 @@ export function createGame(
     },
     buyRogue(uid) {
       buyRogueOffer(uid);
+    },
+    tuneRogue(key, dir) {
+      tuneRogueBall(key, dir);
     },
     grantRogue(id) {
       grantRogueGear(id);
