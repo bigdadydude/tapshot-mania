@@ -81,12 +81,11 @@ export const BALLS: BallKit[] = [
     wrap: "ground",
     score: "normal",
     phys: {
-      jumpUp: 0.98,
-      jumpFwd: 1.02,
-      grav: 0.96,
-      air: 0.94,
-      hoop: 0.92,
-      boardFric: 0.9,
+      jumpUp: 1,
+      jumpFwd: 1,
+      grav: 0.98,
+      ball: 1.04,
+      air: 0.96,
     },
   },
   {
