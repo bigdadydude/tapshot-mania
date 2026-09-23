@@ -1,6 +1,7 @@
 /** Roguelike run tables and pure helpers. */
 
 import type { BallId } from "./balls";
+import { clampPhysKey, DEV_PHYS, type DevPhys } from "./dev";
 import { rollStageModifier, type ModifierId } from "./modifiers";
 import {
   activeCatalog,
@@ -104,6 +105,10 @@ export type RogueRun = {
   fusePicked: boolean;
   /** Active stage modifier for this stage (shared with story later). */
   modifier: ModifierId;
+  /** Paid 改球店 steps per phys key. Missing = 0. */
+  tune: Partial<Record<keyof DevPhys, number>>;
+  /** How many paid tweaks this run. Next tweak costs more. */
+  tuneBuys: number;
 };
 
 export type RogueHud = {
@@ -144,6 +149,9 @@ export type RogueHud = {
   fuseBall: BallId | null;
   fusePicked: boolean;
   modifier: ModifierId;
+  tune: BallTuneRow[];
+  tuneCost: number;
+  tuneNext: number;
 };
 
 /** Campaign length (v1). Fusion slots planned at clears of stages 3 and 6. */
@@ -235,11 +243,81 @@ export function createRogueRun(): RogueRun {
     fuseBall: null,
     fusePicked: false,
     modifier: rollStageModifier(1),
+    tune: {},
+    tuneBuys: 0,
   };
 }
 
 export function ornamentStacks(run: RogueRun, id: RogueOrnamentId): number {
   return run.ornaments.find((o) => o.id === id)?.stacks ?? 0;
+}
+
+/** One paid nudge on a phys bar. 4% of the 1.0 scale. */
+export const TUNE_STEP = 0.04;
+
+/** First tweak 8 gold, then +6 each time: 8, 14, 20… */
+export function tuneCost(buys: number): number {
+  const n = Math.max(0, Math.floor(buys));
+  return 8 + n * 6;
+}
+
+function physRange(k: keyof DevPhys): { min: number; max: number } {
+  if (k === "buoy" || k === "ball" || k === "rimFric" || k === "boardFric") {
+    return { min: 0, max: 2 };
+  }
+  return { min: 0.5, max: 2 };
+}
+
+export function tuneValue(base: number, key: keyof DevPhys, steps: number): number {
+  return clampPhysKey(key, base + steps * TUNE_STEP);
+}
+
+export type BallTuneRow = {
+  key: keyof DevPhys;
+  label: string;
+  hint: string;
+  value: number;
+  min: number;
+  max: number;
+  atMin: boolean;
+  atMax: boolean;
+};
+
+export function tuneRows(run: RogueRun, baseOf: (k: keyof DevPhys) => number): BallTuneRow[] {
+  return DEV_PHYS.map((row) => {
+    const steps = run.tune[row.k] ?? 0;
+    const value = tuneValue(baseOf(row.k), row.k, steps);
+    const { min, max } = physRange(row.k);
+    return {
+      key: row.k,
+      label: row.label,
+      hint: row.hint,
+      value,
+      min,
+      max,
+      atMin: value <= min + 1e-4,
+      atMax: value >= max - 1e-4,
+    };
+  });
+}
+
+export function tryTuneBall(
+  run: RogueRun,
+  key: keyof DevPhys,
+  dir: -1 | 1,
+  base: number,
+): { ok: boolean; reason?: string } {
+  if (dir !== -1 && dir !== 1) return { ok: false, reason: "无效" };
+  const cost = tuneCost(run.tuneBuys);
+  if (run.gold < cost) return { ok: false, reason: "金币不足" };
+  const cur = run.tune[key] ?? 0;
+  const before = tuneValue(base, key, cur);
+  const after = tuneValue(base, key, cur + dir);
+  if (Math.abs(after - before) < 1e-4) return { ok: false, reason: "到头了" };
+  run.gold -= cost;
+  run.tuneBuys += 1;
+  run.tune[key] = cur + dir;
+  return { ok: true };
 }
 
 export function catalogOf(id: string): RogueCatalogEntry | undefined {
@@ -333,7 +411,17 @@ export function applyRogueMakeMods(
 
 export function roguePhysMul(
   run: RogueRun,
-  key: "rimFric" | "ball" | "jumpFwd" | "jumpUp" | "grav",
+  key:
+    | "rimFric"
+    | "ball"
+    | "jumpFwd"
+    | "jumpUp"
+    | "grav"
+    | "air"
+    | "roll"
+    | "floor"
+    | "hoop"
+    | "boardFric",
 ): number {
   let v = 1;
   for (const owned of run.ornaments) {
@@ -345,6 +433,11 @@ export function roguePhysMul(
     if (key === "jumpFwd" && meta.jumpFwdPer) v += meta.jumpFwdPer * n;
     if (key === "jumpUp" && meta.jumpUpPer) v += meta.jumpUpPer * n;
     if (key === "grav" && meta.gravPer) v += meta.gravPer * n;
+    if (key === "air" && meta.airPer) v += meta.airPer * n;
+    if (key === "roll" && meta.rollPer) v += meta.rollPer * n;
+    if (key === "floor" && meta.floorPer) v += meta.floorPer * n;
+    if (key === "hoop" && meta.hoopPer) v += meta.hoopPer * n;
+    if (key === "boardFric" && meta.boardFricPer) v += meta.boardFricPer * n;
   }
   return Math.max(0.35, v);
 }
@@ -771,6 +864,9 @@ export function toRogueHud(run: RogueRun | null): RogueHud | null {
     fuseBall: run.fuseBall,
     fusePicked: run.fusePicked,
     modifier: run.modifier,
+    tune: [],
+    tuneCost: tuneCost(run.tuneBuys),
+    tuneNext: tuneCost(run.tuneBuys + 1),
   };
 }
 
