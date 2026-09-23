@@ -333,7 +333,17 @@ export function applyRogueMakeMods(
 
 export function roguePhysMul(
   run: RogueRun,
-  key: "rimFric" | "ball" | "jumpFwd" | "jumpUp" | "grav",
+  key:
+    | "rimFric"
+    | "ball"
+    | "jumpFwd"
+    | "jumpUp"
+    | "grav"
+    | "air"
+    | "roll"
+    | "floor"
+    | "hoop"
+    | "boardFric",
 ): number {
   let v = 1;
   for (const owned of run.ornaments) {
@@ -345,6 +355,11 @@ export function roguePhysMul(
     if (key === "jumpFwd" && meta.jumpFwdPer) v += meta.jumpFwdPer * n;
     if (key === "jumpUp" && meta.jumpUpPer) v += meta.jumpUpPer * n;
     if (key === "grav" && meta.gravPer) v += meta.gravPer * n;
+    if (key === "air" && meta.airPer) v += meta.airPer * n;
+    if (key === "roll" && meta.rollPer) v += meta.rollPer * n;
+    if (key === "floor" && meta.floorPer) v += meta.floorPer * n;
+    if (key === "hoop" && meta.hoopPer) v += meta.hoopPer * n;
+    if (key === "boardFric" && meta.boardFricPer) v += meta.boardFricPer * n;
   }
   return Math.max(0.35, v);
 }

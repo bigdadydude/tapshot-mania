@@ -54,6 +54,13 @@ export type RogueOrnamentId =
   | "deepbombcoin"
   | "chaosdrug"
   | "gravitywell"
+  | "airglide"
+  | "headwind"
+  | "waxfloor"
+  | "brakes"
+  | "springfloor"
+  | "softiron"
+  | "sandpaper"
   | "WhatsThat"
   | "miniMe"
   | "funsize"
@@ -81,6 +88,11 @@ export type RogueCatalogEntry = {
   ballBouncePer?: number;
   jumpFwdPer?: number;
   jumpUpPer?: number;
+  airPer?: number;
+  rollPer?: number;
+  floorPer?: number;
+  hoopPer?: number;
+  boardFricPer?: number;
   comboWindowPer?: number;
   startStreak?: number;
   blackholeSec?: number;
@@ -524,6 +536,69 @@ export const ROGUE_CATALOG: RogueCatalogEntry[] = [
     rarity: "common",
     stackable: true,
     gravPer: 0.12,
+  }),
+  orn({
+    id: "airglide",
+    name: "顺风",
+    desc: "空中阻力减小，弧线更飘",
+    cost: 25,
+    rarity: "rare",
+    stackable: true,
+    airPer: -0.08,
+  }),
+  orn({
+    id: "headwind",
+    name: "逆风",
+    desc: "空中阻力增大，弧线更短",
+    cost: 20,
+    rarity: "common",
+    stackable: true,
+    airPer: 0.08,
+  }),
+  orn({
+    id: "waxfloor",
+    name: "打蜡",
+    desc: "地面更滑，滚动更久",
+    cost: 22,
+    rarity: "rare",
+    stackable: true,
+    rollPer: -0.1,
+  }),
+  orn({
+    id: "brakes",
+    name: "刹车",
+    desc: "贴地更快停住",
+    cost: 18,
+    rarity: "common",
+    stackable: true,
+    rollPer: 0.1,
+  }),
+  orn({
+    id: "springfloor",
+    name: "弹簧地",
+    desc: "砸地回弹更高",
+    cost: 22,
+    rarity: "rare",
+    stackable: true,
+    floorPer: 0.08,
+  }),
+  orn({
+    id: "softiron",
+    name: "软筐",
+    desc: "打铁、打板更弹",
+    cost: 18,
+    rarity: "common",
+    stackable: true,
+    hoopPer: 0.08,
+  }),
+  orn({
+    id: "sandpaper",
+    name: "砂纸板",
+    desc: "擦板更吃横向速度",
+    cost: 20,
+    rarity: "common",
+    stackable: true,
+    boardFricPer: 0.08,
   }),
   orn({
     id: "WhatsThat",

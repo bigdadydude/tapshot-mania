@@ -984,11 +984,20 @@ export function createGame(
   function pMul(k: keyof DevPhys): number {
     let v = clampPhysKey(k, devOn ? devPhys[k] : kitPhys(k));
     if (!devOn && isRogueMode() && rogueRun) {
-      if (k === "rimFric") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "rimFric"));
-      if (k === "ball") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "ball"));
-      if (k === "jumpFwd") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "jumpFwd"));
-      if (k === "jumpUp") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "jumpUp"));
-      if (k === "grav") v = clampPhysKey(k, v * roguePhysMul(rogueRun, "grav"));
+      if (
+        k === "rimFric" ||
+        k === "ball" ||
+        k === "jumpFwd" ||
+        k === "jumpUp" ||
+        k === "grav" ||
+        k === "air" ||
+        k === "roll" ||
+        k === "floor" ||
+        k === "hoop" ||
+        k === "boardFric"
+      ) {
+        v = clampPhysKey(k, v * roguePhysMul(rogueRun, k));
+      }
     }
     if (!devOn && isPrison() && prisonMode) {
       if (prisonMode === "free") {
