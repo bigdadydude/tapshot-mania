@@ -122,7 +122,7 @@ export type Gfx = {
 };
 
 export const DEFAULT_GFX: Gfx = {
-  clouds: "dance",
+  clouds: "drift",
   ballShade: true,
   ballShadow: true,
   particles: true,

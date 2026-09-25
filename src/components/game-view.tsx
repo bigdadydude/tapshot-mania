@@ -8,6 +8,7 @@ import { DEFAULT_GFX, type CloudMode, type Gfx, type HudState, type PlayMode } f
 import { SCENE_LABELS, type SceneId } from "@/game/scenes";
 import { DevConsole } from "@/components/dev-console";
 import { SearchlightEditor } from "@/components/searchlight-editor";
+import { GraffitiDemo } from "@/components/graffiti-demo";
 import {
   itemLabel,
   ornamentLabel,
@@ -53,6 +54,7 @@ export function GameView() {
   const [crash, setCrash] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu>("none");
   const [titleTaps, setTitleTaps] = useState(0);
+  const [graffiti, setGraffiti] = useState(false);
   const [searchlightEdit, setSearchlightEdit] = useState(false);
   const enteredDev = useRef(false);
 
@@ -163,6 +165,7 @@ export function GameView() {
         className="absolute inset-0 h-full w-full touch-none select-none"
         style={{ touchAction: "none" }}
       />
+      {graffiti ? <GraffitiDemo onClose={() => setGraffiti(false)} /> : null}
 
       {crash ? (
         <div className="absolute inset-0 z-20 flex items-center justify-center px-6 text-center">
@@ -201,6 +204,7 @@ export function GameView() {
                 }
               }}
               onDev={() => gameRef.current?.dev({ t: "enter" })}
+              onGraffiti={() => setGraffiti(true)}
             />
           ) : null}
           {hud.phase === "settle" && menu === "none" && hud.rogue ? (
@@ -388,6 +392,7 @@ function TitleCard({
   onScene,
   onTitleTap,
   onDev,
+  onGraffiti,
 }: {
   best: number;
   unlocked: boolean;
@@ -400,6 +405,7 @@ function TitleCard({
   onScene: (id: SceneId) => void;
   onTitleTap: () => void;
   onDev: () => void;
+  onGraffiti: () => void;
 }) {
   type Slide =
     | { kind: "random"; key: "random" }
@@ -773,6 +779,13 @@ function TitleCard({
       >
         开始
       </button>
+      <button
+        type="button"
+        onClick={onGraffiti}
+        className="pointer-events-auto mt-3 h-10 text-sm text-subtle"
+      >
+        涂鸦球 demo
+      </button>
       {unlocked ? (
         <button
           type="button"
@@ -852,6 +865,29 @@ function BallThumb({ kit, large = false }: { kit: (typeof BALLS)[number]; large?
         style={{
           background:
             "radial-gradient(circle at 32% 28%, #fff7a8 0%, #ffe14a 40%, #5ad0ff 75%, #2a6dff 100%)",
+        }}
+      />
+    );
+  }
+  if (kit.id === "doodle") {
+    return (
+      <span
+        className={`${big} rounded-full shadow-inner`}
+        style={{
+          background:
+            "radial-gradient(circle at 32% 28%, #fff6e4 0%, #f0d3a4 46%, #e8548a 78%, #40a8d6 100%)",
+        }}
+      />
+    );
+  }
+  if (kit.id === "rain") {
+    return (
+      <span
+        className={`${big} overflow-hidden rounded-full shadow-inner`}
+        style={{
+          background:
+            "repeating-linear-gradient(180deg, #b8ffc8 0 3px, #0a1f12 3px 6px), radial-gradient(circle at 35% 28%, #6dff9a 0%, #0a2818 70%, #020805 100%)",
+          backgroundBlendMode: "screen",
         }}
       />
     );

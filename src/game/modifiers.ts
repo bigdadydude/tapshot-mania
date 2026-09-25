@@ -54,6 +54,8 @@ export type ModifierHost = {
     r: number,
     spin: number,
   ) => void;
+  /** Hacker ball awaken — bolts freeze/fall near the ball. */
+  isHackerAwaken?: () => boolean;
 };
 
 export type YardLightsHud = {

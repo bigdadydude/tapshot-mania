@@ -10,7 +10,9 @@ export type BallId =
   | "prison"
   | "rubber"
   | "ninja"
-  | "bolt";
+  | "bolt"
+  | "doodle"
+  | "rain";
 
 export type BallKit = {
   id: BallId;
@@ -25,6 +27,10 @@ export type BallKit = {
   anti?: boolean;
   /** Lightning ball: charge on roll/bank, long-press chain swish. */
   bolt?: boolean;
+  /** Graffiti ball: pick up paint on tap, drag a dashed rail (slow-mo). */
+  doodle?: boolean;
+  /** Bit-rain ball: any map becomes black + cascading green squares. */
+  codeRain?: boolean;
   src?: string;
   fallback?: string;
   wrap: "ground" | "height";
@@ -193,6 +199,39 @@ export const BALLS: BallKit[] = [
     },
   },
   {
+    id: "rain",
+    name: "骇客球",
+    skill: "倒计时首次耗尽觉醒：绿滤镜巡航，条反向涨；进球加速",
+    heat: false,
+    codeRain: true,
+    wrap: "ground",
+    score: "normal",
+    phys: {
+      jumpUp: 1,
+      jumpFwd: 1,
+      grav: 0.98,
+      ball: 1.04,
+      air: 0.96,
+    },
+  },
+  {
+    id: "doodle",
+    name: "涂鸦球",
+    skill: "点球附近拖虚线（慢动作）；颜料点10%/4秒衰减（暂未开放）",
+    heat: false,
+    doodle: true,
+    wrap: "ground",
+    score: "normal",
+    playable: false,
+    phys: {
+      jumpUp: 1,
+      jumpFwd: 1,
+      grav: 0.98,
+      ball: 1.04,
+      air: 0.96,
+    },
+  },
+  {
     id: "prison",
     name: "监狱球",
     skill: "链拖铁球；释放如经典球（暂未开放）",
@@ -232,7 +271,9 @@ export function parseBall(v: unknown): BallId {
     v === "prison" ||
     v === "rubber" ||
     v === "ninja" ||
-    v === "bolt"
+    v === "bolt" ||
+    v === "doodle" ||
+    v === "rain"
       ? v
       : DEFAULT_BALL;
   return isPlayableBall(id) ? id : DEFAULT_BALL;
@@ -265,6 +306,8 @@ export type EffectiveBall = {
   chain: boolean;
   ninja: boolean;
   glass: boolean;
+  doodle: boolean;
+  codeRain: boolean;
   wrap: "ground" | "height";
   rScale: number;
   phys?: Partial<DevPhys>;
@@ -283,6 +326,8 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | null): Effecti
   const chain = Boolean(primary.chain) || Boolean(fuse?.chain);
   const ninja = primaryId === "ninja" || fuseId === "ninja";
   const glass = primary.score === "glass" || fuse?.score === "glass";
+  const doodle = Boolean(primary.doodle) || Boolean(fuse?.doodle);
+  const codeRain = Boolean(primary.codeRain) || Boolean(fuse?.codeRain);
   const skill = fuse
     ? `${primary.skill} · 融${fuse.name}：${fuse.skill}`
     : primary.skill;
@@ -300,6 +345,8 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | null): Effecti
     chain,
     ninja,
     glass,
+    doodle,
+    codeRain,
     wrap: primary.wrap,
     rScale: (primary.rScale ?? 1) * (fuse?.rScale ?? 1),
     phys: primary.phys,
