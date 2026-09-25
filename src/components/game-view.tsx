@@ -880,6 +880,18 @@ function BallThumb({ kit, large = false }: { kit: (typeof BALLS)[number]; large?
       />
     );
   }
+  if (kit.id === "rain") {
+    return (
+      <span
+        className={`${big} overflow-hidden rounded-full shadow-inner`}
+        style={{
+          background:
+            "repeating-linear-gradient(180deg, #b8ffc8 0 3px, #0a1f12 3px 6px), radial-gradient(circle at 35% 28%, #6dff9a 0%, #0a2818 70%, #020805 100%)",
+          backgroundBlendMode: "screen",
+        }}
+      />
+    );
+  }
   if (kit.src || kit.fallback) {
     const sz = kit.rScale && kit.rScale < 1 ? (large ? 44 : 36) : large ? 80 : 64;
     return (

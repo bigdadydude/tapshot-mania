@@ -18,14 +18,26 @@ import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import {
-  addDoodleMake,
-  doodleCanWrite,
+  commitDoodlePath,
+  DOODLE_DRAG_START,
+  DOODLE_FOLLOW_SPEED,
+  DOODLE_HOLD_ARM,
+  DOODLE_SLOWMO,
+  doodleStartsAtBall,
   emptyDoodle,
-  pushDoodleStroke,
-  spendDoodlePaint,
-  stepDoodle,
+  extendDoodleDraw,
+  followDoodlePath,
+  stepDoodleSpawns,
+  tryCollectDoodlePaint,
   type DoodleRun,
 } from "./doodle";
+import {
+  drawHackerPad,
+  hackerPadLayout,
+  hitHackerPad,
+  type HackerDir,
+} from "./hacker-pad";
+import { clearSparseCodeRain } from "./sparse-rain";
 import { DEFAULT_PHYS, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevPhys, type DevSceneId } from "./dev";
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
@@ -320,6 +332,9 @@ export function createGame(
   function isDoodle() {
     return kit().doodle;
   }
+  function isHacker() {
+    return kit().codeRain;
+  }
 
   function bunshinActive() {
     return Boolean(
@@ -531,6 +546,8 @@ export function createGame(
     comboCounting = false;
     comboClock = 0;
     recoverMakes = 0;
+    // Awaken survives combo breaks — only the shot clock ends it.
+    if (!hackerAwaken) hackerDir = null;
     if (isNinja()) resetNinjaPath();
     if (holeOn && holeLeft <= 0) closeAntiHole();
     if (isPrison() && prisonMode === "free" && phase === "playing") {
@@ -565,6 +582,7 @@ export function createGame(
     comboCounting = false;
     comboClock = 0;
     recoverMakes = 0;
+    if (!hackerAwaken) hackerDir = null;
     if (isNinja()) resetNinjaPath();
     if (holeOn && holeLeft <= 0) closeAntiHole();
     if (isPrison() && prisonMode === "free" && phase === "playing") {
@@ -784,7 +802,15 @@ export function createGame(
     y: number;
     pts: { x: number; y: number }[];
     writing: boolean;
+    /** performance.now() when the finger went down. */
+    heldAt: number;
   } | null = null;
+  /** Hacker ball D-pad cruise direction. */
+  let hackerDir: HackerDir | null = null;
+  /** Hacker awaken (first shot-clock empty): green wash + cruise + reverse bar. */
+  let hackerAwaken = false;
+  const HACKER_SPEED_BASE = 300;
+  let hackerSpeed = HACKER_SPEED_BASE;
   let antiMatter: { x: number; y: number; r: number; pct: number; age: number } | null =
     null;
   /** Sum of antimatter field linger this charge cycle (cuts hole duration). */
@@ -917,10 +943,22 @@ export function createGame(
   }
 
   function refillShotClock() {
-    // Minute mode keeps a fixed 60s clock �?no per-make shrink/refill.
+    // Minute mode keeps a fixed 60s clock — no per-make shrink/refill.
     if (isMinuteMode() || champMode) return;
     const decay = activeDecay();
-    timerMax = Math.max(TIMER_MIN, timerMax * decay);
+    if (hackerAwaken && isHacker()) {
+      // Reverse of normal shrink: grow max toward run budget at the same rate factor.
+      const prev = timerMax;
+      timerMax = Math.min(timerBudget(), timerMax / Math.max(0.85, decay));
+      // Ball speed scales with the same relative clock growth.
+      const ratio = prev > 1e-6 ? timerMax / prev : 1;
+      if (ratio > 1.0001) {
+        hackerSpeed *= ratio;
+        if (hackerDir) setHackerVelocity(hackerDir);
+      }
+    } else {
+      timerMax = Math.max(TIMER_MIN, timerMax * decay);
+    }
     timer = timerMax;
   }
 
@@ -938,7 +976,9 @@ export function createGame(
   }
 
   function emitHud() {
-    const timer01 = timerMax > 0 ? timer / timerMax : 0;
+    const raw01 = timerMax > 0 ? timer / timerMax : 0;
+    // Awaken: bar fills as time runs out (reverse of normal empty-out).
+    const timer01 = hackerAwaken ? 1 - raw01 : raw01;
     const displayScore =
       isRogueMode() && rogueRun && phase === "over" ? rogueTotalScore() : score;
     onHud({
@@ -1275,6 +1315,7 @@ export function createGame(
       ) => {
         paintBallSprite(ctx, x, y, r, spin, ballId, time);
       },
+      isHackerAwaken: () => hackerAwaken,
     };
   }
 
@@ -2038,6 +2079,11 @@ export function createGame(
       boltPendingTap = false;
       boltHoldArm = 0;
     }
+    if (!isHacker()) {
+      hackerDir = null;
+      hackerAwaken = false;
+      hackerSpeed = HACKER_SPEED_BASE;
+    }
     if (devOn) {
       applyKitPhys();
       remakeBall(hoop.side < 0 ? 1 : -1);
@@ -2135,6 +2181,11 @@ export function createGame(
       resetAntiRun();
     }
     if (!isBolt()) resetBoltRun();
+    if (!isHacker()) {
+      hackerDir = null;
+      hackerAwaken = false;
+      hackerSpeed = HACKER_SPEED_BASE;
+    }
     if (!isDoodle()) {
       doodleRun = emptyDoodle();
       doodleStroke = null;
@@ -2369,6 +2420,9 @@ export function createGame(
     combo = 0;
     streak = 0;
     hint = true;
+    hackerDir = null;
+    hackerAwaken = false;
+    hackerSpeed = HACKER_SPEED_BASE;
     madeCount = 0;
     if (isRogueMode()) {
       rogueRun = createRogueRun();
@@ -2473,6 +2527,10 @@ export function createGame(
     paused = false;
     buzzer = false;
     buzzerTimer = 0;
+    hackerAwaken = false;
+    hackerDir = null;
+    hackerSpeed = HACKER_SPEED_BASE;
+    clearSparseCodeRain();
     if (isAnti()) {
       holeOn = false;
       holeLeft = 0;
@@ -2844,6 +2902,105 @@ export function createGame(
     emitHud();
   }
 
+  function setHackerVelocity(dir: HackerDir) {
+    const s = hackerSpeed;
+    if (dir === "l") {
+      ball.vx = -s;
+      ball.vy = 0;
+    } else if (dir === "r") {
+      ball.vx = s;
+      ball.vy = 0;
+    } else if (dir === "u") {
+      ball.vx = 0;
+      ball.vy = -s;
+    } else {
+      ball.vx = 0;
+      ball.vy = s;
+    }
+    ball.omega = ball.vx / Math.max(8, ball.r);
+  }
+
+  function applyHackerDir(dir: HackerDir) {
+    hackerDir = dir;
+    setHackerVelocity(dir);
+    // Re-arm scoring (hacker skips floor settle that normally clears ball.scored).
+    ball.scored = false;
+    resetShotFlags();
+    shotOpen = true;
+    shotMade = false;
+    shotMissed = false;
+    shotAirborne = dir === "u" || dir === "d";
+    hint = false;
+    overRim = false;
+    fromBelow = false;
+    otherOverRim = false;
+  }
+
+  function enterHackerAwaken() {
+    if (hackerAwaken || !isHacker()) return;
+    hackerAwaken = true;
+    hackerSpeed = HACKER_SPEED_BASE;
+    // Reset bar full; decay rate (timerMax / activeDecay) stays on the current run.
+    timeUp = false;
+    buzzer = false;
+    buzzerTimer = 0;
+    timer = timerMax;
+    if (!hackerDir) {
+      const ax = Math.abs(ball.vx);
+      const ay = Math.abs(ball.vy);
+      if (ax >= ay && ax > 8) applyHackerDir(ball.vx >= 0 ? "r" : "l");
+      else if (ay > 8) applyHackerDir(ball.vy >= 0 ? "d" : "u");
+      else applyHackerDir("u");
+    } else {
+      setHackerVelocity(hackerDir);
+    }
+    callouts.push({
+      text: "觉醒",
+      x: ball.x,
+      y: ball.y - ball.r * 2.6,
+      life: 1.1,
+      max: 1.1,
+      kind: "tag",
+    });
+    emitHud();
+  }
+
+  function syncHackerDirFromVelocity() {
+    if (!hackerAwaken || !isHacker()) return;
+    const ax = Math.abs(ball.vx);
+    const ay = Math.abs(ball.vy);
+    if (ax < 6 && ay < 6) return;
+    const dir: HackerDir =
+      ax >= ay ? (ball.vx >= 0 ? "r" : "l") : ball.vy >= 0 ? "d" : "u";
+    if (dir === hackerDir) {
+      setHackerVelocity(dir);
+      return;
+    }
+    hackerDir = dir;
+    setHackerVelocity(dir);
+  }
+
+  function wrapHackerBounds() {
+    const r = ball.r;
+    if (ball.x < -r) ball.x += world.w + r * 2;
+    else if (ball.x > world.w + r) ball.x -= world.w + r * 2;
+    if (ball.y < r) {
+      ball.y = r;
+      if (hackerDir === "u") applyHackerDir("d");
+      else {
+        ball.vy = Math.abs(ball.vy) || hackerSpeed;
+      }
+    }
+    if (ball.y + r > world.floorY) {
+      ball.y = world.floorY - r;
+      if (hackerDir === "d") {
+        applyHackerDir("u");
+      } else if (ball.vy > 0) {
+        ball.vy = 0;
+      }
+    }
+  }
+
   function tapJump() {
     if (!booted) return;
     if (phase === "title") {
@@ -2918,10 +3075,39 @@ export function createGame(
     e.preventDefault();
     pointerHeld = true;
     if (phase === "playing" && !paused && isBolt() && boltOverheatLeft > 0) return;
+    if (phase === "playing" && !paused && isHacker() && hackerAwaken) {
+      const p = pointerWorld(e);
+      const dir = hitHackerPad(p.x, p.y, hackerPadLayout(world));
+      if (dir) {
+        applyHackerDir(dir);
+        emitHud();
+        return;
+      }
+      // Awaken cruise: D-pad only (no tap-jump).
+      return;
+    }
     tapJump();
     if (phase === "playing" && !paused && isDoodle()) {
       const p = pointerWorld(e);
-      doodleStroke = { id: e.pointerId, x: p.x, y: p.y, pts: [p], writing: false };
+      if (tryCollectDoodlePaint(doodleRun, p.x, p.y) > 0) {
+        callouts.push({
+          text: "颜料+",
+          x: p.x,
+          y: p.y - 22,
+          life: 0.7,
+          max: 0.7,
+          kind: "tag",
+        });
+      }
+      doodleStroke = {
+        id: e.pointerId,
+        x: p.x,
+        y: p.y,
+        pts: [p],
+        writing: false,
+        heldAt: performance.now(),
+      };
+      doodleRun.drawing = false;
       try {
         canvas.setPointerCapture(e.pointerId);
       } catch {
@@ -2955,34 +3141,46 @@ export function createGame(
   function onMove(e: PointerEvent) {
     const s = doodleStroke;
     if (!s || s.id !== e.pointerId || !isDoodle() || phase !== "playing" || paused) return;
+    // 绝杀时刻不能画线
+    if (buzzer || timeUp) {
+      if (s.writing) {
+        s.writing = false;
+        s.pts = [];
+        doodleRun.drawing = false;
+      }
+      return;
+    }
     const p = pointerWorld(e);
     if (!s.writing) {
-      if (Math.hypot(p.x - s.x, p.y - s.y) < Math.max(16, world.w * 0.045)) return;
-      const gate = doodleCanWrite(doodleRun);
-      s.writing = true;
-      if (gate !== "ok") {
+      // Hold arm: ignore drag until the press has lasted long enough.
+      if (performance.now() - s.heldAt < DOODLE_HOLD_ARM * 1000) return;
+      if (Math.hypot(p.x - s.x, p.y - s.y) < Math.max(DOODLE_DRAG_START, world.w * 0.04)) return;
+      // Must start the stroke on the ball — empty-space draws do nothing.
+      if (!doodleStartsAtBall({ x: s.x, y: s.y }, ball) && !doodleStartsAtBall(p, ball)) {
         s.pts = [];
+        s.writing = false;
+        return;
+      }
+      if (doodleRun.paint < 0.04) {
         callouts.push({
-          text: gate === "empty" ? "颜料不够" : gate === "full" ? "最多三个" : "等它消退",
+          text: "颜料不够",
           x: p.x,
           y: p.y - 24,
           life: 0.75,
           max: 0.75,
           kind: "score",
         });
+        s.pts = [];
+        s.writing = true;
         return;
       }
-      spendDoodlePaint(doodleRun);
-      s.pts = [
-        { x: s.x, y: s.y },
-        p,
-      ];
+      s.writing = true;
+      // Path always begins at the ball — no teleport onto a floating stroke.
+      s.pts = extendDoodleDraw(doodleRun, [{ x: ball.x, y: ball.y }], p, world.w);
       return;
     }
-    if (s.pts.length === 0) return;
-    const last = s.pts[s.pts.length - 1]!;
-    if (Math.hypot(p.x - last.x, p.y - last.y) < 2.5) return;
-    s.pts.push(p);
+    if (s.pts.length === 0 || doodleRun.paint <= 0) return;
+    s.pts = extendDoodleDraw(doodleRun, s.pts, p, world.w);
   }
 
   function onUp(e: PointerEvent) {
@@ -2991,8 +3189,16 @@ export function createGame(
     const stroke = doodleStroke;
     if (stroke && stroke.id === e.pointerId) {
       doodleStroke = null;
-      if (stroke.writing && stroke.pts.length >= 2 && isDoodle() && phase === "playing") {
-        pushDoodleStroke(doodleRun, stroke.pts, ball.r, world.w, world.floorY);
+      doodleRun.drawing = false;
+      if (
+        stroke.writing &&
+        stroke.pts.length >= 2 &&
+        isDoodle() &&
+        phase === "playing" &&
+        !buzzer &&
+        !timeUp
+      ) {
+        commitDoodlePath(doodleRun, stroke.pts, ball);
       }
     }
     boltHoldArm = 0;
@@ -3014,10 +3220,30 @@ export function createGame(
       }
       return;
     }
+    if (phase === "playing" && !paused && isHacker() && hackerAwaken) {
+      const map: Record<string, HackerDir> = {
+        ArrowLeft: "l",
+        ArrowRight: "r",
+        ArrowUp: "u",
+        ArrowDown: "d",
+        KeyA: "l",
+        KeyD: "r",
+        KeyW: "u",
+        KeyS: "d",
+      };
+      const dir = map[e.code];
+      if (dir) {
+        e.preventDefault();
+        applyHackerDir(dir);
+        emitHud();
+        return;
+      }
+    }
     if (e.code !== "Space" && e.code !== "ArrowUp") return;
     e.preventDefault();
     audio.unlock();
     if (isBolt() && boltOverheatLeft > 0) return;
+    if (isHacker() && hackerAwaken && phase === "playing") return;
     tapJump();
   }
 
@@ -3053,6 +3279,10 @@ export function createGame(
     streak = 0;
     hint = true;
     madeCount = 0;
+    hackerAwaken = false;
+    hackerDir = null;
+    hackerSpeed = HACKER_SPEED_BASE;
+    clearSparseCodeRain();
     rogueRun = null;
     rogueStageDecay = null;
     timerMax = timerBudget();
@@ -3460,21 +3690,7 @@ export function createGame(
   function physics(dt: number) {
     stepGraf(dt);
     if (phase === "playing" && isDoodle()) {
-      const ate = stepDoodle(doodleRun, dt, ball);
-      if (ate.score > 0) {
-        score += ate.score;
-        if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
-      }
-      if (ate.say && ate.at) {
-        callouts.push({
-          text: ate.say,
-          x: ate.at.x,
-          y: ate.at.y - 28,
-          life: 0.9,
-          max: 0.9,
-          kind: "score",
-        });
-      }
+      stepDoodleSpawns(doodleRun, dt, world, ball.r);
     }
     if (camShake > 0) camShake = Math.max(0, camShake - dt);
     else camShake = 0;
@@ -3521,15 +3737,17 @@ export function createGame(
       timer -= drain;
       if (timer <= 0) {
         timer = 0;
-        if (isChamp() && !champMode && enterChampionMoment()) {
+        if (isHacker() && !hackerAwaken) {
+          enterHackerAwaken();
+        } else if (isChamp() && !champMode && enterChampionMoment()) {
           // Champion bank consumed as a fresh countdown.
         } else if (isRogueMode() && tryRogueRevive()) {
-          // Revived �?keep playing this stage.
+          // Revived — keep playing this stage.
         } else if (isRogueMode() && tryRogueMoneyProtect()) {
-          // Converted gold �?score / settle.
+          // Converted gold — score / settle.
         } else {
           timeUp = true;
-          // 肉鸽非无限关：倒计时耗尽一律进入绝杀窗，进球达目标即可过�?
+          // 肉鸽非无限关：倒计时耗尽一律进入绝杀窗，进球达目标即可过关
           const forceClutch = isRogueMode() && rogueRun && !rogueRun.endless;
           if (forceClutch || predictBuzzerMake()) {
             buzzer = true;
@@ -3663,15 +3881,60 @@ export function createGame(
       (phase === "playing" || phase === "over" || phase === "title" || phase === "hub" || phase === "settle") &&
       !stageMod.holdsBall?.();
     if (live) {
+      let onRail =
+        phase === "playing" && isDoodle() && doodleRun.path.length >= 2;
+      const hacking =
+        phase === "playing" && isHacker() && hackerAwaken && hackerDir !== null;
+      // Slice rail motion + rim/board checks so the ball can't tunnel the hoop.
+      if (onRail) {
+        const maxStep = Math.max(3, ball.r * 0.28);
+        const slices = Math.max(
+          1,
+          Math.ceil((DOODLE_FOLLOW_SPEED * dt) / maxStep),
+        );
+        const sliceDt = dt / slices;
+        for (let i = 0; i < slices && doodleRun.path.length >= 2; i++) {
+          followDoodlePath(doodleRun, ball, sliceDt);
+          const railX = ball.x;
+          const railY = ball.y;
+          if (scoredLock <= 0) {
+            if (stageMod.canScore(hoop)) collideRim(hoop);
+            if (other && stageMod.canScore(other)) collideRim(other);
+          }
+          if (!hoop.noBoard && !stageMod.skipBoard(hoop)) collideBoard(hoop);
+          if (!hoop.noBoard && !stageMod.skipBrace(hoop)) collideBrace(hoop);
+          if (other) {
+            if (!other.noBoard && !stageMod.skipBoard(other)) collideBoard(other);
+            if (!other.noBoard && !stageMod.skipBrace(other)) collideBrace(other);
+          }
+          if (Math.hypot(ball.x - railX, ball.y - railY) > 0.75) {
+            doodleRun.path = [];
+            break;
+          }
+        }
+        onRail = doodleRun.path.length >= 2;
+      }
       const gScale = buzzer ? 0.42 : 1;
-      // High-bounce kits skip fallBoost �?otherwise each landing gains height.
+      // High-bounce kits skip fallBoost — otherwise each landing gains height.
       const fallBoost = (() => {
         if (pMul("ball") > 1.15) return 1;
         if (holeOn) return 1;
         return ball.vy > 20 ? 1.28 : 1;
       })();
       const buoy = pMul("buoy");
-      if (holeOn) {
+      if (hacking) {
+        // Floor settle normally clears scored; hacker never hits that path.
+        if (scoredLock <= 0 && ball.scored) {
+          ball.scored = false;
+          resetShotFlags();
+          shotOpen = true;
+        }
+        setHackerVelocity(hackerDir!);
+        const move = buzzer ? 0.6 : 1;
+        ball.x += ball.vx * dt * move;
+        ball.y += ball.vy * dt * move;
+        wrapHackerBounds();
+      } else if (!onRail && holeOn) {
         const dx = holeX - ball.x;
         const dy = holeY - ball.y;
         const d = Math.max(40, Math.hypot(dx, dy));
@@ -3700,9 +3963,10 @@ export function createGame(
         ) {
           ball.vy += 200 * dt;
         }
-      } else {
+      } else if (!onRail) {
         ball.vy += gravity() * dt * (gScale * fallBoost - buoy);
       }
+      if (!onRail && !hacking) {
       const air = pMul("air");
       const roll = pMul("roll");
       const onFloor = ball.y + ball.r >= world.floorY - 0.5 && ball.vy >= 0;
@@ -3738,12 +4002,13 @@ export function createGame(
       const move = buzzer ? 0.6 : 1;
       ball.x += ball.vx * dt * move;
       ball.y += ball.vy * dt * move;
+      }
       if (ball.y + ball.r < 0) wentOffTop = true;
       // Leash before wrap so a taut chain yanks the ball and can block side-respawn.
       if (phase === "playing" && !stageMod.holdsBall?.()) {
         stageMod.afterPhysics?.(dt, modifierHost());
       }
-      wrapX();
+      if (!hacking) wrapX();
       pushNinjaPath(dt);
       stepNinjaGhosts(dt);
       pushTrail();
@@ -3751,16 +4016,25 @@ export function createGame(
       ball.squash += (1 - ball.squash) * (1 - Math.exp(-12 * dt));
       // Score before rim/board so a clean thread isn't eaten by rim bounce.
       if (phase === "playing") checkScore();
-      if (phase !== "title" && !ballHidden()) {
+      if (phase !== "title" && !ballHidden() && !onRail) {
         if (scoredLock <= 0) {
           if (stageMod.canScore(hoop)) collideRim(hoop);
           if (other && stageMod.canScore(other)) collideRim(other);
         }
+        const vx0 = ball.vx;
+        const vy0 = ball.vy;
         if (!hoop.noBoard && !stageMod.skipBoard(hoop)) collideBoard(hoop);
         if (!hoop.noBoard && !stageMod.skipBrace(hoop)) collideBrace(hoop);
         if (other) {
           if (!other.noBoard && !stageMod.skipBoard(other)) collideBoard(other);
           if (!other.noBoard && !stageMod.skipBrace(other)) collideBrace(other);
+        }
+        // Awaken cruise: adopt rebound so next frame doesn't stomp bounce.
+        if (
+          hacking &&
+          (Math.abs(ball.vx - vx0) > 0.5 || Math.abs(ball.vy - vy0) > 0.5)
+        ) {
+          syncHackerDirFromVelocity();
         }
       }
       if (phase === "playing") {
@@ -3773,7 +4047,12 @@ export function createGame(
         glassPeakY = Math.min(glassPeakY, ball.y);
       }
       const caught = phase === "playing" && stageMod.touchBall?.(modifierHost()) === true;
-      if (!caught) collideFloor();
+      const floorX = ball.x;
+      const floorY0 = ball.y;
+      if (!caught && !hacking) collideFloor();
+      if (onRail && Math.hypot(ball.x - floorX, ball.y - floorY0) > 0.75) {
+        doodleRun.path = [];
+      }
       stepBoltBoardTop(dt);
       stepBoltCharge(dt);
       if (chain && hasChain() && !caught && !stageMod.holdsBall?.()) {
@@ -4739,7 +5018,6 @@ export function createGame(
       }
     }
     score += gain;
-    if (!ghost && isDoodle()) addDoodleMake(doodleRun);
     noteGraf();
     if (isRogueMode() && rogueRun && !ghost) {
       rogueRun.stageScore = score;
@@ -5149,7 +5427,20 @@ export function createGame(
       if (bgmOn) cloudT += tick;
       stepClouds(tick);
       if (!paused) {
-        const dt = Math.min(raw, 0.1);
+        // Arm doodle slow-mo after a deliberate hold (real time, not game-dt).
+        if (
+          doodleStroke &&
+          phase === "playing" &&
+          isDoodle() &&
+          !buzzer &&
+          !timeUp &&
+          now - doodleStroke.heldAt >= DOODLE_HOLD_ARM * 1000
+        ) {
+          doodleRun.drawing = true;
+        }
+        const scale =
+          phase === "playing" && isDoodle() && doodleRun.drawing ? DOODLE_SLOWMO : 1;
+        const dt = Math.min(raw, 0.1) * scale;
         time += dt;
         acc += dt;
         const MAX_STEPS = 3;
@@ -5194,7 +5485,9 @@ export function createGame(
           const clock01 = timerMax > 0 ? timer / timerMax : 0;
           // Prison bar ART swaps Yard / Lock / Infraction; FILL always follows street cool-down.
           // Background recess/curfew phase pauses on hunt; fill does not.
-          const timer01 = phase === "over" ? 1 : clock01;
+          // Hacker awaken: reverse fill (grows as remaining time shrinks).
+          const timer01 =
+            phase === "over" ? 1 : hackerAwaken ? 1 - clock01 : clock01;
           let scoreOverride: string | null =
             isRogueMode() && rogueRun
               ? rogueRun.endless
@@ -5259,13 +5552,18 @@ export function createGame(
             isDoodle()
               ? {
                   paint: doodleRun.paint,
-                  life: doodleRun.life,
-                  marks: doodleRun.marks,
+                  pickups: doodleRun.pickups,
+                  path: doodleRun.path,
                   live: doodleStroke && doodleStroke.writing ? doodleStroke.pts : null,
+                  slow: doodleRun.drawing,
                 }
               : null,
+            phase === "playing" && isHacker() && hackerAwaken,
+            (c) => stageMod.drawWorld?.(c, world, time),
+            phase === "playing" && isHacker() && hackerAwaken
+              ? { dir: hackerDir }
+              : null,
           );
-          stageMod.drawWorld?.(ctx, world, time);
           ctx.restore();
           stageMod.drawScreen?.(ctx, world);
           }

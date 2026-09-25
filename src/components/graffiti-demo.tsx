@@ -10,8 +10,9 @@ type Ink = {
 };
 
 const DIGITS = 3;
-const FADE = 2.5;
-const GRACE = 0.45;
+const FADE = 6;
+const GRACE = 0.6;
+const CLEAR_RATIO = 0.55;
 const WRITE_SLOP = 22;
 const SIZE = 250;
 const RESAMPLE_N = 64;
@@ -269,15 +270,6 @@ function bounds(pts: P[]) {
   return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
 }
 
-function scaleMinHeight(pts: P[], minH: number): P[] {
-  const b = bounds(pts);
-  if (b.h >= minH || b.h < 1) return pts.map((p) => ({ ...p }));
-  const s = minH / b.h;
-  const cx = (b.minX + b.maxX) / 2;
-  const cy = (b.minY + b.maxY) / 2;
-  return pts.map((p) => ({ x: cx + (p.x - cx) * s, y: cy + (p.y - cy) * s }));
-}
-
 function fitInside(pts: P[], w: number, h: number, floor: number): P[] {
   const b = bounds(pts);
   const m = 18;
@@ -375,8 +367,18 @@ export function GraffitiDemo({ onClose }: { onClose: () => void }) {
       return s ? Number(s) : 0;
     };
 
-    const digitsDone = () =>
-      sim.inks.filter((k) => k.kind === "digit").every((k) => k.pts.every((p) => !p.on));
+    const digitsDone = () => {
+      let total = 0;
+      let erased = 0;
+      for (const k of sim.inks) {
+        if (k.kind !== "digit") continue;
+        for (const p of k.pts) {
+          total++;
+          if (!p.on) erased++;
+        }
+      }
+      return total > 0 && erased / total >= CLEAR_RATIO;
+    };
 
     const jump = () => {
       const g = sim.h * 2.55;
@@ -448,7 +450,6 @@ export function GraffitiDemo({ onClose }: { onClose: () => void }) {
       }
       if (!s || !s.writing || s.pts.length < 2) return;
       const digit = recognize(s.pts);
-      const minH = sim.ball.r * 2 * 3;
       if (digit === null) {
         const c = centroid(s.pts);
         sim.inks.push({
@@ -459,8 +460,7 @@ export function GraffitiDemo({ onClose }: { onClose: () => void }) {
         });
         say("你画了一坨屎");
       } else {
-        let pts = scaleMinHeight(s.pts, minH);
-        pts = fitInside(pts, sim.w, sim.h, floorY());
+        const pts = fitInside(s.pts, sim.w, sim.h, floorY());
         const sampled = sampleAlong(pts, 8).map((p) => ({ ...p, on: true }));
         sim.inks.push({ kind: "digit", digit, pts: sampled, lump: null });
       }
@@ -540,7 +540,7 @@ export function GraffitiDemo({ onClose }: { onClose: () => void }) {
         say("进球  +1格颜料");
       }
 
-      const eatR = b.r * 0.5;
+      const eatR = b.r * 1.45;
       for (const ink of sim.inks) {
         if (ink.kind === "shit" && ink.lump) {
           const d = Math.hypot(b.x - ink.lump.x, b.y - ink.lump.y);

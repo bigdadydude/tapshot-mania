@@ -3,11 +3,13 @@ import { DEFAULT_GFX, fireStage } from "./types";
 import { artImage, ballImage, cloudImages, graffitiImage } from "./art";
 import type { BallId } from "./balls";
 import { DEFAULT_BALL } from "./balls";
-import type { DoodleMark } from "./doodle";
-import { DOODLE_FADE, DOODLE_SLOTS } from "./doodle";
+import type { DoodlePickup, DoodlePt } from "./doodle";
+import { DOODLE_PICKUP_LIFE } from "./doodle";
 import type { Chain } from "./chain";
 import { gecko } from "./perf";
 import { getScene, type GrafKey } from "./scenes";
+import { clearSparseCodeRain, drawSparseCodeRain } from "./sparse-rain";
+import { drawHackerPad, hackerPadLayout, type HackerDir } from "./hacker-pad";
 import {
   NET_COLS,
   NET_ROWS,
@@ -19,6 +21,89 @@ import {
 } from "./net";
 
 export { NET_COLS, NET_ROWS, NET_ROW_H, RIM_RY } from "./net";
+
+/** When set, hoop/net/board render as bright neon green (above CRT wash). */
+let neonGreenCourt = false;
+
+const NEON_HOOP = {
+	pad: "#3dff88",
+	padHi: "#b8ffd4",
+	padLo: "#1ad868",
+	rim: "#8dffb8",
+	rimHi: "#e0ffe8",
+	rimLo: "#3cff8a",
+	rimBack: "#28e070",
+	net: "#9affc4",
+	netChar: "#f0fff4",
+	netHem: "#6affaa",
+	netHemChar: "#d4ffe4",
+	netHemFromRow: 4,
+};
+
+function hoopLook() {
+	return neonGreenCourt ? NEON_HOOP : getScene().hoop;
+}
+
+/** Cached darken + scan + vignette (no composite modes). */
+let washShade: HTMLCanvasElement | null = null;
+let washShadeKey = "";
+
+function ensureWashShade(w: number, h: number) {
+	const key = `${w | 0}x${h | 0}`;
+	if (washShade && washShadeKey === key) return washShade;
+	const c = document.createElement("canvas");
+	c.width = Math.max(1, w | 0);
+	c.height = Math.max(1, h | 0);
+	const x = c.getContext("2d");
+	if (!x) return null;
+	const g = x.createLinearGradient(0, 0, 0, h);
+	g.addColorStop(0, "rgba(0, 0, 0, 0.05)");
+	g.addColorStop(0.45, "rgba(0, 0, 0, 0.35)");
+	g.addColorStop(1, "rgba(0, 0, 0, 0.92)");
+	x.fillStyle = g;
+	x.fillRect(0, 0, w, h);
+	const tile = document.createElement("canvas");
+	tile.width = 1;
+	tile.height = 3;
+	const tctx = tile.getContext("2d");
+	if (tctx) {
+		tctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+		tctx.fillRect(0, 2, 1, 1);
+		const pat = x.createPattern(tile, "repeat");
+		if (pat) {
+			x.fillStyle = pat;
+			x.fillRect(0, 0, w, h);
+		}
+	}
+	const vig = x.createRadialGradient(w * 0.5, h * 0.42, h * 0.2, w * 0.5, h * 0.5, h * 0.78);
+	vig.addColorStop(0, "rgba(0,0,0,0)");
+	vig.addColorStop(1, "rgba(0,0,0,0.28)");
+	x.fillStyle = vig;
+	x.fillRect(0, 0, w, h);
+	washShade = c;
+	washShadeKey = key;
+	return c;
+}
+
+function applyGreenNightWash(
+	ctx: CanvasRenderingContext2D,
+	world: { w: number; h: number },
+) {
+	const { w, h } = world;
+	ctx.save();
+	// Single multiply pass (was color+multiply — two full-frame composites).
+	ctx.globalCompositeOperation = "multiply";
+	ctx.fillStyle = "#1aff6a";
+	ctx.fillRect(0, 0, w, h);
+	ctx.globalCompositeOperation = "source-over";
+	const shade = ensureWashShade(w, h);
+	if (shade) ctx.drawImage(shade, 0, 0, w, h);
+	else {
+		ctx.fillStyle = "rgba(0,0,0,0.45)";
+		ctx.fillRect(0, 0, w, h);
+	}
+	ctx.restore();
+}
 
 export function drawScene(
   ctx: CanvasRenderingContext2D,
@@ -64,10 +149,14 @@ export function drawScene(
   afterCourt?: ((ctx: CanvasRenderingContext2D) => void) | null,
   doodle: {
     paint: number;
-    life: number | null;
-    marks: DoodleMark[];
-    live: { x: number; y: number }[] | null;
+    pickups: DoodlePickup[];
+    path: DoodlePt[];
+    live: DoodlePt[] | null;
+    slow: boolean;
   } | null = null,
+  greenWash = false,
+  afterWorld?: ((ctx: CanvasRenderingContext2D) => void) | null,
+  hacker: { dir: HackerDir | null } | null = null,
 ) {
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
@@ -83,12 +172,68 @@ export function drawScene(
 	if (gfx.ballShadow) drawGroundShadow(ctx, ball, world);
 	if (doodle) drawDoodleInk(ctx, world, doodle, ball.r);
 	if (chain) drawChain(ctx, chain, true);
-	if (showHud) drawCountdown(ctx, world, timer01, buzzer, barLabel);
+	if (showHud && !greenWash) drawCountdown(ctx, world, timer01, buzzer, barLabel);
 	const distH = Math.hypot(ball.x - hoop.x, ball.y - hoop.y);
 	const distO = other ? Math.hypot(ball.x - other.x, ball.y - other.y) : Infinity;
 	const ballWithOther = Boolean(other && distO < distH);
-	if (other) drawHoopStack(ctx, other, world, ballWithOther ? ball : null, combo, time, gfx.particles ? trail : [], gfx, ballId);
-	drawHoopStack(ctx, hoop, world, ballWithOther ? null : ball, combo, time, gfx.particles ? trail : [], gfx, ballId);
+
+	if (greenWash) {
+		// Backdrop only through the wash; hoop/ball redraw bright on top.
+		applyGreenNightWash(ctx, world);
+		drawSparseCodeRain(ctx, world, time);
+		neonGreenCourt = true;
+		if (other) {
+			drawHoopStack(
+				ctx,
+				other,
+				world,
+				ballWithOther ? ball : null,
+				combo,
+				time,
+				gfx.particles ? trail : [],
+				gfx,
+				ballId,
+			);
+		}
+		drawHoopStack(
+			ctx,
+			hoop,
+			world,
+			ballWithOther ? null : ball,
+			combo,
+			time,
+			gfx.particles ? trail : [],
+			gfx,
+			ballId,
+		);
+		neonGreenCourt = false;
+	} else {
+		if (other) {
+			drawHoopStack(
+				ctx,
+				other,
+				world,
+				ballWithOther ? ball : null,
+				combo,
+				time,
+				gfx.particles ? trail : [],
+				gfx,
+				ballId,
+			);
+		}
+		drawHoopStack(
+			ctx,
+			hoop,
+			world,
+			ballWithOther ? null : ball,
+			combo,
+			time,
+			gfx.particles ? trail : [],
+			gfx,
+			ballId,
+		);
+	}
+	if (hacker) drawHackerPad(ctx, hackerPadLayout(world), hacker.dir);
 	if (ballId === "bolt" && boltCharge > 90) drawBoltWhitePulse(ctx, ball, time);
 	for (const c of ninjaClones) {
 		drawNinjaBall(
@@ -124,6 +269,8 @@ export function drawScene(
 		ctx.fillStyle = `rgba(255, 150, 40, ${Math.min(.42, burnFlash * 1.4)})`;
 		ctx.fillRect(0, 0, world.w, world.h);
 	}
+	afterWorld?.(ctx);
+	if (greenWash && showHud) drawCountdown(ctx, world, timer01, buzzer, barLabel);
 	ctx.restore();
 	if (showHud) {
 		drawHud(
@@ -376,6 +523,7 @@ export function clearSceneLayers() {
 	skyLayerKey = "";
 	wallLayerKey = "";
 	courtLayerKey = "";
+	clearSparseCodeRain();
 }
 
 function layerCanvas(w: number, h: number) {
@@ -597,8 +745,8 @@ function drawSkyClouds(
 	skyShiftPrev = cloudShift;
 	ctx.save();
 	ctx.imageSmoothingEnabled = false;
-	const ordered = skyInsts!.slice().sort((a, b) => a.layer - b.layer);
-	for (const inst of ordered) {
+	// Insts are created in layer order — skip per-frame sort.
+	for (const inst of skyInsts!) {
 		const img = imgs[inst.kind] ?? imgs[0]!;
 		let { dw, dh } = cloudSize(img, band, inst.h01);
 		inst.x += dx * CLOUD_LAYERS[inst.layer]!.speed;
@@ -949,17 +1097,41 @@ function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
     hoop.y + padH * 0.85,
   );
 
-  const boardBase = mixHex("#ffffff", "#3a3632", Math.min(1, ch * 1.12));
-  const board = fr > 0 ? mixHex(rgbToHex(boardBase), "#7ec8ff", fr) : boardBase;
+  const look = hoopLook();
+  const boardBase = neonGreenCourt
+    ? "#b8ffe0"
+    : mixHex("#ffffff", "#3a3632", Math.min(1, ch * 1.12));
+  const board = neonGreenCourt
+    ? boardBase
+    : fr > 0
+      ? mixHex(rgbToHex(boardBase), "#7ec8ff", fr)
+      : boardBase;
   ctx.fillStyle = board;
   ctx.fillRect(visX, yy, visW, Math.max(1, padDrawY - yy));
-  const scene = getScene();
-  const greenBase = mixHex(scene.hoop.pad, "#3a3632", Math.min(1, ch * 1.05));
-  const greenHiBase = mixHex(scene.hoop.padHi, "#4a423c", Math.min(1, ch * 1.05));
-  const greenLoBase = mixHex(scene.hoop.padLo, "#2a2624", Math.min(1, ch * 1.05));
-  const green = fr > 0 ? mixHex(rgbToHex(greenBase), "#5aa8e8", fr * 0.7) : greenBase;
-  const greenHi = fr > 0 ? mixHex(rgbToHex(greenHiBase), "#9ad4ff", fr * 0.65) : greenHiBase;
-  const greenLo = fr > 0 ? mixHex(rgbToHex(greenLoBase), "#3a7ab0", fr * 0.7) : greenLoBase;
+  const greenBase = neonGreenCourt
+    ? look.pad
+    : mixHex(look.pad, "#3a3632", Math.min(1, ch * 1.05));
+  const greenHiBase = neonGreenCourt
+    ? look.padHi
+    : mixHex(look.padHi, "#4a423c", Math.min(1, ch * 1.05));
+  const greenLoBase = neonGreenCourt
+    ? look.padLo
+    : mixHex(look.padLo, "#2a2624", Math.min(1, ch * 1.05));
+  const green = neonGreenCourt
+    ? greenBase
+    : fr > 0
+      ? mixHex(rgbToHex(greenBase), "#5aa8e8", fr * 0.7)
+      : greenBase;
+  const greenHi = neonGreenCourt
+    ? greenHiBase
+    : fr > 0
+      ? mixHex(rgbToHex(greenHiBase), "#9ad4ff", fr * 0.65)
+      : greenHiBase;
+  const greenLo = neonGreenCourt
+    ? greenLoBase
+    : fr > 0
+      ? mixHex(rgbToHex(greenLoBase), "#3a7ab0", fr * 0.7)
+      : greenLoBase;
   ctx.fillStyle = green;
   ctx.fillRect(visX - 0.5, padDrawY, visW + 1, padH);
   ctx.fillStyle = greenHi;
@@ -967,12 +1139,24 @@ function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
   ctx.fillStyle = greenLo;
   ctx.fillRect(visX - 0.5, padDrawY + padH - 2, visW + 1, 2);
 
-  const orangeBase = mixHex(scene.hoop.rim, "#4a4038", ch);
-  const orangeHiBase = mixHex(scene.hoop.rimHi, "#6a625c", ch);
-  const orangeLoBase = mixHex(scene.hoop.rimLo, "#3a3632", ch);
-  const orange = fr > 0 ? mixHex(rgbToHex(orangeBase), "#6eb0e8", fr * 0.85) : orangeBase;
-  const orangeHi = fr > 0 ? mixHex(rgbToHex(orangeHiBase), "#a8d8ff", fr * 0.8) : orangeHiBase;
-  const orangeLo = fr > 0 ? mixHex(rgbToHex(orangeLoBase), "#3a6a98", fr * 0.85) : orangeLoBase;
+  const orangeBase = neonGreenCourt ? look.rim : mixHex(look.rim, "#4a4038", ch);
+  const orangeHiBase = neonGreenCourt ? look.rimHi : mixHex(look.rimHi, "#6a625c", ch);
+  const orangeLoBase = neonGreenCourt ? look.rimLo : mixHex(look.rimLo, "#3a3632", ch);
+  const orange = neonGreenCourt
+    ? orangeBase
+    : fr > 0
+      ? mixHex(rgbToHex(orangeBase), "#6eb0e8", fr * 0.85)
+      : orangeBase;
+  const orangeHi = neonGreenCourt
+    ? orangeHiBase
+    : fr > 0
+      ? mixHex(rgbToHex(orangeHiBase), "#a8d8ff", fr * 0.8)
+      : orangeHiBase;
+  const orangeLo = neonGreenCourt
+    ? orangeLoBase
+    : fr > 0
+      ? mixHex(rgbToHex(orangeLoBase), "#3a6a98", fr * 0.85)
+      : orangeLoBase;
   const attach = left ? hoop.x - hoop.inner * 1.02 : hoop.x + hoop.inner * 1.02;
   const rimBotY = hoop.y + armH * 0.38;
   const dy = ch > 0.4 ? (ch - 0.4) * 10 : 0;
@@ -1001,11 +1185,11 @@ function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
   ctx.fillStyle = orangeLo;
   ctx.fill();
 
-  if (ch > 0.04 && ch < 0.62) {
+  if (!neonGreenCourt && ch > 0.04 && ch < 0.62) {
     ctx.fillStyle = `rgba(255, 110, 24, ${(0.62 - ch) * 0.42})`;
     ctx.fillRect(visX, yy, visW, Math.max(0, padDrawY - yy));
   }
-  if (ch > 0.5) {
+  if (!neonGreenCourt && ch > 0.5) {
     ctx.fillStyle = `rgba(40,38,36,${(ch - 0.5) * 0.55})`;
     for (let i = 0; i < 5; i++)
       ctx.fillRect(
@@ -1023,22 +1207,33 @@ function drawRim(ctx: CanvasRenderingContext2D, hoop: Hoop, part: "back" | "fron
 	const rx = inner;
 	const ry = inner * RIM_RY;
 	const tw = Math.max(3.2, tube * 1.18);
-	const look = getScene().hoop;
+	const look = hoopLook();
 	ctx.save();
 	ctx.lineCap = "round";
 	ctx.lineJoin = "round";
 	if (part === "back") {
 		ctx.lineWidth = tw;
-		const rimBack = mixHex(look.rimBack, "#4a4038", ch);
-		ctx.strokeStyle = fr > 0 ? mixHex(rgbToHex(rimBack), "#7ec8ff", fr) : rimBack;
+		const rimBack = neonGreenCourt
+			? look.rimBack
+			: mixHex(look.rimBack, "#4a4038", ch);
+		ctx.strokeStyle =
+			!neonGreenCourt && fr > 0 ? mixHex(rgbToHex(rimBack), "#7ec8ff", fr) : rimBack;
 		ctx.beginPath();
 		ctx.ellipse(x, y, rx, ry, 0, Math.PI, Math.PI * 2);
 		ctx.stroke();
 	} else {
 		ctx.lineWidth = tw;
-		if (gecko) {
+		if (neonGreenCourt) {
+			ctx.strokeStyle = look.rimHi;
+			ctx.beginPath();
+			ctx.ellipse(x, y, rx, ry, 0, -.12, Math.PI + .12, false);
+			ctx.stroke();
+		} else if (gecko) {
 			const rimG = mixHex(look.rimHi, "#6a625c", ch);
 			ctx.strokeStyle = fr > 0 ? mixHex(rgbToHex(rimG), "#9ad4ff", fr) : rimG;
+			ctx.beginPath();
+			ctx.ellipse(x, y, rx, ry, 0, -.12, Math.PI + .12, false);
+			ctx.stroke();
 		} else {
 			const metal = ctx.createLinearGradient(x - rx, y, x + rx, y + ry);
 			const c0 = mixHex(look.rimLo, "#4a4038", ch);
@@ -1050,10 +1245,10 @@ function drawRim(ctx: CanvasRenderingContext2D, hoop: Hoop, part: "back" | "fron
 			metal.addColorStop(.62, fr > 0 ? mixHex(rgbToHex(c2), "#7ec8ff", fr) : c2);
 			metal.addColorStop(1, fr > 0 ? mixHex(rgbToHex(c3), "#3a6a98", fr) : c3);
 			ctx.strokeStyle = metal;
+			ctx.beginPath();
+			ctx.ellipse(x, y, rx, ry, 0, -.12, Math.PI + .12, false);
+			ctx.stroke();
 		}
-		ctx.beginPath();
-		ctx.ellipse(x, y, rx, ry, 0, -.12, Math.PI + .12, false);
-		ctx.stroke();
 	}
 	ctx.restore();
 }
@@ -1068,7 +1263,7 @@ function drawNet(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "fro
 		points.push(row);
 	}
 	const heat = hoopHeat(hoop, combo);
-	const look = getScene().hoop;
+	const look = hoopLook();
 	ctx.save();
 	ctx.lineCap = "butt";
 	ctx.lineJoin = "miter";
@@ -1792,21 +1987,73 @@ function drawDoodleBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean)
 	ctx.stroke();
 	ctx.restore();
 	if (lit) {
-		const shade = ctx.createRadialGradient(0, 0, r * 0.45, 0, 0, r);
-		shade.addColorStop(0, "rgba(0,0,0,0)");
-		shade.addColorStop(1, "rgba(40,24,8,0.38)");
-		ctx.fillStyle = shade;
-		ctx.beginPath();
-		ctx.arc(0, 0, r, 0, Math.PI * 2);
-		ctx.fill();
-		const spec = ctx.createRadialGradient(-r * 0.32, -r * 0.38, 0, -r * 0.18, -r * 0.28, r * 0.46);
-		spec.addColorStop(0, "rgba(255,255,255,0.55)");
-		spec.addColorStop(1, "rgba(255,255,255,0)");
-		ctx.fillStyle = spec;
+		const hi = ctx.createRadialGradient(-r * 0.35, -r * 0.4, 0, 0, 0, r);
+		hi.addColorStop(0, "rgba(255,255,255,0.35)");
+		hi.addColorStop(0.45, "rgba(255,255,255,0)");
+		ctx.fillStyle = hi;
 		ctx.beginPath();
 		ctx.arc(0, 0, r, 0, Math.PI * 2);
 		ctx.fill();
 	}
+	ctx.restore();
+}
+
+function drawRainBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
+	const { x, y, r, spin, squash } = ball;
+	ctx.save();
+	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+	ctx.scale(1 / squash, squash);
+	const skin = ctx.createRadialGradient(-r * 0.28, -r * 0.34, r * 0.08, 0, 0, r * 1.05);
+	skin.addColorStop(0, "#f2fff6");
+	skin.addColorStop(0.35, "#8dffb8");
+	skin.addColorStop(0.75, "#3dff88");
+	skin.addColorStop(1, "#18c060");
+	ctx.beginPath();
+	ctx.arc(0, 0, r, 0, Math.PI * 2);
+	ctx.fillStyle = skin;
+	ctx.fill();
+	ctx.save();
+	ctx.rotate(spin);
+	ctx.strokeStyle = "rgba(255,255,255,0.55)";
+	ctx.lineWidth = Math.max(1.4, r * 0.08);
+	ctx.beginPath();
+	ctx.arc(0, 0, r * 0.72, -0.4, 2.4);
+	ctx.stroke();
+	ctx.strokeStyle = "rgba(10, 80, 40, 0.35)";
+	ctx.beginPath();
+	ctx.arc(0, 0, r * 0.72, 2.6, 5.6);
+	ctx.stroke();
+	ctx.restore();
+	if (lit) {
+		const hi = ctx.createRadialGradient(-r * 0.3, -r * 0.35, 0, 0, 0, r);
+		hi.addColorStop(0, "rgba(255,255,255,0.85)");
+		hi.addColorStop(0.4, "rgba(200,255,220,0.25)");
+		hi.addColorStop(1, "rgba(0,0,0,0)");
+		ctx.fillStyle = hi;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+	}
+	ctx.restore();
+}
+
+function strokeDashedPath(
+	ctx: CanvasRenderingContext2D,
+	pts: DoodlePt[],
+	color: string,
+	width: number,
+) {
+	if (pts.length < 2) return;
+	ctx.save();
+	ctx.strokeStyle = color;
+	ctx.lineWidth = width;
+	ctx.lineCap = "round";
+	ctx.lineJoin = "round";
+	ctx.setLineDash([Math.max(6, width * 1.8), Math.max(5, width * 1.4)]);
+	ctx.beginPath();
+	ctx.moveTo(pts[0]!.x, pts[0]!.y);
+	for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i]!.x, pts[i]!.y);
+	ctx.stroke();
 	ctx.restore();
 }
 
@@ -1815,79 +2062,60 @@ function drawDoodleInk(
 	world: World,
 	doodle: {
 		paint: number;
-		life: number | null;
-		marks: DoodleMark[];
-		live: { x: number; y: number }[] | null;
+		pickups: DoodlePickup[];
+		path: DoodlePt[];
+		live: DoodlePt[] | null;
+		slow: boolean;
 	},
 	ballR: number,
 ) {
-	const fade = doodle.life === null ? 1 : Math.max(0.15, doodle.life / DOODLE_FADE);
-	const brush = Math.max(5, ballR * 0.5);
+	const brush = Math.max(4.5, ballR * 0.42);
 	ctx.save();
-	ctx.lineCap = "round";
-	ctx.lineJoin = "round";
-	ctx.lineWidth = brush;
-	for (const mark of doodle.marks) {
-		if (mark.kind === "shit" && mark.lump) {
-			ctx.fillStyle = `rgba(92, 64, 42, ${0.9 * fade})`;
-			ctx.beginPath();
-			ctx.arc(mark.lump.x, mark.lump.y, mark.lump.r, 0, Math.PI * 2);
-			ctx.fill();
-			ctx.fillStyle = `rgba(255, 248, 236, ${fade})`;
-			ctx.font = `700 ${Math.max(13, Math.floor(world.w * 0.038))}px 'Noto Sans SC', sans-serif`;
-			ctx.textAlign = "center";
-			ctx.fillText("你画了一坨屎", mark.lump.x, mark.lump.y - mark.lump.r - 8);
-			continue;
-		}
-		ctx.strokeStyle = `rgba(236, 230, 210, ${0.95 * fade})`;
-		ctx.beginPath();
-		let started = false;
-		for (const p of mark.pts) {
-			if (!p.on) {
-				started = false;
-				continue;
-			}
-			if (!started) {
-				ctx.moveTo(p.x, p.y);
-				started = true;
-			} else ctx.lineTo(p.x, p.y);
-		}
-		ctx.stroke();
+	if (doodle.slow) {
+		ctx.fillStyle = "rgba(40, 24, 72, 0.12)";
+		ctx.fillRect(0, 0, world.w, world.h);
 	}
+	for (const p of doodle.pickups) {
+		const ttl = Math.max(0, Math.min(1, p.life / DOODLE_PICKUP_LIFE));
+		const g = ctx.createRadialGradient(p.x - p.r * 0.25, p.y - p.r * 0.3, 1, p.x, p.y, p.r);
+		g.addColorStop(0, `rgba(255, 233, 168, ${0.55 + ttl * 0.45})`);
+		g.addColorStop(0.55, `rgba(226, 162, 58, ${0.4 + ttl * 0.55})`);
+		g.addColorStop(1, "rgba(160, 90, 20, 0.1)");
+		ctx.globalAlpha = 0.35 + ttl * 0.65;
+		ctx.fillStyle = g;
+		ctx.beginPath();
+		ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.strokeStyle = "rgba(255, 248, 220, 0.85)";
+		ctx.lineWidth = 1.5;
+		ctx.stroke();
+		ctx.globalAlpha = 1;
+	}
+	strokeDashedPath(ctx, doodle.path, "rgba(236, 230, 210, 0.92)", brush);
 	if (doodle.live && doodle.live.length > 1) {
-		ctx.strokeStyle = "rgba(236, 230, 210, 0.65)";
-		ctx.beginPath();
-		ctx.moveTo(doodle.live[0]!.x, doodle.live[0]!.y);
-		for (const p of doodle.live) ctx.lineTo(p.x, p.y);
-		ctx.stroke();
+		strokeDashedPath(ctx, doodle.live, "rgba(255, 210, 120, 0.9)", brush * 0.92);
 	}
-	const g = hudGeom(world);
-	const x = Math.max(12, Math.floor(world.w * 0.035));
-	const y = g.barY;
-	const bw = Math.min(150, world.w * 0.38);
-	const bh = 12;
-	ctx.fillStyle = "rgba(18,22,30,0.45)";
+	// Top-left paint progress bar
+	const x = Math.max(10, Math.floor(world.w * 0.03));
+	const y = Math.max(10, Math.floor(world.h * 0.028));
+	const bw = Math.min(168, world.w * 0.42);
+	const bh = Math.max(10, Math.floor(world.h * 0.016));
+	ctx.fillStyle = "rgba(12, 16, 24, 0.55)";
 	ctx.fillRect(x, y, bw, bh);
-	ctx.fillStyle = "#e2b15a";
-	ctx.fillRect(x, y, bw * (doodle.paint / DOODLE_SLOTS), bh);
-	ctx.strokeStyle = "rgba(255,255,255,0.4)";
+	const fill = Math.max(0, Math.min(1, doodle.paint));
+	const fg = ctx.createLinearGradient(x, y, x + bw, y);
+	fg.addColorStop(0, "#f0c45a");
+	fg.addColorStop(1, "#e87830");
+	ctx.fillStyle = fg;
+	ctx.fillRect(x, y, bw * fill, bh);
+	ctx.strokeStyle = "rgba(255,255,255,0.45)";
 	ctx.lineWidth = 1;
-	for (let i = 1; i < DOODLE_SLOTS; i++) {
-		const sx = x + (bw * i) / DOODLE_SLOTS;
-		ctx.beginPath();
-		ctx.moveTo(sx, y);
-		ctx.lineTo(sx, y + bh);
-		ctx.stroke();
-	}
-	ctx.fillStyle = "#f4f0e6";
-	ctx.font = `600 ${Math.max(11, Math.floor(world.w * 0.03))}px 'Noto Sans SC', sans-serif`;
+	ctx.strokeRect(x + 0.5, y + 0.5, bw - 1, bh - 1);
+	ctx.fillStyle = "rgba(255,248,236,0.92)";
+	ctx.font = `600 ${Math.max(11, Math.floor(world.w * 0.028))}px 'Noto Sans SC', sans-serif`;
 	ctx.textAlign = "left";
-	ctx.textBaseline = "middle";
-	ctx.fillText("颜料", x + bw + 6, y + bh / 2);
-	if (doodle.life !== null) {
-		ctx.textAlign = "right";
-		ctx.fillText(`${Math.max(0, doodle.life).toFixed(1)}s`, world.w - 12, y + bh / 2);
-	}
+	ctx.textBaseline = "top";
+	ctx.fillText("颜料", x, y + bh + 4);
 	ctx.restore();
 }
 
@@ -1922,6 +2150,10 @@ function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _wor
 	}
 	if (ballId === "doodle") {
 		drawDoodleBall(ctx, ball, lit);
+		return;
+	}
+	if (neonGreenCourt || ballId === "rain") {
+		drawRainBall(ctx, ball, lit);
 		return;
 	}
 	if (ballId === "glass") {
