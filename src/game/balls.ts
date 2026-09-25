@@ -10,7 +10,8 @@ export type BallId =
   | "prison"
   | "rubber"
   | "ninja"
-  | "bolt";
+  | "bolt"
+  | "doodle";
 
 export type BallKit = {
   id: BallId;
@@ -25,6 +26,8 @@ export type BallKit = {
   anti?: boolean;
   /** Lightning ball: charge on roll/bank, long-press chain swish. */
   bolt?: boolean;
+  /** Graffiti ball: paint from makes, write a number for the ball to eat. */
+  doodle?: boolean;
   src?: string;
   fallback?: string;
   wrap: "ground" | "height";
@@ -193,6 +196,22 @@ export const BALLS: BallKit[] = [
     },
   },
   {
+    id: "doodle",
+    name: "涂鸦球",
+    skill: "进球得颜料。滑动写数字，球盖住并擦完才得分；认不出收回八成",
+    heat: false,
+    doodle: true,
+    wrap: "ground",
+    score: "normal",
+    phys: {
+      jumpUp: 1,
+      jumpFwd: 1,
+      grav: 0.98,
+      ball: 1.04,
+      air: 0.96,
+    },
+  },
+  {
     id: "prison",
     name: "监狱球",
     skill: "链拖铁球；释放如经典球（暂未开放）",
@@ -232,7 +251,8 @@ export function parseBall(v: unknown): BallId {
     v === "prison" ||
     v === "rubber" ||
     v === "ninja" ||
-    v === "bolt"
+    v === "bolt" ||
+    v === "doodle"
       ? v
       : DEFAULT_BALL;
   return isPlayableBall(id) ? id : DEFAULT_BALL;
@@ -265,6 +285,7 @@ export type EffectiveBall = {
   chain: boolean;
   ninja: boolean;
   glass: boolean;
+  doodle: boolean;
   wrap: "ground" | "height";
   rScale: number;
   phys?: Partial<DevPhys>;
@@ -283,6 +304,7 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | null): Effecti
   const chain = Boolean(primary.chain) || Boolean(fuse?.chain);
   const ninja = primaryId === "ninja" || fuseId === "ninja";
   const glass = primary.score === "glass" || fuse?.score === "glass";
+  const doodle = Boolean(primary.doodle) || Boolean(fuse?.doodle);
   const skill = fuse
     ? `${primary.skill} · 融${fuse.name}：${fuse.skill}`
     : primary.skill;
@@ -300,6 +322,7 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | null): Effecti
     chain,
     ninja,
     glass,
+    doodle,
     wrap: primary.wrap,
     rScale: (primary.rScale ?? 1) * (fuse?.rScale ?? 1),
     phys: primary.phys,

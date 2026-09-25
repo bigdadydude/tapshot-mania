@@ -3,6 +3,8 @@ import { DEFAULT_GFX, fireStage } from "./types";
 import { artImage, ballImage, cloudImages, graffitiImage } from "./art";
 import type { BallId } from "./balls";
 import { DEFAULT_BALL } from "./balls";
+import type { DoodleMark } from "./doodle";
+import { DOODLE_FADE, DOODLE_SLOTS } from "./doodle";
 import type { Chain } from "./chain";
 import { gecko } from "./perf";
 import { getScene, type GrafKey } from "./scenes";
@@ -60,6 +62,12 @@ export function drawScene(
   barLabel: string | null = null,
   scoreFlash = false,
   afterCourt?: ((ctx: CanvasRenderingContext2D) => void) | null,
+  doodle: {
+    paint: number;
+    life: number | null;
+    marks: DoodleMark[];
+    live: { x: number; y: number }[] | null;
+  } | null = null,
 ) {
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
@@ -73,6 +81,7 @@ export function drawScene(
 	if (antimatter) drawAntiMatter(ctx, antimatter, time);
 	if (boltTrail.length > 1) drawBoltTrail(ctx, boltTrail, time);
 	if (gfx.ballShadow) drawGroundShadow(ctx, ball, world);
+	if (doodle) drawDoodleInk(ctx, world, doodle, ball.r);
 	if (chain) drawChain(ctx, chain, true);
 	if (showHud) drawCountdown(ctx, world, timer01, buzzer, barLabel);
 	const distH = Math.hypot(ball.x - hoop.x, ball.y - hoop.y);
@@ -1748,6 +1757,140 @@ export function paintBallSprite(
 	);
 }
 
+function drawDoodleBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
+	const { x, y, r, spin, squash } = ball;
+	ctx.save();
+	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+	ctx.scale(1 / squash, squash);
+	ctx.beginPath();
+	ctx.arc(0, 0, r, 0, Math.PI * 2);
+	ctx.clip();
+	ctx.save();
+	ctx.rotate(spin);
+	const skin = ctx.createRadialGradient(-r * 0.3, -r * 0.36, r * 0.08, r * 0.1, r * 0.16, r * 1.1);
+	skin.addColorStop(0, "#fff6e4");
+	skin.addColorStop(0.5, "#f0d3a4");
+	skin.addColorStop(1, "#b88858");
+	ctx.fillStyle = skin;
+	ctx.fillRect(-r - 1, -r - 1, r * 2 + 2, r * 2 + 2);
+	ctx.lineCap = "round";
+	ctx.lineWidth = Math.max(1.4, r * 0.07);
+	ctx.strokeStyle = "rgba(232, 84, 138, 0.9)";
+	ctx.beginPath();
+	ctx.arc(-r * 0.22, -r * 0.08, r * 0.28, 0.4, 4.2);
+	ctx.stroke();
+	ctx.strokeStyle = "rgba(64, 168, 214, 0.9)";
+	ctx.beginPath();
+	ctx.moveTo(r * 0.05, -r * 0.42);
+	ctx.quadraticCurveTo(r * 0.42, -r * 0.1, r * 0.18, r * 0.36);
+	ctx.stroke();
+	ctx.strokeStyle = "rgba(92, 78, 64, 0.75)";
+	ctx.beginPath();
+	ctx.moveTo(-r * 0.48, r * 0.22);
+	ctx.lineTo(r * 0.1, r * 0.08);
+	ctx.lineTo(r * 0.46, r * 0.28);
+	ctx.stroke();
+	ctx.restore();
+	if (lit) {
+		const shade = ctx.createRadialGradient(0, 0, r * 0.45, 0, 0, r);
+		shade.addColorStop(0, "rgba(0,0,0,0)");
+		shade.addColorStop(1, "rgba(40,24,8,0.38)");
+		ctx.fillStyle = shade;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+		const spec = ctx.createRadialGradient(-r * 0.32, -r * 0.38, 0, -r * 0.18, -r * 0.28, r * 0.46);
+		spec.addColorStop(0, "rgba(255,255,255,0.55)");
+		spec.addColorStop(1, "rgba(255,255,255,0)");
+		ctx.fillStyle = spec;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+	}
+	ctx.restore();
+}
+
+function drawDoodleInk(
+	ctx: CanvasRenderingContext2D,
+	world: World,
+	doodle: {
+		paint: number;
+		life: number | null;
+		marks: DoodleMark[];
+		live: { x: number; y: number }[] | null;
+	},
+	ballR: number,
+) {
+	const fade = doodle.life === null ? 1 : Math.max(0.15, doodle.life / DOODLE_FADE);
+	const brush = Math.max(5, ballR * 0.5);
+	ctx.save();
+	ctx.lineCap = "round";
+	ctx.lineJoin = "round";
+	ctx.lineWidth = brush;
+	for (const mark of doodle.marks) {
+		if (mark.kind === "shit" && mark.lump) {
+			ctx.fillStyle = `rgba(92, 64, 42, ${0.9 * fade})`;
+			ctx.beginPath();
+			ctx.arc(mark.lump.x, mark.lump.y, mark.lump.r, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.fillStyle = `rgba(255, 248, 236, ${fade})`;
+			ctx.font = `700 ${Math.max(13, Math.floor(world.w * 0.038))}px 'Noto Sans SC', sans-serif`;
+			ctx.textAlign = "center";
+			ctx.fillText("你画了一坨屎", mark.lump.x, mark.lump.y - mark.lump.r - 8);
+			continue;
+		}
+		ctx.strokeStyle = `rgba(236, 230, 210, ${0.95 * fade})`;
+		ctx.beginPath();
+		let started = false;
+		for (const p of mark.pts) {
+			if (!p.on) {
+				started = false;
+				continue;
+			}
+			if (!started) {
+				ctx.moveTo(p.x, p.y);
+				started = true;
+			} else ctx.lineTo(p.x, p.y);
+		}
+		ctx.stroke();
+	}
+	if (doodle.live && doodle.live.length > 1) {
+		ctx.strokeStyle = "rgba(236, 230, 210, 0.65)";
+		ctx.beginPath();
+		ctx.moveTo(doodle.live[0]!.x, doodle.live[0]!.y);
+		for (const p of doodle.live) ctx.lineTo(p.x, p.y);
+		ctx.stroke();
+	}
+	const g = hudGeom(world);
+	const x = Math.max(12, Math.floor(world.w * 0.035));
+	const y = g.barY;
+	const bw = Math.min(150, world.w * 0.38);
+	const bh = 12;
+	ctx.fillStyle = "rgba(18,22,30,0.45)";
+	ctx.fillRect(x, y, bw, bh);
+	ctx.fillStyle = "#e2b15a";
+	ctx.fillRect(x, y, bw * (doodle.paint / DOODLE_SLOTS), bh);
+	ctx.strokeStyle = "rgba(255,255,255,0.4)";
+	ctx.lineWidth = 1;
+	for (let i = 1; i < DOODLE_SLOTS; i++) {
+		const sx = x + (bw * i) / DOODLE_SLOTS;
+		ctx.beginPath();
+		ctx.moveTo(sx, y);
+		ctx.lineTo(sx, y + bh);
+		ctx.stroke();
+	}
+	ctx.fillStyle = "#f4f0e6";
+	ctx.font = `600 ${Math.max(11, Math.floor(world.w * 0.03))}px 'Noto Sans SC', sans-serif`;
+	ctx.textAlign = "left";
+	ctx.textBaseline = "middle";
+	ctx.fillText("颜料", x + bw + 6, y + bh / 2);
+	if (doodle.life !== null) {
+		ctx.textAlign = "right";
+		ctx.fillText(`${Math.max(0, doodle.life).toFixed(1)}s`, world.w - 12, y + bh / 2);
+	}
+	ctx.restore();
+}
+
 function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _world: World, time = 0, lit = true, ballId: BallId = DEFAULT_BALL) {
 	if (ballId === "prison") {
 		drawPrisonBall(ctx, ball, lit);
@@ -1775,6 +1918,10 @@ function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _wor
 	}
 	if (ballId === "anti") {
 		drawAntiBall(ctx, ball, lit, time);
+		return;
+	}
+	if (ballId === "doodle") {
+		drawDoodleBall(ctx, ball, lit);
 		return;
 	}
 	if (ballId === "glass") {

@@ -17,6 +17,15 @@ import { boardGeom, braceColliders, clearSceneLayers, drawBoot, drawScene, paint
 import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
+import {
+  addDoodleMake,
+  doodleCanWrite,
+  emptyDoodle,
+  pushDoodleStroke,
+  spendDoodlePaint,
+  stepDoodle,
+  type DoodleRun,
+} from "./doodle";
 import { DEFAULT_PHYS, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevPhys, type DevSceneId } from "./dev";
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
@@ -306,6 +315,10 @@ export function createGame(
 
   function isNinja() {
     return kit().ninja;
+  }
+
+  function isDoodle() {
+    return kit().doodle;
   }
 
   function bunshinActive() {
@@ -764,6 +777,14 @@ export function createGame(
   let champMode = false;
   /** Anti ball: antimatter charge 0–100, pickups, timed black hole. */
   let antiCharge = 0;
+  let doodleRun: DoodleRun = emptyDoodle();
+  let doodleStroke: {
+    id: number;
+    x: number;
+    y: number;
+    pts: { x: number; y: number }[];
+    writing: boolean;
+  } | null = null;
   let antiMatter: { x: number; y: number; r: number; pct: number; age: number } | null =
     null;
   /** Sum of antimatter field linger this charge cycle (cuts hole duration). */
@@ -2114,6 +2135,10 @@ export function createGame(
       resetAntiRun();
     }
     if (!isBolt()) resetBoltRun();
+    if (!isDoodle()) {
+      doodleRun = emptyDoodle();
+      doodleStroke = null;
+    }
     if (!isNinja() && !bunshinActive()) resetNinjaPath();
     if (isPrison()) {
       if (prisonMode == null) resetPrisonRun();
@@ -2365,6 +2390,8 @@ export function createGame(
     }
     timerArmed = false;
     buzzer = false;
+    doodleRun = emptyDoodle();
+    doodleStroke = null;
     buzzerTimer = 0;
     timeUp = false;
     scoredLock = 0;
@@ -2892,6 +2919,15 @@ export function createGame(
     pointerHeld = true;
     if (phase === "playing" && !paused && isBolt() && boltOverheatLeft > 0) return;
     tapJump();
+    if (phase === "playing" && !paused && isDoodle()) {
+      const p = pointerWorld(e);
+      doodleStroke = { id: e.pointerId, x: p.x, y: p.y, pts: [p], writing: false };
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+    }
     if (
       phase === "playing" &&
       !paused &&
@@ -2909,9 +2945,56 @@ export function createGame(
     }
   }
 
+  function pointerWorld(e: PointerEvent) {
+    const rect = canvas.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / Math.max(1, rect.width)) * world.cssW - world.ox;
+    const y = ((e.clientY - rect.top) / Math.max(1, rect.height)) * world.cssH - world.oy;
+    return { x, y };
+  }
+
+  function onMove(e: PointerEvent) {
+    const s = doodleStroke;
+    if (!s || s.id !== e.pointerId || !isDoodle() || phase !== "playing" || paused) return;
+    const p = pointerWorld(e);
+    if (!s.writing) {
+      if (Math.hypot(p.x - s.x, p.y - s.y) < Math.max(16, world.w * 0.045)) return;
+      const gate = doodleCanWrite(doodleRun);
+      s.writing = true;
+      if (gate !== "ok") {
+        s.pts = [];
+        callouts.push({
+          text: gate === "empty" ? "颜料不够" : gate === "full" ? "最多三个" : "等它消退",
+          x: p.x,
+          y: p.y - 24,
+          life: 0.75,
+          max: 0.75,
+          kind: "score",
+        });
+        return;
+      }
+      spendDoodlePaint(doodleRun);
+      s.pts = [
+        { x: s.x, y: s.y },
+        p,
+      ];
+      return;
+    }
+    if (s.pts.length === 0) return;
+    const last = s.pts[s.pts.length - 1]!;
+    if (Math.hypot(p.x - last.x, p.y - last.y) < 2.5) return;
+    s.pts.push(p);
+  }
+
   function onUp(e: PointerEvent) {
     if (e.button !== undefined && e.button !== 0) return;
     pointerHeld = false;
+    const stroke = doodleStroke;
+    if (stroke && stroke.id === e.pointerId) {
+      doodleStroke = null;
+      if (stroke.writing && stroke.pts.length >= 2 && isDoodle() && phase === "playing") {
+        pushDoodleStroke(doodleRun, stroke.pts, ball.r, world.w, world.floorY);
+      }
+    }
     boltHoldArm = 0;
     if (boltStorm) {
       endBoltStorm();
@@ -3376,6 +3459,23 @@ export function createGame(
 
   function physics(dt: number) {
     stepGraf(dt);
+    if (phase === "playing" && isDoodle()) {
+      const ate = stepDoodle(doodleRun, dt, ball);
+      if (ate.score > 0) {
+        score += ate.score;
+        if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
+      }
+      if (ate.say && ate.at) {
+        callouts.push({
+          text: ate.say,
+          x: ate.at.x,
+          y: ate.at.y - 28,
+          life: 0.9,
+          max: 0.9,
+          kind: "score",
+        });
+      }
+    }
     if (camShake > 0) camShake = Math.max(0, camShake - dt);
     else camShake = 0;
     if (whiteFlash > 0) whiteFlash = Math.max(0, whiteFlash - dt);
@@ -4639,6 +4739,7 @@ export function createGame(
       }
     }
     score += gain;
+    if (!ghost && isDoodle()) addDoodleMake(doodleRun);
     noteGraf();
     if (isRogueMode() && rogueRun && !ghost) {
       rogueRun.stageScore = score;
@@ -5155,6 +5256,14 @@ export function createGame(
             barLabel,
             scoreFlash,
             (c) => stageMod.drawWorldBack?.(c, world, time),
+            isDoodle()
+              ? {
+                  paint: doodleRun.paint,
+                  life: doodleRun.life,
+                  marks: doodleRun.marks,
+                  live: doodleStroke && doodleStroke.writing ? doodleStroke.pts : null,
+                }
+              : null,
           );
           stageMod.drawWorld?.(ctx, world, time);
           ctx.restore();
@@ -5187,6 +5296,7 @@ export function createGame(
   });
 
   canvas.addEventListener("pointerdown", onDown, { passive: false });
+  canvas.addEventListener("pointermove", onMove, { passive: false });
   canvas.addEventListener("pointerup", onUp, { passive: false });
   canvas.addEventListener("pointercancel", onUp, { passive: false });
   window.addEventListener("keydown", onKey);
@@ -5198,6 +5308,7 @@ export function createGame(
       running = false;
       cancelAnimationFrame(raf);
       canvas.removeEventListener("pointerdown", onDown);
+      canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onUp);
       window.removeEventListener("keydown", onKey);
