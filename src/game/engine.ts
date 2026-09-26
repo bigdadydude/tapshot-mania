@@ -318,6 +318,10 @@ export function createGame(
     return kit().maze;
   }
 
+  function isQuantum() {
+    return kit().quantum;
+  }
+
   function bunshinActive() {
     return Boolean(
       isRogueMode() &&
@@ -836,6 +840,9 @@ export function createGame(
   let vectorFlight = false;
   /** Vector ball climbs only while the initiating pointer stays held. */
   let vectorPointerId: number | null = null;
+  /** Seconds remaining in Quantum Ball phase-through state. */
+  let quantumTunnelLeft = 0;
+  let quantumCheckedTier = 0;
   /** Unit-like gravity vector read from the Maze Ball floor joystick. */
   let mazeGravity: MazeGravity = { x: 0, y: 0 };
   let mazePointerId: number | null = null;
@@ -2004,6 +2011,8 @@ export function createGame(
     ballId = next;
     vectorFlight = false;
     vectorPointerId = null;
+    quantumTunnelLeft = 0;
+    quantumCheckedTier = 0;
     mazeGravity = { x: 0, y: 0 };
     mazePointerId = null;
     mazeHoles = [];
@@ -2400,6 +2409,8 @@ export function createGame(
     hackerAwaken = false;
     vectorFlight = false;
     vectorPointerId = null;
+    quantumTunnelLeft = 0;
+    quantumCheckedTier = 0;
     mazeGravity = { x: 0, y: 0 };
     mazePointerId = null;
     mazeHoles = [];
@@ -2523,6 +2534,8 @@ export function createGame(
     hackerAwaken = false;
     vectorFlight = false;
     vectorPointerId = null;
+    quantumTunnelLeft = 0;
+    quantumCheckedTier = 0;
     mazeGravity = { x: 0, y: 0 };
     mazePointerId = null;
     mazeHoles = [];
@@ -3341,6 +3354,8 @@ export function createGame(
     hackerAwaken = false;
     vectorFlight = false;
     vectorPointerId = null;
+    quantumTunnelLeft = 0;
+    quantumCheckedTier = 0;
     mazeGravity = { x: 0, y: 0 };
     mazePointerId = null;
     mazeHoles = [];
@@ -3830,6 +3845,11 @@ export function createGame(
 
   function physics(dt: number) {
     stepGraf(dt);
+    if (quantumTunnelLeft > 0) {
+      quantumTunnelLeft = Math.max(0, quantumTunnelLeft - dt);
+      ball.blink = quantumTunnelLeft > 0;
+      if (quantumTunnelLeft <= 0) ball.blink = false;
+    }
     stepMazeHoles(dt);
     if (camShake > 0) camShake = Math.max(0, camShake - dt);
     else camShake = 0;
@@ -4190,7 +4210,7 @@ export function createGame(
         const vy0 = ball.vy;
         const vectorVx = ball.vx;
         const vectorVy = ball.vy;
-        if (scoredLock <= 0) {
+        if (scoredLock <= 0 && quantumTunnelLeft <= 0) {
           if (hacking) {
             if (stageMod.canScore(hoop)) collideHackerRim(hoop);
             if (other && stageMod.canScore(other)) collideHackerRim(other);
@@ -4199,9 +4219,9 @@ export function createGame(
             if (other && stageMod.canScore(other)) collideRim(other);
           }
         }
-        if (!hoop.noBoard && !stageMod.skipBoard(hoop)) collideBoard(hoop);
-        if (!hoop.noBoard && !stageMod.skipBrace(hoop)) collideBrace(hoop);
-        if (other) {
+        if (quantumTunnelLeft <= 0 && !hoop.noBoard && !stageMod.skipBoard(hoop)) collideBoard(hoop);
+        if (quantumTunnelLeft <= 0 && !hoop.noBoard && !stageMod.skipBrace(hoop)) collideBrace(hoop);
+        if (other && quantumTunnelLeft <= 0) {
           if (!other.noBoard && !stageMod.skipBoard(other)) collideBoard(other);
           if (!other.noBoard && !stageMod.skipBrace(other)) collideBrace(other);
         }
@@ -5145,6 +5165,18 @@ export function createGame(
       shotAirborne = false;
     }
     combo = Math.max(combo, streak);
+    if (!ghost && isQuantum()) {
+      const tier = Math.floor(combo / 10) * 10;
+      if (tier >= 20 && tier > quantumCheckedTier) {
+        quantumCheckedTier = tier;
+        const chance = Math.min(0.5, tier / 100);
+        if (Math.random() < chance) {
+          quantumTunnelLeft = 6;
+          ball.blink = true;
+          callouts.push({ text: "????", x: ball.x, y: ball.y - ball.r * 2.2, life: 0.9, max: 0.9, kind: "tag" });
+        }
+      }
+    }
 
     madeCount += 1;
     if (!ghost) {

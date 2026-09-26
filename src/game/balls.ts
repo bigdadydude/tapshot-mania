@@ -13,7 +13,8 @@ export type BallId =
   | "bolt"
   | "rain"
   | "vector"
-  | "maze";
+  | "maze"
+  | "quantum";
 
 export type BallKit = {
   id: BallId;
@@ -34,6 +35,8 @@ export type BallKit = {
   vector?: boolean;
   /** Hacker ball: first clock empty awakens code-rain cruise. */
   codeRain?: boolean;
+  /** Quantum ball: high-combo chance to phase through the basket rig. */
+  quantum?: boolean;
   src?: string;
   fallback?: string;
   wrap: "ground" | "height";
@@ -118,6 +121,15 @@ export const BALLS: BallKit[] = [
       air: 0.86,
       roll: 0.72,
     },
+  },
+  {
+    id: "quantum",
+    name: "量子球",
+    skill: "连击20起每10连击触发一次隧穿判定：10%起、最高50%；成功后6秒穿过篮架",
+    heat: false,
+    quantum: true,
+    wrap: "ground",
+    score: "normal",
   },
   {
     id: "vector",
@@ -255,7 +267,8 @@ export function parseBall(v: unknown): BallId {
     v === "bolt" ||
     v === "rain" ||
     v === "vector" ||
-    v === "maze"
+    v === "maze" ||
+    v === "quantum"
       ? v
       : DEFAULT_BALL;
   return isPlayableBall(id) ? id : DEFAULT_BALL;
@@ -291,6 +304,7 @@ export type EffectiveBall = {
   codeRain: boolean;
   vector: boolean;
   maze: boolean;
+  quantum: boolean;
   wrap: "ground" | "height";
   rScale: number;
   phys?: Partial<DevPhys>;
@@ -312,6 +326,7 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | null): Effecti
   const codeRain = Boolean(primary.codeRain) || Boolean(fuse?.codeRain);
   const vector = Boolean(primary.vector) || Boolean(fuse?.vector);
   const maze = Boolean(primary.maze) || Boolean(fuse?.maze);
+  const quantum = Boolean(primary.quantum) || Boolean(fuse?.quantum);
   const skill = fuse
     ? `${primary.skill} · 融${fuse.name}：${fuse.skill}`
     : primary.skill;
@@ -332,6 +347,7 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | null): Effecti
     codeRain,
     vector,
     maze,
+    quantum,
     wrap: primary.wrap,
     rScale: (primary.rScale ?? 1) * (fuse?.rScale ?? 1),
     phys: primary.phys,

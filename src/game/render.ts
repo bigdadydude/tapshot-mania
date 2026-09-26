@@ -1944,6 +1944,7 @@ function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _wor
 		drawMazeBall(ctx, ball, lit);
 		return;
 	}
+	if (ballId === "quantum" && ball.blink && Math.floor(time * 16) % 2 === 0) return;
 	if (ballId === "prison") {
 		drawPrisonBall(ctx, ball, lit);
 		return;
