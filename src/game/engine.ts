@@ -18,6 +18,7 @@ import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { hackerPadLayout, hitHackerPad, type HackerDir } from "./hacker-pad";
+import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
 import { DEFAULT_PHYS, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevPhys, type DevSceneId } from "./dev";
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
@@ -307,6 +308,14 @@ export function createGame(
 
   function isHacker() {
     return kit().codeRain;
+  }
+
+  function isVector() {
+    return kit().vector;
+  }
+
+  function isMaze() {
+    return kit().maze;
   }
 
   function bunshinActive() {
@@ -714,6 +723,8 @@ export function createGame(
   let prevBallX = 0;
   let tapLock = 0;
   let scoredLock = 0;
+  /** Physical hoop that last accepted a make; clears the per-ball score gate once exited. */
+  let scoreGateHoop: Hoop | null = null;
   let buzzer = false;
   let buzzerTimer = 0;
   let timeUp = false;
@@ -819,6 +830,13 @@ export function createGame(
   let hackerDir: HackerDir | null = null;
   let hackerRimSlide: { dir: HackerDir; hoop: Hoop; turn: -1 | 1 } | null = null;
   let hackerAwaken = false;
+  /** Active from a Vector Ball tap until its first solid collision. */
+  let vectorFlight = false;
+  /** Unit-like gravity vector read from the Maze Ball floor joystick. */
+  let mazeGravity: MazeGravity = { x: 0, y: 0 };
+  let mazePointerId: number | null = null;
+  let mazeTiltActive = false;
+  let mazeTiltBase: { beta: number; gamma: number } | null = null;
   const HACKER_SPEED_BASE = 300;
   let hackerSpeed = HACKER_SPEED_BASE;
 
@@ -1140,6 +1158,12 @@ export function createGame(
     return Math.max(0, Math.min(cap, raw));
   }
 
+  function mazeRestitution(impact: number, _base: number) {
+    // This ball rolls on the whole tilted court. Contacts must stay lively even
+    // at low speed, then approach a hard-board rebound as impact increases.
+    return clamp(0.68 + Math.min(0.24, impact / 1500), 0.68, 0.92);
+  }
+
   function jumpVx() {
     return hoop.side * world.w * 0.76 * pMul("jumpFwd");
   }
@@ -1255,6 +1279,7 @@ export function createGame(
         paintBallSprite(ctx, x, y, r, spin, ballId, time);
       },
       isHackerAwaken: () => hackerAwaken,
+      isMaze: () => isMaze(),
     };
   }
 
@@ -1966,6 +1991,9 @@ export function createGame(
       playMode = "classic";
     }
     ballId = next;
+    vectorFlight = false;
+    mazeGravity = { x: 0, y: 0 };
+    mazePointerId = null;
     if (rogueRun && rogueRun.fuseBall === ballId) {
       rogueRun.fuseBall = null;
     }
@@ -2353,6 +2381,11 @@ export function createGame(
     hint = true;
     hackerDir = null;
     hackerAwaken = false;
+    vectorFlight = false;
+    mazeGravity = { x: 0, y: 0 };
+    mazePointerId = null;
+    mazeTiltActive = typeof DeviceOrientationEvent !== "undefined";
+    mazeTiltBase = null;
     hackerSpeed = HACKER_SPEED_BASE;
     clearSparseCodeRain();
     madeCount = 0;
@@ -2379,6 +2412,7 @@ export function createGame(
     buzzerTimer = 0;
     timeUp = false;
     scoredLock = 0;
+    scoreGateHoop = null;
     tapLock = 0;
     comboClock = 0;
     comboCounting = true;
@@ -2405,8 +2439,13 @@ export function createGame(
     applyRogueHoopScale(hoop);
     other = null;
     remakeBall(1);
-    ball.vx = jumpVx() * 0.18;
-    ball.vy = jumpVy() * 0.16;
+    if (isMaze()) {
+      ball.vx = 0;
+      ball.vy = 0;
+    } else {
+      ball.vx = jumpVx() * 0.18;
+      ball.vy = jumpVy() * 0.16;
+    }
     prevBallX = ball.x;
     prevBallY = ball.y;
     particles = [];
@@ -2459,6 +2498,11 @@ export function createGame(
     buzzerTimer = 0;
     hackerDir = null;
     hackerAwaken = false;
+    vectorFlight = false;
+    mazeGravity = { x: 0, y: 0 };
+    mazePointerId = null;
+    mazeTiltActive = typeof DeviceOrientationEvent !== "undefined";
+    mazeTiltBase = null;
     hackerSpeed = HACKER_SPEED_BASE;
     clearSparseCodeRain();
     if (isAnti()) {
@@ -2683,6 +2727,7 @@ export function createGame(
     buzzerTimer = 0;
     timeUp = false;
     scoredLock = 0;
+    scoreGateHoop = null;
     tapLock = 0;
     comboClock = 0;
     comboCounting = true;
@@ -2701,8 +2746,13 @@ export function createGame(
     applyRogueHoopScale(hoop);
     other = null;
     remakeBall(1);
-    ball.vx = jumpVx() * 0.18;
-    ball.vy = jumpVy() * 0.16;
+    if (isMaze()) {
+      ball.vx = 0;
+      ball.vy = 0;
+    } else {
+      ball.vx = jumpVx() * 0.18;
+      ball.vy = jumpVy() * 0.16;
+    }
     prevBallX = ball.x;
     prevBallY = ball.y;
     particles = [];
@@ -2958,6 +3008,14 @@ export function createGame(
     }
   }
 
+  function launchVectorBall() {
+    vectorFlight = true;
+    const vertical = jumpVy();
+    ball.vy = vertical;
+    // Match horizontal and vertical speed for a true 45° ascent toward the active hoop.
+    ball.vx = hoop.side * Math.abs(vertical);
+  }
+
   function tapJump() {
     if (!booted) return;
     if (phase === "title") {
@@ -2982,6 +3040,8 @@ export function createGame(
         const speed = Math.hypot(jumpVx(), Math.abs(jumpVy()));
         ball.vx = (dx / d) * speed;
         ball.vy = (dy / d) * speed;
+      } else if (isVector()) {
+        launchVectorBall();
       } else {
         ball.vy = jumpVy();
         ball.vx = jumpVx();
@@ -3006,6 +3066,8 @@ export function createGame(
       const speed = Math.hypot(jumpVx(), Math.abs(jumpVy()));
       ball.vx = (dx / d) * speed;
       ball.vy = (dy / d) * speed;
+    } else if (isVector()) {
+      launchVectorBall();
     } else {
       ball.vy = jumpVy();
       ball.vx = jumpVx();
@@ -3033,6 +3095,37 @@ export function createGame(
     };
   }
 
+  async function requestMazeTiltPermission() {
+    type DeviceOrientationWithPermission = typeof DeviceOrientationEvent & {
+      requestPermission?: () => Promise<PermissionState>;
+    };
+    const orientation = DeviceOrientationEvent as DeviceOrientationWithPermission;
+    try {
+      if (orientation.requestPermission && (await orientation.requestPermission()) !== "granted") return;
+      mazeTiltActive = true;
+      mazeTiltBase = null;
+    } catch {
+      // Browsers without motion permission keep joystick controls available.
+    }
+  }
+
+  function onDeviceOrientation(e: DeviceOrientationEvent) {
+    if (!mazeTiltActive || mazePointerId !== null || !isMaze() || phase !== "playing" || paused) return;
+    if (e.beta == null || e.gamma == null) return;
+    if (!mazeTiltBase) {
+      mazeTiltBase = { beta: e.beta, gamma: e.gamma };
+      return;
+    }
+    const tilt = 18;
+    const dx = Math.max(-1, Math.min(1, (e.gamma - mazeTiltBase.gamma) / tilt));
+    const dy = Math.max(-1, Math.min(1, (e.beta - mazeTiltBase.beta) / tilt));
+    const dead = 0.06;
+    mazeGravity = {
+      x: Math.abs(dx) < dead ? 0 : dx,
+      y: Math.abs(dy) < dead ? 0 : dy,
+    };
+  }
+
   function onDown(e: PointerEvent) {
     if (e.button !== undefined && e.button !== 0) return;
     audio.unlock();
@@ -3040,6 +3133,25 @@ export function createGame(
     e.preventDefault();
     pointerHeld = true;
     if (phase === "playing" && !paused && isBolt() && boltOverheatLeft > 0) return;
+    if (phase === "playing" && !paused && isMaze()) {
+      // iOS requires this permission request to originate from a real touch.
+      // Other mobile browsers already stream orientation events automatically.
+      void requestMazeTiltPermission();
+      const point = pointerWorld(e);
+      const layout = mazePadLayout(world);
+      const insidePad = Math.hypot(point.x - layout.cx, point.y - layout.cy) <= layout.r;
+      if (insidePad) {
+        const gravity = mazeGravityFromPoint(point.x, point.y, layout)!;
+        mazeGravity = gravity;
+        mazePointerId = e.pointerId;
+        try {
+          canvas.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
     if (phase === "playing" && !paused && isHacker() && hackerAwaken) {
       const point = pointerWorld(e);
       const dir = hitHackerPad(point.x, point.y, hackerPadLayout(world));
@@ -3067,8 +3179,20 @@ export function createGame(
     }
   }
 
+  function onMove(e: PointerEvent) {
+    if (mazePointerId !== e.pointerId || !isMaze() || phase !== "playing" || paused) return;
+    const point = pointerWorld(e);
+    const gravity = mazeGravityFromPoint(point.x, point.y, mazePadLayout(world));
+    mazeGravity = gravity ?? { x: 0, y: 0 };
+  }
+
   function onUp(e: PointerEvent) {
     if (e.button !== undefined && e.button !== 0) return;
+    if (mazePointerId === e.pointerId) {
+      mazePointerId = null;
+      // Resume the last gyro value immediately; neutral remains the safe fallback.
+      if (!mazeTiltActive) mazeGravity = { x: 0, y: 0 };
+    }
     pointerHeld = false;
     boltHoldArm = 0;
     if (boltStorm) {
@@ -3149,6 +3273,11 @@ export function createGame(
     madeCount = 0;
     hackerDir = null;
     hackerAwaken = false;
+    vectorFlight = false;
+    mazeGravity = { x: 0, y: 0 };
+    mazePointerId = null;
+    mazeTiltActive = typeof DeviceOrientationEvent !== "undefined";
+    mazeTiltBase = null;
     hackerSpeed = HACKER_SPEED_BASE;
     clearSparseCodeRain();
     rogueRun = null;
@@ -3795,14 +3924,34 @@ export function createGame(
         ) {
           ball.vy += 200 * dt;
         }
+      } else if (isMaze()) {
+        // Treat the entire court as a tilted plane. The control changes the
+        // plane's downhill direction, so it is an acceleration?not a speed target.
+        const mazeForce = gravity() * 1.18;
+        const mazeMaxSpeed = Math.max(760, world.w * 1.28);
+        ball.vx += mazeGravity.x * mazeForce * dt;
+        ball.vy += mazeGravity.y * mazeForce * dt;
+        const mazeSpeed = Math.hypot(ball.vx, ball.vy);
+        if (mazeSpeed > mazeMaxSpeed) {
+          const scale = mazeMaxSpeed / mazeSpeed;
+          ball.vx *= scale;
+          ball.vy *= scale;
+        }
       } else {
         ball.vy += gravity() * dt * (gScale * fallBoost - buoy);
       }
       if (!hacking) {
       const air = pMul("air");
       const roll = pMul("roll");
-      const onFloor = ball.y + ball.r >= world.floorY - 0.5 && ball.vy >= 0;
-      if (!onFloor && ball.y + ball.r < world.floorY - 2) shotAirborne = true;
+      if (isMaze()) {
+        // Very low rolling resistance: releasing the stick levels the plane, it
+        // does not brake the ball. Momentum decays gradually on its own.
+        const mazeDrag = 1 - Math.min(0.45, 0.075 * dt);
+        ball.vx *= mazeDrag;
+        ball.vy *= mazeDrag;
+      }
+      const onFloor = !isMaze() && ball.y + ball.r >= world.floorY - 0.5 && ball.vy >= 0;
+      if (!isMaze() && !onFloor && ball.y + ball.r < world.floorY - 2) shotAirborne = true;
       if (onFloor) {
         if (Math.abs(ball.vx) > 2.2) {
           boltFloorGrip = true;
@@ -3830,6 +3979,10 @@ export function createGame(
         ball.omega *= 1 - Math.min(0.85, spinDrag * air * dt);
       }
       ball.vy *= 1 - Math.min(0.85, 0.025 * air * dt);
+      if (vectorFlight) {
+        // Preserve the exact 45? climb after gravity/drag; descent is strictly vertical.
+        ball.vx = ball.vy < 0 ? hoop.side * -ball.vy : 0;
+      }
       ball.omega = clamp(ball.omega, -22, 22);
       const move = buzzer ? 0.6 : 1;
       ball.x += ball.vx * dt * move;
@@ -3850,6 +4003,16 @@ export function createGame(
       pushNinjaPath(dt);
       stepNinjaGhosts(dt);
       pushTrail();
+      // A make only locks the ball while it is threading its scored hoop. Once it
+      // has cleared that hoop, permit the next basket without waiting for floor contact.
+      if (ball.scored && scoredLock <= 0 && scoreGateHoop) {
+        const clearR = scoreGateHoop.inner + ball.r * 1.5;
+        if (Math.hypot(ball.x - scoreGateHoop.x, ball.y - scoreGateHoop.y) > clearR) {
+          ball.scored = false;
+          scoreGateHoop = null;
+          resetShotFlags();
+        }
+      }
       ball.spin += ball.omega * dt;
       ball.squash += (1 - ball.squash) * (1 - Math.exp(-12 * dt));
       // Score before rim/board so a clean thread isn't eaten by rim bounce.
@@ -3857,6 +4020,8 @@ export function createGame(
       if (phase !== "title" && !ballHidden()) {
         const vx0 = ball.vx;
         const vy0 = ball.vy;
+        const vectorVx = ball.vx;
+        const vectorVy = ball.vy;
         if (scoredLock <= 0) {
           if (hacking) {
             if (stageMod.canScore(hoop)) collideHackerRim(hoop);
@@ -3871,6 +4036,14 @@ export function createGame(
         if (other) {
           if (!other.noBoard && !stageMod.skipBoard(other)) collideBoard(other);
           if (!other.noBoard && !stageMod.skipBrace(other)) collideBrace(other);
+        }
+        if (
+          isVector() &&
+          (Math.abs(ball.vx - vectorVx) > 0.5 || Math.abs(ball.vy - vectorVy) > 0.5)
+        ) {
+          // Every solid impact keeps the reflected quadrant, but leaves at a 45? angle.
+          vectorFlight = false;
+          snapVectorBounce(vectorVx, vectorVy);
         }
         if (
           hacking &&
@@ -4047,6 +4220,18 @@ export function createGame(
       boltBoardTopHold = 0;
     }
   }
+  function snapVectorBounce(fallbackVx: number, fallbackVy: number) {
+    const speed = Math.max(80, Math.hypot(ball.vx, ball.vy));
+    const component = speed / Math.SQRT2;
+    // Use the resolved physical response for quadrant; fall back to the incoming vector
+    // if a flat contact has zeroed one component.
+    const sx = Math.sign(ball.vx) || Math.sign(fallbackVx) || hoop.side;
+    const sy = Math.sign(ball.vy) || Math.sign(fallbackVy) || -1;
+    ball.vx = sx * component;
+    ball.vy = sy * component;
+    ball.omega = ball.vx / Math.max(8, ball.r);
+  }
+
   function collideHackerRim(h: Hoop) {
     const rad = h.tube * 0.92;
     const points = [
@@ -4122,6 +4307,10 @@ export function createGame(
     const r = Math.max(8, ball.r);
     // Couple spin �?tangential velocity (rolling contact). Spinning balls deflect off the rim.
     const applySpinDeflect = () => {
+      if (isMaze()) {
+        ball.omega = clamp((ball.vx * tx + ball.vy * ty) / r, -22, 22);
+        return;
+      }
       const vt = ball.vx * tx + ball.vy * ty;
       const slip = vt - ball.omega * r;
       const baseK = holeOn ? 0.42 : 0.22;
@@ -4147,7 +4336,7 @@ export function createGame(
       }
       return;
     }
-    const rest = bounceRest("rim");
+    const rest = isMaze() ? mazeRestitution(-vn, bounceRest("rim")) : bounceRest("rim");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
     applySpinDeflect();
@@ -4249,13 +4438,13 @@ export function createGame(
       ball.hitBoard = true;
       return;
     }
-    const rest = bounceRest("board");
+    const rest = isMaze() ? mazeRestitution(-vn, bounceRest("board")) : bounceRest("board");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
     const tx = -ny;
     const ty = nx;
     const vt = ball.vx * tx + ball.vy * ty;
-    const grip = Math.min(0.92, 0.1 * pMul("boardFric"));
+    const grip = isMaze() ? 0.015 : Math.min(0.92, 0.1 * pMul("boardFric"));
     ball.vx -= grip * vt * tx;
     ball.vy -= grip * vt * ty;
     ball.omega += (-vt / Math.max(8, ball.r)) * 0.2 * pMul("boardFric");
@@ -4402,13 +4591,13 @@ export function createGame(
     ball.y += ny * (overlap + 0.35);
     const vn = ball.vx * nx + ball.vy * ny;
     if (vn >= 0) return;
-    const rest = bounceRest("board");
+    const rest = isMaze() ? mazeRestitution(-vn, bounceRest("board")) : bounceRest("board");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
     const tx = -ny;
     const ty = nx;
     const vt = ball.vx * tx + ball.vy * ty;
-    const grip = Math.min(0.92, 0.12 * pMul("boardFric"));
+    const grip = isMaze() ? 0.015 : Math.min(0.92, 0.12 * pMul("boardFric"));
     ball.vx -= grip * vt * tx;
     ball.vy -= grip * vt * ty;
     ball.hitBoard = true;
@@ -4488,12 +4677,17 @@ export function createGame(
       if (dmg > 0) hurtGlass(dmg, ball.x, ball.y - ball.r * 2.2);
     }
     if (incoming > 40) {
-      const rest = bounceRest(incoming > 140 ? "floorHi" : "floorLo");
+      const baseRest = bounceRest(incoming > 140 ? "floorHi" : "floorLo");
+      const rest = isMaze() ? mazeRestitution(incoming, baseRest) : baseRest;
       const rebound = incoming * rest;
       if (rebound > 40) {
         if (phase !== "title") audio.bounce(Math.min(1, incoming / 900));
         ball.vy = -rebound;
-        ball.vx *= 1 - Math.min(0.2, 0.03 * pMul("roll"));
+        if (!isMaze()) ball.vx *= 1 - Math.min(0.2, 0.03 * pMul("roll"));
+        if (isVector()) {
+          vectorFlight = false;
+          snapVectorBounce(ball.vx || hoop.side * Math.abs(rebound), ball.vy);
+        }
         ball.squash = incoming > 220 ? 0.92 : incoming > 130 ? 0.95 : 0.97;
       } else {
         ball.vy = 0;
@@ -4692,6 +4886,7 @@ export function createGame(
     const scoredHoop = opts?.at ?? hoop;
     if (!ghost) {
       ball.scored = true;
+      scoreGateHoop = scoredHoop as Hoop;
       scoredLock = 0.22;
       // Keep threading in the direction of the make (upward anti makes were getting yanked back).
       ball.vy += (ball.vy < 0 ? -1 : 1) * 70;
@@ -5423,6 +5618,11 @@ export function createGame(
             phase === "playing" && isHacker() && hackerAwaken,
             (c) => stageMod.drawWorld?.(c, world, time),
             phase === "playing" && isHacker() && hackerAwaken ? { dir: hackerDir } : null,
+            // The pad is only a touch-control indicator. Gyro steering stays invisible
+            // so releasing a dragged stick always springs the knob back to center.
+            phase === "playing" && isMaze()
+              ? { gravity: mazePointerId === null ? { x: 0, y: 0 } : mazeGravity }
+              : null,
           );
           ctx.restore();
           stageMod.drawScreen?.(ctx, world);
@@ -5454,22 +5654,26 @@ export function createGame(
   });
 
   canvas.addEventListener("pointerdown", onDown, { passive: false });
+  canvas.addEventListener("pointermove", onMove, { passive: false });
   canvas.addEventListener("pointerup", onUp, { passive: false });
   canvas.addEventListener("pointercancel", onUp, { passive: false });
   window.addEventListener("keydown", onKey);
   window.addEventListener("resize", resize);
   document.addEventListener("visibilitychange", onVis);
+  window.addEventListener("deviceorientation", onDeviceOrientation);
 
   const handle: GameHandle = {
     destroy() {
       running = false;
       cancelAnimationFrame(raf);
       canvas.removeEventListener("pointerdown", onDown);
+      canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onUp);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", resize);
       document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("deviceorientation", onDeviceOrientation);
       if ((window as unknown as { __tq?: unknown }).__tq) {
         delete (window as unknown as { __tq?: unknown }).__tq;
       }

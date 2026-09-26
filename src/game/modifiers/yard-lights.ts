@@ -71,6 +71,8 @@ type Bolt = {
   trail: { x: number; y: number }[];
   falling: boolean;
   faceAng: number;
+  /** Seconds left for a retired round to visually fade without hitting anything. */
+  fadeLeft: number | null;
 };
 
 type LightFx = {
@@ -114,6 +116,7 @@ const TRACE_LINE = 1.8;
 const BOLT_W = 28;
 const ELITE_W = 36;
 const TRAIL_LEN = 16;
+const RETIRED_BOLT_FADE = 0.45;
 
 type HuntMode = "sweep" | "track" | "lock";
 
@@ -207,6 +210,7 @@ function drawBoltSprite(ctx: CanvasRenderingContext2D, b: Bolt) {
   ctx.translate(b.x, b.y);
   ctx.rotate(ang);
   if (b.falling) ctx.globalAlpha = 0.72;
+  if (b.fadeLeft !== null) ctx.globalAlpha *= clamp(b.fadeLeft / RETIRED_BOLT_FADE, 0, 1);
   if (img) {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
@@ -671,8 +675,18 @@ export function createYardLights(): StageModifier {
     }
   }
 
+  function retireBolts() {
+    for (const b of bolts) {
+      if (b.x < -9000 || b.fadeLeft !== null) continue;
+      b.fadeLeft = RETIRED_BOLT_FADE;
+      b.trail = [];
+    }
+  }
+
   function enterLockdown(host: ModifierHost) {
     phase = "lockdown";
+    // Rounds carried over from Yard Time are visual-only once lockdown begins.
+    retireBolts();
     lockdownLeft = LOCKDOWN;
     recessLeft = 0;
     warned = false;
@@ -738,13 +752,19 @@ export function createYardLights(): StageModifier {
     const len = Math.hypot(b.vx, b.vy) || 1;
     const nx = b.vx / len;
     const ny = b.vy / len;
-    // Away from the laser's travel direction.
     const power = KNOCK * (b.elite ? 1.28 : 1);
-    ball.vx = -nx * power;
-    ball.vy = -ny * power;
-    // Extra launch so travel distance reads clearly.
-    ball.vx *= 1.12;
-    ball.vy *= 1.12;
+    if (host.isMaze?.()) {
+      // In maze mode a round adds momentum in its travel direction, like a rolling-ball hit.
+      ball.vx += nx * power * 0.42;
+      ball.vy += ny * power * 0.42;
+    } else {
+      // Away from the laser's travel direction.
+      ball.vx = -nx * power;
+      ball.vy = -ny * power;
+      // Extra launch so travel distance reads clearly.
+      ball.vx *= 1.12;
+      ball.vy *= 1.12;
+    }
     ball.omega += (Math.random() - 0.5) * 30;
     ball.squash = Math.min(ball.squash || 1, 0.7);
     if (ball.y + ball.r > host.world.floorY - 1) {
@@ -818,6 +838,7 @@ export function createYardLights(): StageModifier {
       trail: [{ x: t.ox, y: t.oy }],
       falling: false,
       faceAng: Math.atan2(dy, dx),
+      fadeLeft: null,
     });
   }
 
@@ -1104,6 +1125,11 @@ export function createYardLights(): StageModifier {
 
       for (const b of bolts) {
         if (b.x < -9000) continue;
+        if (b.fadeLeft !== null) {
+          b.fadeLeft = Math.max(0, b.fadeLeft - dt);
+          if (b.fadeLeft <= 0) b.x = -9999;
+          continue;
+        }
         if (b.falling) {
           b.vy += BOLT_FALL_G * dt;
           b.y += b.vy * dt;
@@ -1176,7 +1202,7 @@ export function createYardLights(): StageModifier {
 
       bolts = bolts.filter((b) => {
         if (b.x < -9000) return false;
-        if (b.falling) return true;
+        if (b.fadeLeft !== null || b.falling) return true;
         if (b.elite) return true;
         return !outsidePlay(world, b.x, b.y);
       });

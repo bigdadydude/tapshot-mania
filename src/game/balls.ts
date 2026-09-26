@@ -11,7 +11,9 @@ export type BallId =
   | "rubber"
   | "ninja"
   | "bolt"
-  | "rain";
+  | "rain"
+  | "vector"
+  | "maze";
 
 export type BallKit = {
   id: BallId;
@@ -26,6 +28,10 @@ export type BallKit = {
   anti?: boolean;
   /** Lightning ball: charge on roll/bank, long-press chain swish. */
   bolt?: boolean;
+  /** Maze ball: a floor joystick redirects gravity. */
+  maze?: boolean;
+  /** Vector ball: 45° ascent followed by a vertical drop until an impact. */
+  vector?: boolean;
   /** Hacker ball: first clock empty awakens code-rain cruise. */
   codeRain?: boolean;
   src?: string;
@@ -97,6 +103,33 @@ export const BALLS: BallKit[] = [
       jumpFwd: 0.8,
       grav: 1,
       ball: 2,
+    },
+  },
+  {
+    id: "maze",
+    name: "迷宫球",
+    skill: "拖动地面摇杆改变重力方向；中立时停力，保留惯性",
+    heat: false,
+    maze: true,
+    wrap: "ground",
+    score: "normal",
+    phys: {
+      ball: 0.92,
+      air: 0.86,
+      roll: 0.72,
+    },
+  },
+  {
+    id: "vector",
+    name: "矢量球",
+    skill: "点击后沿45°斜上方飞行，最高点垂直下落；撞击后恢复普通物理",
+    heat: false,
+    vector: true,
+    wrap: "ground",
+    score: "normal",
+    phys: {
+      jumpUp: 1,
+      jumpFwd: 1,
     },
   },
   {
@@ -220,7 +253,9 @@ export function parseBall(v: unknown): BallId {
     v === "rubber" ||
     v === "ninja" ||
     v === "bolt" ||
-    v === "rain"
+    v === "rain" ||
+    v === "vector" ||
+    v === "maze"
       ? v
       : DEFAULT_BALL;
   return isPlayableBall(id) ? id : DEFAULT_BALL;
@@ -254,6 +289,8 @@ export type EffectiveBall = {
   ninja: boolean;
   glass: boolean;
   codeRain: boolean;
+  vector: boolean;
+  maze: boolean;
   wrap: "ground" | "height";
   rScale: number;
   phys?: Partial<DevPhys>;
@@ -273,6 +310,8 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | null): Effecti
   const ninja = primaryId === "ninja" || fuseId === "ninja";
   const glass = primary.score === "glass" || fuse?.score === "glass";
   const codeRain = Boolean(primary.codeRain) || Boolean(fuse?.codeRain);
+  const vector = Boolean(primary.vector) || Boolean(fuse?.vector);
+  const maze = Boolean(primary.maze) || Boolean(fuse?.maze);
   const skill = fuse
     ? `${primary.skill} · 融${fuse.name}：${fuse.skill}`
     : primary.skill;
@@ -291,6 +330,8 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | null): Effecti
     ninja,
     glass,
     codeRain,
+    vector,
+    maze,
     wrap: primary.wrap,
     rScale: (primary.rScale ?? 1) * (fuse?.rScale ?? 1),
     phys: primary.phys,

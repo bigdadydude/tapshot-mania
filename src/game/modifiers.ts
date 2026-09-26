@@ -56,6 +56,8 @@ export type ModifierHost = {
   ) => void;
   /** Hacker ball awaken ? bolts freeze/fall near the ball. */
   isHackerAwaken?: () => boolean;
+  /** Maze ball needs kinetic impulses rather than the standard knockback overwrite. */
+  isMaze?: () => boolean;
 };
 
 export type YardLightsHud = {

@@ -8,6 +8,7 @@ import { gecko } from "./perf";
 import { getScene, type GrafKey } from "./scenes";
 import { clearSparseCodeRain, drawSparseCodeRain } from "./sparse-rain";
 import { drawHackerPad, hackerPadLayout, type HackerDir } from "./hacker-pad";
+import { drawMazePad, mazePadLayout, type MazeGravity } from "./maze-pad";
 import {
   NET_COLS,
   NET_ROWS,
@@ -143,6 +144,7 @@ export function drawScene(
   greenWash = false,
   afterWorld?: ((ctx: CanvasRenderingContext2D) => void) | null,
   hacker: { dir: HackerDir | null } | null = null,
+  maze: { gravity: MazeGravity } | null = null,
 ) {
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
@@ -170,6 +172,7 @@ export function drawScene(
 	drawHoopStack(ctx, hoop, world, ballWithOther ? null : ball, combo, time, gfx.particles ? trail : [], gfx, ballId);
 	neonGreenCourt = false;
 	if (hacker) drawHackerPad(ctx, hackerPadLayout(world), hacker.dir);
+	if (maze) drawMazePad(ctx, mazePadLayout(world), maze.gravity);
 	if (ballId === "bolt" && boltCharge > 90) drawBoltWhitePulse(ctx, ball, time);
 	for (const c of ninjaClones) {
 		drawNinjaBall(
@@ -1882,7 +1885,52 @@ function drawRainBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
 	ctx.restore();
 }
 
+
+function drawMazeBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
+	const { x, y, r, spin, squash } = ball;
+	ctx.save();
+	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+	ctx.scale(1 / squash, squash);
+	const skin = ctx.createRadialGradient(-r * 0.34, -r * 0.42, r * 0.06, r * 0.08, r * 0.14, r * 1.08);
+	skin.addColorStop(0, "#ffffff");
+	skin.addColorStop(0.22, "#dce5ea");
+	skin.addColorStop(0.52, "#84949e");
+	skin.addColorStop(0.78, "#38464f");
+	skin.addColorStop(1, "#12191f");
+	ctx.fillStyle = skin;
+	ctx.beginPath();
+	ctx.arc(0, 0, r, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.save();
+	ctx.rotate(spin);
+	ctx.strokeStyle = "rgba(238,248,255,0.72)";
+	ctx.lineWidth = Math.max(1.2, r * 0.055);
+	ctx.beginPath();
+	ctx.arc(0, 0, r * 0.7, -0.55, 2.55);
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.moveTo(-r * 0.84, 0);
+	ctx.quadraticCurveTo(0, r * 0.22, r * 0.84, 0);
+	ctx.stroke();
+	ctx.restore();
+	if (lit) {
+		const shine = ctx.createRadialGradient(-r * 0.34, -r * 0.42, 0, -r * 0.16, -r * 0.2, r * 0.7);
+		shine.addColorStop(0, "rgba(255,255,255,0.88)");
+		shine.addColorStop(0.24, "rgba(255,255,255,0.3)");
+		shine.addColorStop(1, "rgba(255,255,255,0)");
+		ctx.fillStyle = shine;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+	}
+	ctx.restore();
+}
+
 function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _world: World, time = 0, lit = true, ballId: BallId = DEFAULT_BALL) {
+	if (ballId === "maze") {
+		drawMazeBall(ctx, ball, lit);
+		return;
+	}
 	if (ballId === "prison") {
 		drawPrisonBall(ctx, ball, lit);
 		return;
