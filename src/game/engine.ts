@@ -817,6 +817,7 @@ export function createGame(
   } = null;
   let boltTrail: { x: number; y: number }[] = [];
   let hackerDir: HackerDir | null = null;
+  let hackerRimSlide: { dir: HackerDir; hoop: Hoop; turn: -1 | 1 } | null = null;
   let hackerAwaken = false;
   const HACKER_SPEED_BASE = 300;
   let hackerSpeed = HACKER_SPEED_BASE;
@@ -2842,7 +2843,47 @@ export function createGame(
     ball.omega = ball.vx / Math.max(8, ball.r);
   }
 
+
+  function hackerDirectionVector(dir: HackerDir) {
+    if (dir === "l") return { x: -1, y: 0 };
+    if (dir === "r") return { x: 1, y: 0 };
+    if (dir === "u") return { x: 0, y: -1 };
+    return { x: 0, y: 1 };
+  }
+
+  function updateHackerRimSlide() {
+    const slide = hackerRimSlide;
+    if (!slide) {
+      if (hackerDir) setHackerVelocity(hackerDir);
+      return;
+    }
+    const h = slide.hoop;
+    const points = [
+      { x: h.x - h.inner, y: h.y },
+      { x: h.x + h.inner, y: h.y },
+    ];
+    const nearest = points.reduce((best, point) =>
+      Math.hypot(ball.x - point.x, ball.y - point.y) < Math.hypot(ball.x - best.x, ball.y - best.y)
+        ? point
+        : best,
+    );
+    const dx = ball.x - nearest.x;
+    const dy = ball.y - nearest.y;
+    const dist = Math.hypot(dx, dy) || 0.0001;
+    const normalX = dx / dist;
+    const normalY = dy / dist;
+    const desired = hackerDirectionVector(slide.dir);
+    if (desired.x * normalX + desired.y * normalY >= -0.02) {
+      hackerRimSlide = null;
+      setHackerVelocity(slide.dir);
+      return;
+    }
+    ball.vx = -normalY * hackerSpeed * slide.turn;
+    ball.vy = normalX * hackerSpeed * slide.turn;
+    ball.omega = ball.vx / Math.max(8, ball.r);
+  }
   function applyHackerDir(dir: HackerDir) {
+    hackerRimSlide = null;
     hackerDir = dir;
     setHackerVelocity(dir);
     ball.scored = false;
@@ -2860,6 +2901,7 @@ export function createGame(
   function enterHackerAwaken() {
     if (hackerAwaken || !isHacker()) return;
     hackerAwaken = true;
+    hackerRimSlide = null;
     hackerSpeed = HACKER_SPEED_BASE;
     timeUp = false;
     buzzer = false;
@@ -3561,7 +3603,10 @@ export function createGame(
       if (timer <= 0) {
         timer = 0;
         if (isHacker() && !hackerAwaken) {
-          enterHackerAwaken();
+          timeUp = true;
+          buzzer = true;
+          buzzerTimer = BUZZER_WINDOW;
+          audio.buzzer();
         } else if (isChamp() && !champMode && enterChampionMoment()) {
           // Champion bank consumed as a fresh countdown.
         } else if (isRogueMode() && tryRogueRevive()) {
@@ -3595,7 +3640,8 @@ export function createGame(
         ) {
           enterRogueSettle();
         } else if (!ball.scored) {
-          failRogueOrOver();
+          if (isHacker() && !hackerAwaken) enterHackerAwaken();
+          else failRogueOrOver();
         }
       }
     } else if (timeUp && !buzzer && phase === "playing") {
@@ -3719,7 +3765,7 @@ export function createGame(
           resetShotFlags();
           shotOpen = true;
         }
-        setHackerVelocity(hackerDir!);
+        updateHackerRimSlide();
       } else if (holeOn) {
         const dx = holeX - ball.x;
         const dy = holeY - ball.y;
@@ -3812,8 +3858,13 @@ export function createGame(
         const vx0 = ball.vx;
         const vy0 = ball.vy;
         if (scoredLock <= 0) {
-          if (stageMod.canScore(hoop)) collideRim(hoop);
-          if (other && stageMod.canScore(other)) collideRim(other);
+          if (hacking) {
+            if (stageMod.canScore(hoop)) collideHackerRim(hoop);
+            if (other && stageMod.canScore(other)) collideHackerRim(other);
+          } else {
+            if (stageMod.canScore(hoop)) collideRim(hoop);
+            if (other && stageMod.canScore(other)) collideRim(other);
+          }
         }
         if (!hoop.noBoard && !stageMod.skipBoard(hoop)) collideBoard(hoop);
         if (!hoop.noBoard && !stageMod.skipBrace(hoop)) collideBrace(hoop);
@@ -3823,6 +3874,7 @@ export function createGame(
         }
         if (
           hacking &&
+          !hackerRimSlide &&
           (Math.abs(ball.vx - vx0) > 0.5 || Math.abs(ball.vy - vy0) > 0.5)
         ) {
           syncHackerDirFromVelocity();
@@ -3994,6 +4046,52 @@ export function createGame(
     } else {
       boltBoardTopHold = 0;
     }
+  }
+  function collideHackerRim(h: Hoop) {
+    const rad = h.tube * 0.92;
+    const points = [
+      { x: h.x - h.inner, y: h.y },
+      { x: h.x + h.inner, y: h.y },
+    ];
+    let normalX = 0;
+    let normalY = 0;
+    let penetration = 0;
+    for (const point of points) {
+      const dx = ball.x - point.x;
+      const dy = ball.y - point.y;
+      const distance = Math.hypot(dx, dy) || 0.0001;
+      const overlap = ball.r + rad - distance;
+      if (overlap > penetration) {
+        penetration = overlap;
+        normalX = dx / distance;
+        normalY = dy / distance;
+      }
+    }
+    if (penetration <= 0 || !hackerDir) return;
+
+    // The rim stays solid: remove only the inward movement and cruise along its tangent.
+    ball.x += normalX * (penetration + 0.7);
+    ball.y += normalY * (penetration + 0.7);
+    const dir = hackerRimSlide?.dir ?? hackerDir;
+    const desired = hackerDirectionVector(dir);
+    const tangentX = -normalY;
+    const tangentY = normalX;
+    const tangentDot = desired.x * tangentX + desired.y * tangentY;
+    const turn: -1 | 1 =
+      Math.abs(tangentDot) > 0.001
+        ? tangentDot > 0
+          ? 1
+          : -1
+        : ball.y <= h.y
+          ? 1
+          : -1;
+    hackerRimSlide = { dir, hoop: h, turn };
+    ball.vx = tangentX * hackerSpeed * turn;
+    ball.vy = tangentY * hackerSpeed * turn;
+    ball.omega = ball.vx / Math.max(8, ball.r);
+    ball.hitRim = true;
+    h.jolt = 1;
+    h.joltDir = ball.vy < 0 ? -1 : 1;
   }
   function collideRim(h: Hoop) {
     const rad = h.tube * 0.92;
@@ -4749,6 +4847,7 @@ export function createGame(
     if (!bunshinGhost && !ninjaGhost) gain += extra;
     if (freed && !bunshinGhost && !ninjaGhost) gain += prisonBonus;
     const clutch = !ghost && (buzzer || timeUp);
+    const awakenAfterClutch = clutch && isHacker() && !hackerAwaken;
     const tag = clutch
       ? "绝杀"
       : ghost
@@ -4962,7 +5061,8 @@ export function createGame(
       }
     }
     syncNinjaGhosts();
-    emitHud();
+    if (awakenAfterClutch) enterHackerAwaken();
+    else emitHud();
     if (
       !ghost &&
       isRogueMode() &&

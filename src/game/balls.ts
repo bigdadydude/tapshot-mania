@@ -102,7 +102,7 @@ export const BALLS: BallKit[] = [
   {
     id: "rain",
     name: "骇客球",
-    skill: "倒计时首次耗尽觉醒：绿滤镜巡航，条反向涨；进球加速",
+    skill: "倒计时首次耗尽先进入绝杀，随后觉醒：绿滤镜巡航，沿篮圈滑行；进球加速",
     heat: false,
     codeRain: true,
     wrap: "ground",
