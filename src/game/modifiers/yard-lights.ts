@@ -1143,6 +1143,13 @@ export function createYardLights(): StageModifier {
         b.x += b.vx * dt;
         b.y += b.vy * dt;
 
+        const mazeHole = host.getMazeHoles?.().some((h) => Math.hypot(b.x - h.x, b.y - h.y) < h.r + b.r);
+        if (mazeHole) {
+          // A projectile entering a maze hazard is permanently consumed.
+          b.x = -9999;
+          continue;
+        }
+
         if (awaken && Math.hypot(b.x - ball.x, b.y - ball.y) <= nearR + b.r) {
           b.faceAng = Math.atan2(b.vy, b.vx);
           b.vx = 0;

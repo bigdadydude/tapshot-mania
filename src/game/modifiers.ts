@@ -58,6 +58,8 @@ export type ModifierHost = {
   isHackerAwaken?: () => boolean;
   /** Maze ball needs kinetic impulses rather than the standard knockback overwrite. */
   isMaze?: () => boolean;
+  /** Active Maze Ball hazard holes; projectiles are consumed by their cores. */
+  getMazeHoles?: () => ReadonlyArray<{ x: number; y: number; r: number }>;
 };
 
 export type YardLightsHud = {

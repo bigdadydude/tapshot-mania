@@ -58,6 +58,8 @@ export type Ball = {
   scored: boolean;
   hitRim: boolean;
   hitBoard: boolean;
+  /** Maze Ball respawn protection flicker. */
+  blink?: boolean;
 };
 
 export type Hoop = {

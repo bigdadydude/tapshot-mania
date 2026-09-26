@@ -16,8 +16,8 @@ export function hackerPadLayout(world: {
   h: number;
   floorY: number;
 }): HackerPadLayout {
-  const size = Math.max(36, Math.min(52, world.w * 0.11));
-  const gap = Math.max(4, size * 0.1);
+  const size = Math.max(46, Math.min(64, world.w * 0.135));
+  const gap = Math.max(10, size * 0.24);
   const cx = world.w * 0.5;
   const floorH = Math.max(size * 3.2, world.h - world.floorY);
   const cy = world.floorY + floorH * 0.52;

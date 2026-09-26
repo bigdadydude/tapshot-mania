@@ -133,6 +133,7 @@ export function drawScene(
   ninjaClones: NinjaCloneDraw[] = [],
   champBank = -1,
   hole: { x: number; y: number; r: number; left?: number } | null = null,
+  mazeHoles: { x: number; y: number; r: number }[] = [],
   antiCharge = -1,
   antimatter: { x: number; y: number; r: number; pct: number } | null = null,
   scoreOverride: string | null = null,
@@ -155,6 +156,7 @@ export function drawScene(
 	}
 	afterCourt?.(ctx);
 	if (hole) drawBlackHole(ctx, hole, time);
+	for (const pit of mazeHoles) drawMazePit(ctx, pit);
 	if (antimatter) drawAntiMatter(ctx, antimatter, time);
 	if (boltTrail.length > 1) drawBoltTrail(ctx, boltTrail, time);
 	if (gfx.ballShadow) drawGroundShadow(ctx, ball, world);
@@ -1618,6 +1620,16 @@ function drawAntiMatter(
 	ctx.restore();
 }
 
+function drawMazePit(ctx: CanvasRenderingContext2D, pit: { x: number; y: number; r: number }) {
+	// A trap is deliberately plain: a hard-edged, opaque hole in the court.
+	ctx.save();
+	ctx.fillStyle = "#000";
+	ctx.beginPath();
+	ctx.arc(pit.x, pit.y, pit.r, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.restore();
+}
+
 function drawBlackHole(
 	ctx: CanvasRenderingContext2D,
 	hole: { x: number; y: number; r: number },
@@ -1928,6 +1940,7 @@ function drawMazeBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
 
 function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _world: World, time = 0, lit = true, ballId: BallId = DEFAULT_BALL) {
 	if (ballId === "maze") {
+		if (ball.blink && Math.floor(time * 12) % 2 === 0) return;
 		drawMazeBall(ctx, ball, lit);
 		return;
 	}
