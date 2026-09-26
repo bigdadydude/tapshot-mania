@@ -17,6 +17,8 @@ import { boardGeom, braceColliders, clearSceneLayers, drawBoot, drawScene, paint
 import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
+import { hackerPadLayout, hitHackerPad, type HackerDir } from "./hacker-pad";
+import { clearSparseCodeRain } from "./sparse-rain";
 import { DEFAULT_PHYS, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevPhys, type DevSceneId } from "./dev";
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
@@ -301,6 +303,10 @@ export function createGame(
 
   function isNinja() {
     return kit().ninja;
+  }
+
+  function isHacker() {
+    return kit().codeRain;
   }
 
   function bunshinActive() {
@@ -810,6 +816,10 @@ export function createGame(
     y1: number;
   } = null;
   let boltTrail: { x: number; y: number }[] = [];
+  let hackerDir: HackerDir | null = null;
+  let hackerAwaken = false;
+  const HACKER_SPEED_BASE = 300;
+  let hackerSpeed = HACKER_SPEED_BASE;
 
   function resetShotFlags() {
     ball.hitRim = false;
@@ -894,7 +904,17 @@ export function createGame(
     // Minute mode keeps a fixed 60s clock �?no per-make shrink/refill.
     if (isMinuteMode() || champMode) return;
     const decay = activeDecay();
-    timerMax = Math.max(TIMER_MIN, timerMax * decay);
+    if (hackerAwaken && isHacker()) {
+      const prev = timerMax;
+      timerMax = Math.min(timerBudget(), timerMax / Math.max(0.85, decay));
+      const ratio = prev > 1e-6 ? timerMax / prev : 1;
+      if (ratio > 1.0001) {
+        hackerSpeed *= ratio;
+        if (hackerDir) setHackerVelocity(hackerDir);
+      }
+    } else {
+      timerMax = Math.max(TIMER_MIN, timerMax * decay);
+    }
     timer = timerMax;
   }
 
@@ -912,7 +932,8 @@ export function createGame(
   }
 
   function emitHud() {
-    const timer01 = timerMax > 0 ? timer / timerMax : 0;
+    const raw01 = timerMax > 0 ? timer / timerMax : 0;
+    const timer01 = hackerAwaken ? 1 - raw01 : raw01;
     const displayScore =
       isRogueMode() && rogueRun && phase === "over" ? rogueTotalScore() : score;
     onHud({
@@ -1232,6 +1253,7 @@ export function createGame(
       ) => {
         paintBallSprite(ctx, x, y, r, spin, ballId, time);
       },
+      isHackerAwaken: () => hackerAwaken,
     };
   }
 
@@ -2092,6 +2114,12 @@ export function createGame(
       resetAntiRun();
     }
     if (!isBolt()) resetBoltRun();
+    if (!isHacker()) {
+      hackerDir = null;
+      hackerAwaken = false;
+      hackerSpeed = HACKER_SPEED_BASE;
+      clearSparseCodeRain();
+    }
     if (!isNinja() && !bunshinActive()) resetNinjaPath();
     if (isPrison()) {
       if (prisonMode == null) resetPrisonRun();
@@ -2322,6 +2350,10 @@ export function createGame(
     combo = 0;
     streak = 0;
     hint = true;
+    hackerDir = null;
+    hackerAwaken = false;
+    hackerSpeed = HACKER_SPEED_BASE;
+    clearSparseCodeRain();
     madeCount = 0;
     if (isRogueMode()) {
       rogueRun = createRogueRun();
@@ -2424,6 +2456,10 @@ export function createGame(
     paused = false;
     buzzer = false;
     buzzerTimer = 0;
+    hackerDir = null;
+    hackerAwaken = false;
+    hackerSpeed = HACKER_SPEED_BASE;
+    clearSparseCodeRain();
     if (isAnti()) {
       holeOn = false;
       holeLeft = 0;
@@ -2788,6 +2824,98 @@ export function createGame(
     emitHud();
   }
 
+  function setHackerVelocity(dir: HackerDir) {
+    const speed = hackerSpeed;
+    if (dir === "l") {
+      ball.vx = -speed;
+      ball.vy = 0;
+    } else if (dir === "r") {
+      ball.vx = speed;
+      ball.vy = 0;
+    } else if (dir === "u") {
+      ball.vx = 0;
+      ball.vy = -speed;
+    } else {
+      ball.vx = 0;
+      ball.vy = speed;
+    }
+    ball.omega = ball.vx / Math.max(8, ball.r);
+  }
+
+  function applyHackerDir(dir: HackerDir) {
+    hackerDir = dir;
+    setHackerVelocity(dir);
+    ball.scored = false;
+    resetShotFlags();
+    shotOpen = true;
+    shotMade = false;
+    shotMissed = false;
+    shotAirborne = dir === "u" || dir === "d";
+    hint = false;
+    overRim = false;
+    fromBelow = false;
+    otherOverRim = false;
+  }
+
+  function enterHackerAwaken() {
+    if (hackerAwaken || !isHacker()) return;
+    hackerAwaken = true;
+    hackerSpeed = HACKER_SPEED_BASE;
+    timeUp = false;
+    buzzer = false;
+    buzzerTimer = 0;
+    timer = timerMax;
+
+    const horizontal = Math.abs(ball.vx);
+    const vertical = Math.abs(ball.vy);
+    if (horizontal >= vertical && horizontal > 8) {
+      applyHackerDir(ball.vx >= 0 ? "r" : "l");
+    } else if (vertical > 8) {
+      applyHackerDir(ball.vy >= 0 ? "d" : "u");
+    } else {
+      applyHackerDir("u");
+    }
+
+    callouts.push({
+      text: "觉醒",
+      x: ball.x,
+      y: ball.y - ball.r * 2.6,
+      life: 1.1,
+      max: 1.1,
+      kind: "tag",
+    });
+    emitHud();
+  }
+
+  function syncHackerDirFromVelocity() {
+    const horizontal = Math.abs(ball.vx);
+    const vertical = Math.abs(ball.vy);
+    if (horizontal < 6 && vertical < 6) return;
+    hackerDir =
+      horizontal >= vertical
+        ? ball.vx >= 0
+          ? "r"
+          : "l"
+        : ball.vy >= 0
+          ? "d"
+          : "u";
+    setHackerVelocity(hackerDir);
+  }
+
+  function wrapHackerBounds() {
+    const r = ball.r;
+    if (ball.x < -r) ball.x += world.w + r * 2;
+    else if (ball.x > world.w + r) ball.x -= world.w + r * 2;
+    if (ball.y < r) {
+      ball.y = r;
+      applyHackerDir("d");
+    }
+    if (ball.y + r > world.floorY) {
+      ball.y = world.floorY - r;
+      applyHackerDir("u");
+    }
+  }
+
   function tapJump() {
     if (!booted) return;
     if (phase === "title") {
@@ -2855,6 +2983,14 @@ export function createGame(
     emitHud();
   }
 
+  function pointerWorld(e: PointerEvent) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((e.clientX - rect.left) / Math.max(1, rect.width)) * world.cssW - world.ox,
+      y: ((e.clientY - rect.top) / Math.max(1, rect.height)) * world.cssH - world.oy,
+    };
+  }
+
   function onDown(e: PointerEvent) {
     if (e.button !== undefined && e.button !== 0) return;
     audio.unlock();
@@ -2862,6 +2998,15 @@ export function createGame(
     e.preventDefault();
     pointerHeld = true;
     if (phase === "playing" && !paused && isBolt() && boltOverheatLeft > 0) return;
+    if (phase === "playing" && !paused && isHacker() && hackerAwaken) {
+      const point = pointerWorld(e);
+      const dir = hitHackerPad(point.x, point.y, hackerPadLayout(world));
+      if (dir) {
+        applyHackerDir(dir);
+        emitHud();
+      }
+      return;
+    }
     tapJump();
     if (
       phase === "playing" &&
@@ -2902,6 +3047,25 @@ export function createGame(
       }
       return;
     }
+    if (phase === "playing" && !paused && isHacker() && hackerAwaken) {
+      const directions: Record<string, HackerDir> = {
+        ArrowLeft: "l",
+        ArrowRight: "r",
+        ArrowUp: "u",
+        ArrowDown: "d",
+        KeyA: "l",
+        KeyD: "r",
+        KeyW: "u",
+        KeyS: "d",
+      };
+      const dir = directions[e.code];
+      if (dir) {
+        e.preventDefault();
+        applyHackerDir(dir);
+        emitHud();
+        return;
+      }
+    }
     if (e.code !== "Space" && e.code !== "ArrowUp") return;
     e.preventDefault();
     audio.unlock();
@@ -2941,6 +3105,10 @@ export function createGame(
     streak = 0;
     hint = true;
     madeCount = 0;
+    hackerDir = null;
+    hackerAwaken = false;
+    hackerSpeed = HACKER_SPEED_BASE;
+    clearSparseCodeRain();
     rogueRun = null;
     rogueStageDecay = null;
     timerMax = timerBudget();
@@ -3392,7 +3560,9 @@ export function createGame(
       timer -= drain;
       if (timer <= 0) {
         timer = 0;
-        if (isChamp() && !champMode && enterChampionMoment()) {
+        if (isHacker() && !hackerAwaken) {
+          enterHackerAwaken();
+        } else if (isChamp() && !champMode && enterChampionMoment()) {
           // Champion bank consumed as a fresh countdown.
         } else if (isRogueMode() && tryRogueRevive()) {
           // Revived �?keep playing this stage.
@@ -3534,6 +3704,7 @@ export function createGame(
       (phase === "playing" || phase === "over" || phase === "title" || phase === "hub" || phase === "settle") &&
       !stageMod.holdsBall?.();
     if (live) {
+      const hacking = phase === "playing" && isHacker() && hackerAwaken && hackerDir !== null;
       const gScale = buzzer ? 0.42 : 1;
       // High-bounce kits skip fallBoost �?otherwise each landing gains height.
       const fallBoost = (() => {
@@ -3542,7 +3713,14 @@ export function createGame(
         return ball.vy > 20 ? 1.28 : 1;
       })();
       const buoy = pMul("buoy");
-      if (holeOn) {
+      if (hacking) {
+        if (scoredLock <= 0 && ball.scored) {
+          ball.scored = false;
+          resetShotFlags();
+          shotOpen = true;
+        }
+        setHackerVelocity(hackerDir!);
+      } else if (holeOn) {
         const dx = holeX - ball.x;
         const dy = holeY - ball.y;
         const d = Math.max(40, Math.hypot(dx, dy));
@@ -3574,6 +3752,7 @@ export function createGame(
       } else {
         ball.vy += gravity() * dt * (gScale * fallBoost - buoy);
       }
+      if (!hacking) {
       const air = pMul("air");
       const roll = pMul("roll");
       const onFloor = ball.y + ball.r >= world.floorY - 0.5 && ball.vy >= 0;
@@ -3609,12 +3788,19 @@ export function createGame(
       const move = buzzer ? 0.6 : 1;
       ball.x += ball.vx * dt * move;
       ball.y += ball.vy * dt * move;
+      }
+      if (hacking) {
+        const move = buzzer ? 0.6 : 1;
+        ball.x += ball.vx * dt * move;
+        ball.y += ball.vy * dt * move;
+        wrapHackerBounds();
+      }
       if (ball.y + ball.r < 0) wentOffTop = true;
       // Leash before wrap so a taut chain yanks the ball and can block side-respawn.
       if (phase === "playing" && !stageMod.holdsBall?.()) {
         stageMod.afterPhysics?.(dt, modifierHost());
       }
-      wrapX();
+      if (!hacking) wrapX();
       pushNinjaPath(dt);
       stepNinjaGhosts(dt);
       pushTrail();
@@ -3623,6 +3809,8 @@ export function createGame(
       // Score before rim/board so a clean thread isn't eaten by rim bounce.
       if (phase === "playing") checkScore();
       if (phase !== "title" && !ballHidden()) {
+        const vx0 = ball.vx;
+        const vy0 = ball.vy;
         if (scoredLock <= 0) {
           if (stageMod.canScore(hoop)) collideRim(hoop);
           if (other && stageMod.canScore(other)) collideRim(other);
@@ -3632,6 +3820,12 @@ export function createGame(
         if (other) {
           if (!other.noBoard && !stageMod.skipBoard(other)) collideBoard(other);
           if (!other.noBoard && !stageMod.skipBrace(other)) collideBrace(other);
+        }
+        if (
+          hacking &&
+          (Math.abs(ball.vx - vx0) > 0.5 || Math.abs(ball.vy - vy0) > 0.5)
+        ) {
+          syncHackerDirFromVelocity();
         }
       }
       if (phase === "playing") {
@@ -3644,7 +3838,7 @@ export function createGame(
         glassPeakY = Math.min(glassPeakY, ball.y);
       }
       const caught = phase === "playing" && stageMod.touchBall?.(modifierHost()) === true;
-      if (!caught) collideFloor();
+      if (!caught && !hacking) collideFloor();
       stepBoltBoardTop(dt);
       stepBoltCharge(dt);
       if (chain && hasChain() && !caught && !stageMod.holdsBall?.()) {
@@ -5064,7 +5258,7 @@ export function createGame(
           const clock01 = timerMax > 0 ? timer / timerMax : 0;
           // Prison bar ART swaps Yard / Lock / Infraction; FILL always follows street cool-down.
           // Background recess/curfew phase pauses on hunt; fill does not.
-          const timer01 = phase === "over" ? 1 : clock01;
+          const timer01 = phase === "over" ? 1 : hackerAwaken ? 1 - clock01 : clock01;
           let scoreOverride: string | null =
             isRogueMode() && rogueRun
               ? rogueRun.endless
@@ -5126,8 +5320,10 @@ export function createGame(
             barLabel,
             scoreFlash,
             (c) => stageMod.drawWorldBack?.(c, world, time),
+            phase === "playing" && isHacker() && hackerAwaken,
+            (c) => stageMod.drawWorld?.(c, world, time),
+            phase === "playing" && isHacker() && hackerAwaken ? { dir: hackerDir } : null,
           );
-          stageMod.drawWorld?.(ctx, world, time);
           ctx.restore();
           stageMod.drawScreen?.(ctx, world);
           }

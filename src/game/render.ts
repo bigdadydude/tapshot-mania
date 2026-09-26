@@ -6,6 +6,8 @@ import { DEFAULT_BALL } from "./balls";
 import type { Chain } from "./chain";
 import { gecko } from "./perf";
 import { getScene, type GrafKey } from "./scenes";
+import { clearSparseCodeRain, drawSparseCodeRain } from "./sparse-rain";
+import { drawHackerPad, hackerPadLayout, type HackerDir } from "./hacker-pad";
 import {
   NET_COLS,
   NET_ROWS,
@@ -17,6 +19,84 @@ import {
 } from "./net";
 
 export { NET_COLS, NET_ROWS, NET_ROW_H, RIM_RY } from "./net";
+
+/** When set, hoop/net/board render as bright neon green above the CRT wash. */
+let neonGreenCourt = false;
+
+const NEON_HOOP = {
+	pad: "#3dff88",
+	padHi: "#b8ffd4",
+	padLo: "#1ad868",
+	rim: "#8dffb8",
+	rimHi: "#e0ffe8",
+	rimLo: "#3cff8a",
+	rimBack: "#28e070",
+	net: "#9affc4",
+	netChar: "#f0fff4",
+	netHem: "#6affaa",
+	netHemChar: "#d4ffe4",
+	netHemFromRow: 4,
+};
+
+function hoopLook() {
+	return neonGreenCourt ? NEON_HOOP : getScene().hoop;
+}
+
+/** Cached darken, scanline, and vignette layer for hacker awaken. */
+let washShade: HTMLCanvasElement | null = null;
+let washShadeKey = "";
+
+function ensureWashShade(w: number, h: number) {
+	const key = `${w | 0}x${h | 0}`;
+	if (washShade && washShadeKey === key) return washShade;
+	const canvas = document.createElement("canvas");
+	canvas.width = Math.max(1, w | 0);
+	canvas.height = Math.max(1, h | 0);
+	const shade = canvas.getContext("2d");
+	if (!shade) return null;
+	const darken = shade.createLinearGradient(0, 0, 0, h);
+	darken.addColorStop(0, "rgba(0, 0, 0, 0.05)");
+	darken.addColorStop(0.45, "rgba(0, 0, 0, 0.35)");
+	darken.addColorStop(1, "rgba(0, 0, 0, 0.92)");
+	shade.fillStyle = darken;
+	shade.fillRect(0, 0, w, h);
+	const tile = document.createElement("canvas");
+	tile.width = 1;
+	tile.height = 3;
+	const tileCtx = tile.getContext("2d");
+	if (tileCtx) {
+		tileCtx.fillStyle = "rgba(0, 0, 0, 0.42)";
+		tileCtx.fillRect(0, 2, 1, 1);
+		const scanlines = shade.createPattern(tile, "repeat");
+		if (scanlines) {
+			shade.fillStyle = scanlines;
+			shade.fillRect(0, 0, w, h);
+		}
+	}
+	const vignette = shade.createRadialGradient(w * 0.5, h * 0.42, h * 0.2, w * 0.5, h * 0.5, h * 0.78);
+	vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
+	vignette.addColorStop(1, "rgba(0, 0, 0, 0.28)");
+	shade.fillStyle = vignette;
+	shade.fillRect(0, 0, w, h);
+	washShade = canvas;
+	washShadeKey = key;
+	return canvas;
+}
+
+function applyGreenNightWash(ctx: CanvasRenderingContext2D, world: { w: number; h: number }) {
+	ctx.save();
+	ctx.globalCompositeOperation = "multiply";
+	ctx.fillStyle = "#1aff6a";
+	ctx.fillRect(0, 0, world.w, world.h);
+	ctx.globalCompositeOperation = "source-over";
+	const shade = ensureWashShade(world.w, world.h);
+	if (shade) ctx.drawImage(shade, 0, 0, world.w, world.h);
+	else {
+		ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+		ctx.fillRect(0, 0, world.w, world.h);
+	}
+	ctx.restore();
+}
 
 export function drawScene(
   ctx: CanvasRenderingContext2D,
@@ -60,6 +140,9 @@ export function drawScene(
   barLabel: string | null = null,
   scoreFlash = false,
   afterCourt?: ((ctx: CanvasRenderingContext2D) => void) | null,
+  greenWash = false,
+  afterWorld?: ((ctx: CanvasRenderingContext2D) => void) | null,
+  hacker: { dir: HackerDir | null } | null = null,
 ) {
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
@@ -74,12 +157,19 @@ export function drawScene(
 	if (boltTrail.length > 1) drawBoltTrail(ctx, boltTrail, time);
 	if (gfx.ballShadow) drawGroundShadow(ctx, ball, world);
 	if (chain) drawChain(ctx, chain, true);
-	if (showHud) drawCountdown(ctx, world, timer01, buzzer, barLabel);
+	if (showHud && !greenWash) drawCountdown(ctx, world, timer01, buzzer, barLabel);
 	const distH = Math.hypot(ball.x - hoop.x, ball.y - hoop.y);
 	const distO = other ? Math.hypot(ball.x - other.x, ball.y - other.y) : Infinity;
 	const ballWithOther = Boolean(other && distO < distH);
+	if (greenWash) {
+		applyGreenNightWash(ctx, world);
+		drawSparseCodeRain(ctx, world, time);
+		neonGreenCourt = true;
+	}
 	if (other) drawHoopStack(ctx, other, world, ballWithOther ? ball : null, combo, time, gfx.particles ? trail : [], gfx, ballId);
 	drawHoopStack(ctx, hoop, world, ballWithOther ? null : ball, combo, time, gfx.particles ? trail : [], gfx, ballId);
+	neonGreenCourt = false;
+	if (hacker) drawHackerPad(ctx, hackerPadLayout(world), hacker.dir);
 	if (ballId === "bolt" && boltCharge > 90) drawBoltWhitePulse(ctx, ball, time);
 	for (const c of ninjaClones) {
 		drawNinjaBall(
@@ -115,6 +205,8 @@ export function drawScene(
 		ctx.fillStyle = `rgba(255, 150, 40, ${Math.min(.42, burnFlash * 1.4)})`;
 		ctx.fillRect(0, 0, world.w, world.h);
 	}
+	afterWorld?.(ctx);
+	if (greenWash && showHud) drawCountdown(ctx, world, timer01, buzzer, barLabel);
 	ctx.restore();
 	if (showHud) {
 		drawHud(
@@ -367,6 +459,7 @@ export function clearSceneLayers() {
 	skyLayerKey = "";
 	wallLayerKey = "";
 	courtLayerKey = "";
+	clearSparseCodeRain();
 }
 
 function layerCanvas(w: number, h: number) {
@@ -588,8 +681,7 @@ function drawSkyClouds(
 	skyShiftPrev = cloudShift;
 	ctx.save();
 	ctx.imageSmoothingEnabled = false;
-	const ordered = skyInsts!.slice().sort((a, b) => a.layer - b.layer);
-	for (const inst of ordered) {
+	for (const inst of skyInsts!) {
 		const img = imgs[inst.kind] ?? imgs[0]!;
 		let { dw, dh } = cloudSize(img, band, inst.h01);
 		inst.x += dx * CLOUD_LAYERS[inst.layer]!.speed;
@@ -940,17 +1032,23 @@ function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
     hoop.y + padH * 0.85,
   );
 
-  const boardBase = mixHex("#ffffff", "#3a3632", Math.min(1, ch * 1.12));
-  const board = fr > 0 ? mixHex(rgbToHex(boardBase), "#7ec8ff", fr) : boardBase;
+  const boardBase = neonGreenCourt
+    ? "#b8ffe0"
+    : mixHex("#ffffff", "#3a3632", Math.min(1, ch * 1.12));
+  const board = neonGreenCourt
+    ? boardBase
+    : fr > 0
+      ? mixHex(rgbToHex(boardBase), "#7ec8ff", fr)
+      : boardBase;
   ctx.fillStyle = board;
   ctx.fillRect(visX, yy, visW, Math.max(1, padDrawY - yy));
-  const scene = getScene();
-  const greenBase = mixHex(scene.hoop.pad, "#3a3632", Math.min(1, ch * 1.05));
-  const greenHiBase = mixHex(scene.hoop.padHi, "#4a423c", Math.min(1, ch * 1.05));
-  const greenLoBase = mixHex(scene.hoop.padLo, "#2a2624", Math.min(1, ch * 1.05));
-  const green = fr > 0 ? mixHex(rgbToHex(greenBase), "#5aa8e8", fr * 0.7) : greenBase;
-  const greenHi = fr > 0 ? mixHex(rgbToHex(greenHiBase), "#9ad4ff", fr * 0.65) : greenHiBase;
-  const greenLo = fr > 0 ? mixHex(rgbToHex(greenLoBase), "#3a7ab0", fr * 0.7) : greenLoBase;
+  const look = hoopLook();
+  const greenBase = neonGreenCourt ? look.pad : mixHex(look.pad, "#3a3632", Math.min(1, ch * 1.05));
+  const greenHiBase = neonGreenCourt ? look.padHi : mixHex(look.padHi, "#4a423c", Math.min(1, ch * 1.05));
+  const greenLoBase = neonGreenCourt ? look.padLo : mixHex(look.padLo, "#2a2624", Math.min(1, ch * 1.05));
+  const green = neonGreenCourt ? greenBase : fr > 0 ? mixHex(rgbToHex(greenBase), "#5aa8e8", fr * 0.7) : greenBase;
+  const greenHi = neonGreenCourt ? greenHiBase : fr > 0 ? mixHex(rgbToHex(greenHiBase), "#9ad4ff", fr * 0.65) : greenHiBase;
+  const greenLo = neonGreenCourt ? greenLoBase : fr > 0 ? mixHex(rgbToHex(greenLoBase), "#3a7ab0", fr * 0.7) : greenLoBase;
   ctx.fillStyle = green;
   ctx.fillRect(visX - 0.5, padDrawY, visW + 1, padH);
   ctx.fillStyle = greenHi;
@@ -958,12 +1056,12 @@ function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
   ctx.fillStyle = greenLo;
   ctx.fillRect(visX - 0.5, padDrawY + padH - 2, visW + 1, 2);
 
-  const orangeBase = mixHex(scene.hoop.rim, "#4a4038", ch);
-  const orangeHiBase = mixHex(scene.hoop.rimHi, "#6a625c", ch);
-  const orangeLoBase = mixHex(scene.hoop.rimLo, "#3a3632", ch);
-  const orange = fr > 0 ? mixHex(rgbToHex(orangeBase), "#6eb0e8", fr * 0.85) : orangeBase;
-  const orangeHi = fr > 0 ? mixHex(rgbToHex(orangeHiBase), "#a8d8ff", fr * 0.8) : orangeHiBase;
-  const orangeLo = fr > 0 ? mixHex(rgbToHex(orangeLoBase), "#3a6a98", fr * 0.85) : orangeLoBase;
+  const orangeBase = neonGreenCourt ? look.rim : mixHex(look.rim, "#4a4038", ch);
+  const orangeHiBase = neonGreenCourt ? look.rimHi : mixHex(look.rimHi, "#6a625c", ch);
+  const orangeLoBase = neonGreenCourt ? look.rimLo : mixHex(look.rimLo, "#3a3632", ch);
+  const orange = neonGreenCourt ? orangeBase : fr > 0 ? mixHex(rgbToHex(orangeBase), "#6eb0e8", fr * 0.85) : orangeBase;
+  const orangeHi = neonGreenCourt ? orangeHiBase : fr > 0 ? mixHex(rgbToHex(orangeHiBase), "#a8d8ff", fr * 0.8) : orangeHiBase;
+  const orangeLo = neonGreenCourt ? orangeLoBase : fr > 0 ? mixHex(rgbToHex(orangeLoBase), "#3a6a98", fr * 0.85) : orangeLoBase;
   const attach = left ? hoop.x - hoop.inner * 1.02 : hoop.x + hoop.inner * 1.02;
   const rimBotY = hoop.y + armH * 0.38;
   const dy = ch > 0.4 ? (ch - 0.4) * 10 : 0;
@@ -992,11 +1090,11 @@ function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
   ctx.fillStyle = orangeLo;
   ctx.fill();
 
-  if (ch > 0.04 && ch < 0.62) {
+  if (!neonGreenCourt && ch > 0.04 && ch < 0.62) {
     ctx.fillStyle = `rgba(255, 110, 24, ${(0.62 - ch) * 0.42})`;
     ctx.fillRect(visX, yy, visW, Math.max(0, padDrawY - yy));
   }
-  if (ch > 0.5) {
+  if (!neonGreenCourt && ch > 0.5) {
     ctx.fillStyle = `rgba(40,38,36,${(ch - 0.5) * 0.55})`;
     for (let i = 0; i < 5; i++)
       ctx.fillRect(
@@ -1014,20 +1112,22 @@ function drawRim(ctx: CanvasRenderingContext2D, hoop: Hoop, part: "back" | "fron
 	const rx = inner;
 	const ry = inner * RIM_RY;
 	const tw = Math.max(3.2, tube * 1.18);
-	const look = getScene().hoop;
+	const look = hoopLook();
 	ctx.save();
 	ctx.lineCap = "round";
 	ctx.lineJoin = "round";
 	if (part === "back") {
 		ctx.lineWidth = tw;
-		const rimBack = mixHex(look.rimBack, "#4a4038", ch);
-		ctx.strokeStyle = fr > 0 ? mixHex(rgbToHex(rimBack), "#7ec8ff", fr) : rimBack;
+		const rimBack = neonGreenCourt ? look.rimBack : mixHex(look.rimBack, "#4a4038", ch);
+		ctx.strokeStyle = !neonGreenCourt && fr > 0 ? mixHex(rgbToHex(rimBack), "#7ec8ff", fr) : rimBack;
 		ctx.beginPath();
 		ctx.ellipse(x, y, rx, ry, 0, Math.PI, Math.PI * 2);
 		ctx.stroke();
 	} else {
 		ctx.lineWidth = tw;
-		if (gecko) {
+		if (neonGreenCourt) {
+			ctx.strokeStyle = look.rimHi;
+		} else if (gecko) {
 			const rimG = mixHex(look.rimHi, "#6a625c", ch);
 			ctx.strokeStyle = fr > 0 ? mixHex(rgbToHex(rimG), "#9ad4ff", fr) : rimG;
 		} else {
@@ -1059,7 +1159,7 @@ function drawNet(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "fro
 		points.push(row);
 	}
 	const heat = hoopHeat(hoop, combo);
-	const look = getScene().hoop;
+	const look = hoopLook();
 	ctx.save();
 	ctx.lineCap = "butt";
 	ctx.lineJoin = "miter";
@@ -1748,6 +1848,40 @@ export function paintBallSprite(
 	);
 }
 
+function drawRainBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
+	const { x, y, r, spin, squash } = ball;
+	ctx.save();
+	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+	ctx.scale(1 / squash, squash);
+	const skin = ctx.createRadialGradient(-r * 0.28, -r * 0.34, r * 0.08, 0, 0, r * 1.05);
+	skin.addColorStop(0, "#f2fff6");
+	skin.addColorStop(0.35, "#8dffb8");
+	skin.addColorStop(0.75, "#3dff88");
+	skin.addColorStop(1, "#18c060");
+	ctx.fillStyle = skin;
+	ctx.beginPath();
+	ctx.arc(0, 0, r, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.save();
+	ctx.rotate(spin);
+	ctx.strokeStyle = "rgba(255,255,255,0.55)";
+	ctx.lineWidth = Math.max(1.4, r * 0.08);
+	ctx.beginPath();
+	ctx.arc(0, 0, r * 0.72, -0.4, 2.4);
+	ctx.stroke();
+	ctx.restore();
+	if (lit) {
+		const highlight = ctx.createRadialGradient(-r * 0.3, -r * 0.35, 0, 0, 0, r);
+		highlight.addColorStop(0, "rgba(255,255,255,0.85)");
+		highlight.addColorStop(1, "rgba(0,0,0,0)");
+		ctx.fillStyle = highlight;
+		ctx.beginPath();
+		ctx.arc(0, 0, r, 0, Math.PI * 2);
+		ctx.fill();
+	}
+	ctx.restore();
+}
+
 function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _world: World, time = 0, lit = true, ballId: BallId = DEFAULT_BALL) {
 	if (ballId === "prison") {
 		drawPrisonBall(ctx, ball, lit);
@@ -1775,6 +1909,10 @@ function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _wor
 	}
 	if (ballId === "anti") {
 		drawAntiBall(ctx, ball, lit, time);
+		return;
+	}
+	if (neonGreenCourt || ballId === "rain") {
+		drawRainBall(ctx, ball, lit);
 		return;
 	}
 	if (ballId === "glass") {

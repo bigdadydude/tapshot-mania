@@ -69,6 +69,8 @@ type Bolt = {
   /** Boundary reflections so far (elite only). */
   bounces: number;
   trail: { x: number; y: number }[];
+  falling: boolean;
+  faceAng: number;
 };
 
 type LightFx = {
@@ -97,6 +99,8 @@ const LOCK_CHASE = 8;
 const BOLT_SPD = 1100;
 const ELITE_SPD = 920;
 const KNOCK = 1180;
+const AWAKEN_NEAR = 3.6;
+const BOLT_FALL_G = 2400;
 /** Base stop time when a lamp is shot; stacks on repeat hits while down. */
 const LIGHT_OUT = 2;
 /** Post-stop beam flicker (two pulses) before resume. */
@@ -194,13 +198,15 @@ function drawBoltTrail(ctx: CanvasRenderingContext2D, b: Bolt) {
 
 function drawBoltSprite(ctx: CanvasRenderingContext2D, b: Bolt) {
   const img = ensureBullet(b.elite ? BULLET_ELITE : BULLET_NORMAL);
-  const ang = Math.atan2(b.vy, b.vx);
+  const spd = Math.hypot(b.vx, b.vy);
+  const ang = b.falling && spd < 12 ? b.faceAng : Math.atan2(b.vy, b.vx);
   // 128×32 art → keep 4:1; tip sits on the hit point.
   const dw = b.elite ? ELITE_W : BOLT_W;
   const dh = dw * (32 / 128);
   ctx.save();
   ctx.translate(b.x, b.y);
   ctx.rotate(ang);
+  if (b.falling) ctx.globalAlpha = 0.72;
   if (img) {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
@@ -810,6 +816,8 @@ export function createYardLights(): StageModifier {
       r: t.elite ? 5.2 : 4,
       bounces: 0,
       trail: [{ x: t.ox, y: t.oy }],
+      falling: false,
+      faceAng: Math.atan2(dy, dx),
     });
   }
 
@@ -1091,13 +1099,33 @@ export function createYardLights(): StageModifier {
       const ball = host.getBallBody();
       const hoop = host.getHoop();
       const layout = loadSearchlightLayout();
+      const awaken = host.isHackerAwaken?.() === true;
+      const nearR = ball.r * AWAKEN_NEAR;
 
       for (const b of bolts) {
         if (b.x < -9000) continue;
+        if (b.falling) {
+          b.vy += BOLT_FALL_G * dt;
+          b.y += b.vy * dt;
+          b.trail.push({ x: b.x, y: b.y });
+          if (b.trail.length > TRAIL_LEN) b.trail.shift();
+          if (b.y >= world.floorY - 2) b.x = -9999;
+          continue;
+        }
         const x0 = b.x;
         const y0 = b.y;
         b.x += b.vx * dt;
         b.y += b.vy * dt;
+
+        if (awaken && Math.hypot(b.x - ball.x, b.y - ball.y) <= nearR + b.r) {
+          b.faceAng = Math.atan2(b.vy, b.vx);
+          b.vx = 0;
+          b.vy = 0;
+          b.falling = true;
+          b.trail.push({ x: b.x, y: b.y });
+          if (b.trail.length > TRAIL_LEN) b.trail.shift();
+          continue;
+        }
 
         if (b.elite) {
           if (bounceElite(world, b, x0, y0)) continue;
@@ -1148,6 +1176,7 @@ export function createYardLights(): StageModifier {
 
       bolts = bolts.filter((b) => {
         if (b.x < -9000) return false;
+        if (b.falling) return true;
         if (b.elite) return true;
         return !outsidePlay(world, b.x, b.y);
       });
