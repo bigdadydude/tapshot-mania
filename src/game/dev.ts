@@ -6,6 +6,22 @@ import { MODIFIER_LABELS } from "./modifiers";
 
 export type DevSceneId = "void" | "street" | "prison";
 
+export type DevMaze = {
+  sensitivity: number;
+  deadzone: number;
+  smoothing: number;
+  maxSpeed: number;
+  brake: number;
+};
+
+export const DEFAULT_MAZE: DevMaze = {
+  sensitivity: 1,
+  deadzone: 0.045,
+  smoothing: 14,
+  maxSpeed: 1,
+  brake: 126,
+};
+
 export type DevPhys = {
   ball: number;
   floor: number;
@@ -50,6 +66,7 @@ export type DevHud = {
   fuseBall: BallId | null;
   fuseBalls: BallId[];
   phys: DevPhys;
+  maze: DevMaze;
   playMode: PlayMode;
   /** Forced stage modifier; null = auto roll for rogue. */
   modifierForce: ModifierId | null;
@@ -73,6 +90,7 @@ export const DEFAULT_DEV: DevHud = {
   fuseBall: null,
   fuseBalls: [],
   phys: { ...DEFAULT_PHYS },
+  maze: { ...DEFAULT_MAZE },
   playMode: "classic",
   modifierForce: null,
   modifier: "none",
@@ -112,6 +130,8 @@ export type DevCmd =
   | { t: "phys"; k: keyof DevPhys; n: number }
   | { t: "physGroupReset"; group: "ball" | "scene" }
   | { t: "physReset" }
+  | { t: "maze"; k: keyof DevMaze; n: number }
+  | { t: "mazeReset" }
   | { t: "resetMatch" }
   | { t: "gfx"; key: "ballShade" | "ballShadow" | "particles" | "graffitiFx" | "impact" | "flash" | "buzzerSpot"; on: boolean };
 
@@ -185,6 +205,21 @@ export const DEV_PHYS: { k: keyof DevPhys; label: string; hint: string; min: num
   { k: "rimFric", label: "\u7bee\u7b50\u6469\u64e6", hint: "\u6253\u94c1\u65f6\u987a\u7740\u7b50\u6cbf\u88ab\u8e6d\u6389\u7684\u901f\u5ea6", min: 0, group: "scene" },
   { k: "boardFric", label: "\u7bee\u677f\u6469\u64e6", hint: "\u6253\u677f\u65f6\u987a\u7740\u677f\u9762\u88ab\u8e6d\u6389\u7684\u901f\u5ea6", min: 0, group: "scene" },
 ];
+
+export const DEV_MAZE: { k: keyof DevMaze; label: string; hint: string; min: number; max: number; step: number; unit: string }[] = [
+  { k: "sensitivity", label: "\u503e\u659c\u7075\u654f\u5ea6", hint: "\u540c\u6837\u503e\u659c\u4ea7\u751f\u591a\u5927\u63a8\u529b", min: 20, max: 160, step: 5, unit: "%" },
+  { k: "deadzone", label: "\u503e\u659c\u6b7b\u533a", hint: "\u8fd9\u4e2a\u8303\u56f4\u5185\u5ffd\u7565\u624b\u673a\u5fae\u6296", min: 0, max: 30, step: 1, unit: "%" },
+  { k: "smoothing", label: "\u8f93\u5165\u5e73\u6ed1", hint: "\u8d8a\u4f4e\u8d8a\u8fdf\u7f13\uff0c\u8d8a\u9ad8\u8d8a\u8ddf\u624b", min: 2, max: 24, step: 1, unit: "" },
+  { k: "maxSpeed", label: "\u6700\u9ad8\u901f\u5ea6", hint: "\u6301\u7eed\u503e\u659c\u540e\u7684\u901f\u5ea6\u4e0a\u9650", min: 40, max: 120, step: 5, unit: "%" },
+  { k: "brake", label: "\u505c\u7403\u51cf\u901f", hint: "\u653e\u5e73\u624b\u673a\u540e\u901f\u5ea6\u6d88\u5931\u591a\u5feb", min: 20, max: 300, step: 10, unit: "" },
+];
+
+export function clampMaze(k: keyof DevMaze, n: number) {
+  const row = DEV_MAZE.find((item) => item.k === k)!;
+  const value = Number.isFinite(n) ? n : DEFAULT_MAZE[k];
+  if (k === "sensitivity" || k === "deadzone" || k === "maxSpeed") return Math.max(row.min / 100, Math.min(row.max / 100, value));
+  return Math.max(row.min, Math.min(row.max, value));
+}
 
 export function clampPhys(n: number) {
   return Number.isFinite(n) ? Math.max(0.5, Math.min(2, n)) : 1;

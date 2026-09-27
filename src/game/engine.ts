@@ -20,7 +20,7 @@ import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { hackerPadLayout, hitHackerPad, type HackerDir } from "./hacker-pad";
 import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
-import { DEFAULT_PHYS, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevPhys, type DevSceneId } from "./dev";
+import { DEFAULT_MAZE, DEFAULT_PHYS, clampMaze, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevMaze, type DevPhys, type DevSceneId } from "./dev";
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
@@ -215,6 +215,7 @@ export function createGame(
   let devFreeze = false;
   let devHoldHeat = false;
   let devPhys: DevPhys = { ...DEFAULT_PHYS };
+  let devMaze: DevMaze = { ...DEFAULT_MAZE };
   let devPrisonProjectiles = true;
   audio.setMix(mix);
 
@@ -1183,6 +1184,7 @@ export function createGame(
         fuseBall: fuseId(),
         fuseBalls: fuseIds(),
         phys: { ...devPhys },
+        maze: { ...devMaze },
         playMode,
         modifierForce: devModifierForce,
         modifier: stageMod.id,
@@ -3380,13 +3382,16 @@ export function createGame(
     else if (screenAngle === -90 || screenAngle === 270) [x, y] = [-y, x];
     else if (Math.abs(screenAngle) === 180) [x, y] = [-x, -y];
     const tilt = source === "motion" ? 2.8 : 18;
-    const dx = Math.max(-1, Math.min(1, x / tilt));
-    const dy = Math.max(-1, Math.min(1, y / tilt));
-    const dead = 0.045;
+    const tuning = devOn ? devMaze : DEFAULT_MAZE;
+    const dx = Math.max(-1, Math.min(1, (x / tilt) * tuning.sensitivity));
+    const dy = Math.max(-1, Math.min(1, (y / tilt) * tuning.sensitivity));
+    const dead = tuning.deadzone;
+    const target = { x: Math.abs(dx) < dead ? 0 : -dx, y: Math.abs(dy) < dead ? 0 : dy };
+    // Frame-rate independent low-pass filter removes gyro jitter without delaying touch control.
+    const blend = 1 - Math.exp(-tuning.smoothing / 60);
     mazeGravity = {
-      // Device gamma/acceleration's horizontal sign is opposite the court's X axis.
-      x: Math.abs(dx) < dead ? 0 : -dx,
-      y: Math.abs(dy) < dead ? 0 : dy,
+      x: mazeGravity.x + (target.x - mazeGravity.x) * blend,
+      y: mazeGravity.y + (target.y - mazeGravity.y) * blend,
     };
   }
 
@@ -4023,6 +4028,14 @@ export function createGame(
         devPhys = { ...devPhys, [cmd.k]: clampPhysKey(cmd.k, cmd.n) };
         emitHud();
         return;
+      case "maze":
+        devMaze = { ...devMaze, [cmd.k]: clampMaze(cmd.k, cmd.n) };
+        emitHud();
+        return;
+      case "mazeReset":
+        devMaze = { ...DEFAULT_MAZE };
+        emitHud();
+        return;
       case "physGroupReset": {
         const defaults = ballDefaultPhys();
         devPhys = { ...devPhys };
@@ -4407,7 +4420,8 @@ export function createGame(
         // plane's downhill direction, so it is an acceleration?not a speed target.
         const mazeForce = gravity() * 1.18;
         // Maze Ball top speed: 20% below the previous cap, across all aspect ratios.
-        const mazeMaxSpeed = Math.max(521, world.w * 0.9072);
+        const mazeTuning = devOn ? devMaze : DEFAULT_MAZE;
+        const mazeMaxSpeed = Math.max(521, world.w * 0.9072) * mazeTuning.maxSpeed;
         ball.vx += mazeGravity.x * mazeForce * dt;
         ball.vy += mazeGravity.y * mazeForce * dt;
         const mazeSpeed = Math.hypot(ball.vx, ball.vy);
@@ -4427,7 +4441,8 @@ export function createGame(
         // stick position. It removes a fixed amount of speed every second and
         // lets the ball come to a clean natural rest on a level court.
         const speed = Math.hypot(ball.vx, ball.vy);
-        const nextSpeed = Math.max(0, speed - 126 * dt);
+        const mazeBrake = devOn ? devMaze.brake : DEFAULT_MAZE.brake;
+        const nextSpeed = Math.max(0, speed - mazeBrake * dt);
         if (speed > 0.001) {
           const scale = nextSpeed / speed;
           ball.vx *= scale;
