@@ -4406,7 +4406,8 @@ export function createGame(
         // Treat the entire court as a tilted plane. The control changes the
         // plane's downhill direction, so it is an acceleration?not a speed target.
         const mazeForce = gravity() * 1.18;
-        const mazeMaxSpeed = Math.max(651, world.w * 1.134);
+        // Maze Ball top speed: 20% below the previous cap, across all aspect ratios.
+        const mazeMaxSpeed = Math.max(521, world.w * 0.9072);
         ball.vx += mazeGravity.x * mazeForce * dt;
         ball.vy += mazeGravity.y * mazeForce * dt;
         const mazeSpeed = Math.hypot(ball.vx, ball.vy);
