@@ -24,6 +24,21 @@ export { NET_COLS, NET_ROWS, NET_ROW_H, RIM_RY } from "./net";
 /** When set, hoop/net/board render as bright neon green above the CRT wash. */
 let neonGreenCourt = false;
 
+const timeControlImages: Record<"button" | "circle", HTMLImageElement | null> = {
+  button: null,
+  circle: null,
+};
+
+function timeControlImage(kind: "button" | "circle") {
+  const cached = timeControlImages[kind];
+  if (cached) return cached.complete && cached.naturalWidth > 0 ? cached : null;
+  const image = new Image();
+  image.decoding = "async";
+  image.src = `/game/backforward-${kind}.png`;
+  timeControlImages[kind] = image;
+  return null;
+}
+
 const NEON_HOOP = {
 	pad: "#3dff88",
 	padHi: "#b8ffd4",
@@ -146,6 +161,7 @@ export function drawScene(
   afterWorld?: ((ctx: CanvasRenderingContext2D) => void) | null,
   hacker: { dir: HackerDir | null } | null = null,
   maze: { gravity: MazeGravity } | null = null,
+  timeControl: { energy: number; active: boolean; disabled: boolean } | null = null,
 ) {
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
@@ -175,6 +191,7 @@ export function drawScene(
 	neonGreenCourt = false;
 	if (hacker) drawHackerPad(ctx, hackerPadLayout(world), hacker.dir);
 	if (maze) drawMazePad(ctx, mazePadLayout(world), maze.gravity);
+	if (timeControl) drawTimeRewindControl(ctx, world, timeControl.energy, timeControl.active, timeControl.disabled);
 	if (ballId === "bolt" && boltCharge > 90) drawBoltWhitePulse(ctx, ball, time);
 	for (const c of ninjaClones) {
 		drawNinjaBall(
@@ -210,6 +227,7 @@ export function drawScene(
 		ctx.fillStyle = `rgba(255, 150, 40, ${Math.min(.42, burnFlash * 1.4)})`;
 		ctx.fillRect(0, 0, world.w, world.h);
 	}
+	if (timeControl?.active) drawRewindScreenFx(ctx, world, time);
 	afterWorld?.(ctx);
 	if (greenWash && showHud) drawCountdown(ctx, world, timer01, buzzer, barLabel);
 	ctx.restore();
@@ -1703,6 +1721,64 @@ function drawYellowBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean)
 	ctx.restore();
 }
 
+
+function drawTimeRewindControl(ctx: CanvasRenderingContext2D, world: World, energy: number, active: boolean, disabled: boolean) {
+  const r = Math.max(31, Math.min(46, world.w * 0.09));
+  const x = world.w * 0.5;
+  const y = world.floorY + (world.h - world.floorY) * 0.54;
+  const pct = Math.max(0, Math.min(1, energy / 100));
+  const button = timeControlImage("button");
+  const circle = timeControlImage("circle");
+  // Keeping both supplied layers independent lets the ring be cropped as charge.
+  const scale = active ? 1.1 : 1;
+  const d = r * 2 * scale;
+  ctx.save();
+  ctx.globalAlpha = disabled ? 0.38 : 1;
+  if (button) {
+    ctx.drawImage(button, x - d / 2, y - d / 2, d, d);
+  } else {
+    ctx.fillStyle = active ? "#d59c0c" : "#edb413";
+    ctx.beginPath(); ctx.arc(x, y, r * scale, 0, Math.PI * 2); ctx.fill();
+  }
+  if (circle && pct > 0.002) {
+    // Start at 12 o'clock and reveal the authored ring clockwise as energy increases.
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.arc(x, y, r * scale + 2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * pct, false);
+    ctx.closePath();
+    ctx.clip();
+    ctx.drawImage(circle, x - d / 2, y - d / 2, d, d);
+    ctx.restore();
+  } else if (!circle) {
+    ctx.strokeStyle = "rgba(255,255,255,0.92)";
+    ctx.lineWidth = Math.max(2.2, r * 0.065);
+    ctx.beginPath(); ctx.arc(x, y, r * scale - 4, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+
+function drawRewindScreenFx(ctx: CanvasRenderingContext2D, world: World, time: number) {
+  ctx.save();
+  // Saturation blend removes color while preserving the game artwork's luminance.
+  ctx.globalCompositeOperation = "saturation";
+  ctx.fillStyle = "#808080";
+  ctx.fillRect(0, 0, world.w, world.h);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "rgba(10, 12, 15, 0.16)";
+  ctx.fillRect(0, 0, world.w, world.h);
+  // CRT scanlines and shifting horizontal noise make the rewind read as recorded footage.
+  ctx.fillStyle = "rgba(0, 0, 0, 0.17)";
+  for (let y = 0; y < world.h; y += 4) ctx.fillRect(0, y, world.w, 1);
+  for (let y = 0; y < world.h; y += 18) {
+    const shift = Math.sin(y * 0.13 + time * 38) * Math.max(5, world.w * 0.018);
+    ctx.fillStyle = "rgba(220, 230, 240, 0.045)";
+    ctx.fillRect(Math.max(0, shift), y, world.w, 2);
+  }
+  ctx.restore();
+}
+
 function boltFillColor(pct: number) {
 	if (pct >= 70) return "#2ee66a";
 	if (pct >= 35) return "#f5d000";
@@ -1796,38 +1872,55 @@ function drawBoltWhitePulse(ctx: CanvasRenderingContext2D, ball: Ball, time: num
 	ctx.restore();
 }
 function drawBoltBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean, time: number) {
-	const { x, y, r, squash } = ball;
-	ctx.save();
-	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
-	ctx.scale(1 / squash, squash);
-	if (lit) {
-		const glow = ctx.createRadialGradient(0, 0, r * 0.2, 0, 0, r * 1.7);
-		glow.addColorStop(0, "rgba(255,240,120,0.35)");
-		glow.addColorStop(0.55, "rgba(80,180,255,0.12)");
-		glow.addColorStop(1, "rgba(40,80,255,0)");
-		ctx.fillStyle = glow;
-		ctx.beginPath();
-		ctx.arc(0, 0, r * 1.7, 0, Math.PI * 2);
-		ctx.fill();
-	}
-	const skin = ctx.createRadialGradient(-r * 0.28, -r * 0.32, r * 0.06, r * 0.1, r * 0.15, r * 1.05);
-	skin.addColorStop(0, "#fff7a8");
-	skin.addColorStop(0.4, "#ffe14a");
-	skin.addColorStop(0.75, "#5ad0ff");
-	skin.addColorStop(1, "#2a6dff");
-	ctx.fillStyle = skin;
-	ctx.beginPath();
-	ctx.arc(0, 0, r, 0, Math.PI * 2);
-	ctx.fill();
-	ctx.strokeStyle = `rgba(255,255,255,${0.55 + 0.25 * Math.sin(time * 18)})`;
-	ctx.lineWidth = Math.max(1.2, r * 0.08);
-	ctx.beginPath();
-	ctx.moveTo(-r * 0.15, -r * 0.55);
-	ctx.lineTo(r * 0.05, -r * 0.1);
-	ctx.lineTo(-r * 0.12, -r * 0.05);
-	ctx.lineTo(r * 0.22, r * 0.55);
-	ctx.stroke();
-	ctx.restore();
+  const { x, y, r, spin, squash } = ball;
+  ctx.save();
+  ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+  ctx.scale(1 / squash, squash);
+  if (lit) {
+    const glow = ctx.createRadialGradient(0, 0, r * 0.2, 0, 0, r * 1.7);
+    glow.addColorStop(0, "rgba(255,240,120,0.35)");
+    glow.addColorStop(0.55, "rgba(80,180,255,0.12)");
+    glow.addColorStop(1, "rgba(40,80,255,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.clip();
+  const texture = ballImage("bolt");
+  if (texture) {
+    ctx.save();
+    ctx.rotate(spin);
+    ctx.drawImage(texture, -r, -r, r * 2, r * 2);
+    ctx.restore();
+    // Keep the source artwork spherical instead of looking like a flat sticker.
+    if (lit) {
+      const shade = ctx.createRadialGradient(r * 0.12, r * 0.1, r * 0.25, 0, 0, r);
+      shade.addColorStop(0, "rgba(0,0,0,0)");
+      shade.addColorStop(0.7, "rgba(9,18,54,0.05)");
+      shade.addColorStop(1, "rgba(3,8,28,0.3)");
+      ctx.fillStyle = shade;
+      ctx.fillRect(-r, -r, r * 2, r * 2);
+      const shine = ctx.createRadialGradient(-r * 0.32, -r * 0.42, 0, -r * 0.22, -r * 0.3, r * 0.55);
+      shine.addColorStop(0, "rgba(255,255,255,0.34)");
+      shine.addColorStop(0.35, "rgba(190,230,255,0.08)");
+      shine.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = shine;
+      ctx.fillRect(-r, -r, r * 2, r * 2);
+    }
+  } else {
+    // Keep the old procedural look only while the supplied texture is loading.
+    const skin = ctx.createRadialGradient(-r * 0.28, -r * 0.32, r * 0.06, r * 0.1, r * 0.15, r * 1.05);
+    skin.addColorStop(0, "#fff7a8");
+    skin.addColorStop(0.4, "#ffe14a");
+    skin.addColorStop(0.75, "#5ad0ff");
+    skin.addColorStop(1, "#2a6dff");
+    ctx.fillStyle = skin;
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+  }
+  ctx.restore();
 }
 
 /** Draw the active ball kit at an arbitrary point (cinematics / overlays). */

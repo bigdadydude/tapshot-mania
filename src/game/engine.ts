@@ -204,6 +204,8 @@ export function createGame(
     sfx: save.lastSfx,
   };
   let gfx: Gfx = { ...save.gfx };
+  /** Player graphics state captured before the temporary developer sandbox overrides it. */
+  let devGfxBackup: Gfx | null = null;
   let ballId: BallId = parseBall(save.ball);
   let paused = false;
   let hint = true;
@@ -213,6 +215,7 @@ export function createGame(
   let devFreeze = false;
   let devHoldHeat = false;
   let devPhys: DevPhys = { ...DEFAULT_PHYS };
+  let devPrisonProjectiles = true;
   audio.setMix(mix);
 
   let ball = makeBall(world, 1, ballRadius(world.ballR, ballId));
@@ -289,13 +292,17 @@ export function createGame(
     return { x: world.w * 0.5, y: world.h * 0.42 };
   }
 
+  function fuseIds(): BallId[] {
+    if (!isRogueMode() || !rogueRun) return [];
+    return rogueRun.fuseBalls ?? (rogueRun.fuseBall ? [rogueRun.fuseBall] : []);
+  }
+
   function fuseId(): BallId | null {
-    if (!isRogueMode() || !rogueRun) return null;
-    return rogueRun.fuseBall;
+    return fuseIds()[0] ?? null;
   }
 
   function kit() {
-    return effectiveBall(ballId, fuseId());
+    return effectiveBall(ballId, fuseIds());
   }
 
   function isPrison() {
@@ -320,6 +327,24 @@ export function createGame(
 
   function isQuantum() {
     return kit().quantum;
+  }
+
+  function isTime() {
+    return kit().time;
+  }
+
+  function timeRewindBlocked() {
+    return buzzer || timeUp;
+  }
+
+  function timeButtonLayout() {
+    const r = Math.max(31, Math.min(46, world.w * 0.09));
+    return { cx: world.w * 0.5, cy: world.floorY + (world.h - world.floorY) * 0.54, r };
+  }
+
+  function inTimeButton(x: number, y: number) {
+    const button = timeButtonLayout();
+    return Math.hypot(x - button.cx, y - button.cy) <= button.r * 1.18;
   }
 
   function bunshinActive() {
@@ -853,9 +878,166 @@ export function createGame(
   let mazeHoles: MazeHole[] = [];
   let mazeHoleSpawnLeft = 2.8;
   let mazeRespawnLeft = 0;
+
+  // A compact rolling world history replays recent game state backward, including
+  // score and combo, while permanent save data remains untouched.
+  const REWIND_SECONDS = 5;
+  const REWIND_SAMPLE_SECONDS = 1 / 30;
+  type RewindSnapshot = {
+    ball: Ball;
+    hoop: Hoop;
+    other: Hoop | null;
+    particles: Particle[];
+    callouts: Callout[];
+    mazeHoles: MazeHole[];
+    antiMatter: { x: number; y: number; r: number; pct: number; age: number } | null;
+    holeOn: boolean;
+    holeX: number;
+    holeY: number;
+    holeR: number;
+    holeLeft: number;
+    boltTrail: { x: number; y: number }[];
+    quantumTunnelLeft: number;
+    mazeRespawnLeft: number;
+    score: number;
+    combo: number;
+    streak: number;
+    timer: number;
+    timerArmed: boolean;
+    buzzer: boolean;
+    buzzerTimer: number;
+    timeUp: boolean;
+    madeCount: number;
+    chain: Chain | null;
+    ninjaGhosts: NinjaGhost[];
+    ninjaGates: NinjaGate[];
+    miniGhosts: MiniGhost[];
+    pathHist: PathSample[];
+    pathClock: number;
+    time: number;
+    cloudT: number;
+    cloudShift: number;
+    cloudHop: number;
+    cloudMode: "drift" | "g1" | "g2" | "g3";
+    cloudSx: number;
+    cloudSy: number;
+    stageState: unknown;
+  };
+  let rewindHistory: RewindSnapshot[] = [];
+  let rewindSampleLeft = 0;
+  let rewindActive = false;
+  let rewindStepLeft = 0;
+  /** Time Ball energy: 100 points yields the full five-second rewind. */
+  let timeEnergy = 0;
+  let timeRewindPointer: number | null = null;
+  const TIME_ENERGY_MAX = 100;
+  const TIME_REWIND_MAX_SECONDS = 5;
+  const TIME_ENERGY_DRAIN = TIME_ENERGY_MAX / TIME_REWIND_MAX_SECONDS;
   const HACKER_SPEED_BASE = 300;
   const VECTOR_SPEED_SCALE = 0.8;
   let hackerSpeed = HACKER_SPEED_BASE;
+
+  function captureRewindSnapshot(dt: number) {
+    if (phase !== "playing" || rewindActive) return;
+    rewindSampleLeft -= dt;
+    if (rewindSampleLeft > 0) return;
+    rewindSampleLeft = REWIND_SAMPLE_SECONDS;
+    rewindHistory.push({
+      ball: structuredClone(ball),
+      hoop: structuredClone(hoop),
+      other: other ? structuredClone(other) : null,
+      particles: structuredClone(particles),
+      callouts: structuredClone(callouts),
+      mazeHoles: structuredClone(mazeHoles),
+      antiMatter: antiMatter ? { ...antiMatter } : null,
+      holeOn, holeX, holeY, holeR, holeLeft,
+      boltTrail: structuredClone(boltTrail),
+      quantumTunnelLeft, mazeRespawnLeft,
+      score, combo, streak, timer, timerArmed, buzzer, buzzerTimer, timeUp, madeCount,
+      chain: chain ? structuredClone(chain) : null,
+      ninjaGhosts: structuredClone(ninjaGhosts),
+      ninjaGates: structuredClone(ninjaGates),
+      miniGhosts: structuredClone(miniGhosts),
+      pathHist: structuredClone(pathHist),
+      pathClock,
+      time, cloudT, cloudShift, cloudHop, cloudMode, cloudSx, cloudSy,
+      stageState: stageMod.rewindState?.(),
+    });
+    const maxSamples = Math.ceil(REWIND_SECONDS / REWIND_SAMPLE_SECONDS) + 2;
+    if (rewindHistory.length > maxSamples) rewindHistory.shift();
+  }
+
+  function restoreRewindSnapshot(snapshot: RewindSnapshot) {
+    ball = structuredClone(snapshot.ball);
+    hoop = structuredClone(snapshot.hoop);
+    other = snapshot.other ? structuredClone(snapshot.other) : null;
+    particles = structuredClone(snapshot.particles);
+    callouts = structuredClone(snapshot.callouts);
+    mazeHoles = structuredClone(snapshot.mazeHoles);
+    antiMatter = snapshot.antiMatter ? { ...snapshot.antiMatter } : null;
+    holeOn = snapshot.holeOn;
+    holeX = snapshot.holeX;
+    holeY = snapshot.holeY;
+    holeR = snapshot.holeR;
+    holeLeft = snapshot.holeLeft;
+    boltTrail = structuredClone(snapshot.boltTrail);
+    quantumTunnelLeft = snapshot.quantumTunnelLeft;
+    mazeRespawnLeft = snapshot.mazeRespawnLeft;
+    score = snapshot.score;
+    combo = snapshot.combo;
+    streak = snapshot.streak;
+    timer = snapshot.timer;
+    timerArmed = snapshot.timerArmed;
+    buzzer = snapshot.buzzer;
+    buzzerTimer = snapshot.buzzerTimer;
+    timeUp = snapshot.timeUp;
+    madeCount = snapshot.madeCount;
+    chain = snapshot.chain ? structuredClone(snapshot.chain) : null;
+    ninjaGhosts = structuredClone(snapshot.ninjaGhosts);
+    ninjaGates = structuredClone(snapshot.ninjaGates);
+    miniGhosts = structuredClone(snapshot.miniGhosts);
+    pathHist = structuredClone(snapshot.pathHist);
+    pathClock = snapshot.pathClock;
+    time = snapshot.time;
+    cloudT = snapshot.cloudT;
+    cloudShift = snapshot.cloudShift;
+    cloudHop = snapshot.cloudHop;
+    cloudMode = snapshot.cloudMode;
+    cloudSx = snapshot.cloudSx;
+    cloudSy = snapshot.cloudSy;
+    stageMod.restoreRewindState?.(snapshot.stageState);
+    prevBallX = ball.x;
+    prevBallY = ball.y;
+    if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
+  }
+
+  function rewindWorld() {
+    if (!isTime() || phase !== "playing" || paused || timeRewindBlocked() || rewindActive || timeEnergy <= 0 || rewindHistory.length < 2) return;
+    rewindActive = true;
+    rewindStepLeft = 0;
+    pointerHeld = false;
+    mazePointerId = null;
+    vectorPointerId = null;
+    emitHud();
+  }
+
+  function stepRewind(dt: number) {
+    timeEnergy = Math.max(0, timeEnergy - TIME_ENERGY_DRAIN * dt);
+    rewindStepLeft -= dt;
+    while (rewindStepLeft <= 0 && rewindHistory.length > 1) {
+      rewindStepLeft += REWIND_SAMPLE_SECONDS;
+      rewindHistory.pop();
+      restoreRewindSnapshot(rewindHistory[rewindHistory.length - 1]!);
+    }
+    if (rewindHistory.length <= 1 || timeEnergy <= 0) {
+      rewindActive = false;
+      timeRewindPointer = null;
+      rewindHistory = [];
+      rewindSampleLeft = 0;
+      rewindStepLeft = 0;
+    }
+    emitHud();
+  }
 
   function resetShotFlags() {
     ball.hitRim = false;
@@ -999,10 +1181,12 @@ export function createGame(
         moveKind: hoop.moveKind,
         ballId,
         fuseBall: fuseId(),
+        fuseBalls: fuseIds(),
         phys: { ...devPhys },
         playMode,
         modifierForce: devModifierForce,
         modifier: stageMod.id,
+        prisonProjectiles: devPrisonProjectiles,
       },
       ballId,
       playMode,
@@ -1136,7 +1320,7 @@ export function createGame(
     return Math.max(ANTI_HOLE_DUR_MIN, ANTI_HOLE_DUR_MAX - shaved);
   }
 
-  function applyKitPhys() {
+  function ballDefaultPhys(): DevPhys {
     const next = { ...DEFAULT_PHYS };
     const phys = getBall(ballId).phys;
     if (phys) {
@@ -1145,7 +1329,12 @@ export function createGame(
         if (typeof v === "number") next[k] = v;
       });
     }
-    devPhys = next;
+    return next;
+  }
+
+  /** In the sandbox, reset means the selected ball's authored baseline. */
+  function applyKitPhys() {
+    devPhys = ballDefaultPhys();
   }
 
   function gravity() {
@@ -1329,16 +1518,19 @@ export function createGame(
       }
       id = rogueRun.modifier;
     }
-    if (devModifierForce && isRogueMode()) {
+    if (devOn && devModifierForce) {
       id = devModifierForce;
       if (rogueRun) rogueRun.modifier = devModifierForce;
     }
+    // The void is deliberately modifier-free so prison lights and projectiles cannot leak in.
+    if (devOn && devScene === "void" && !devModifierForce) id = "none";
     // Title / hub: only scene-bound modifiers (e.g. prison daytime), never rogue rolls.
     if (phase === "title" || phase === "hub" || phase === "over" || phase === "settle") {
       id = sceneDefault && sceneDefault !== "none" ? sceneDefault : "none";
     }
     stageMod = createModifier(id);
     stageMod.begin(modifierHost());
+    stageMod.setProjectiles?.(devPrisonProjectiles);
     const announce = opts?.announce !== false && phase === "playing" && id !== "none";
     if (announce) {
       callouts.push({
@@ -2019,8 +2211,9 @@ export function createGame(
     mazeHoleSpawnLeft = 2.8;
     mazeRespawnLeft = 0;
     ball.blink = false;
-    if (rogueRun && rogueRun.fuseBall === ballId) {
-      rogueRun.fuseBall = null;
+    if (rogueRun) {
+      rogueRun.fuseBalls = (rogueRun.fuseBalls ?? []).filter((id) => id !== ballId);
+      rogueRun.fuseBall = rogueRun.fuseBalls[0] ?? null;
     }
     glassBase = GLASS_BASE_START;
     clearGlassShotHurts();
@@ -2116,7 +2309,16 @@ export function createGame(
     if (!isRogueMode()) return;
     if (!rogueRun) rogueRun = createRogueRun();
     const next = id && parseBall(id) !== ballId ? parseBall(id) : null;
-    rogueRun.fuseBall = next;
+    const current = rogueRun.fuseBalls ?? (rogueRun.fuseBall ? [rogueRun.fuseBall] : []);
+    const fuses = next
+      ? current.includes(next)
+        ? current.filter((fuse) => fuse !== next)
+        : current.length < 3
+          ? [...current, next]
+          : current
+      : [];
+    rogueRun.fuseBalls = fuses;
+    rogueRun.fuseBall = fuses[0] ?? null;
     rogueRun.fusePicked = true;
     refreshFuseSkills();
     if (phase === "playing" && paused) {
@@ -2400,6 +2602,12 @@ export function createGame(
   function beginPlay() {
     phase = "playing";
     paused = false;
+    rewindHistory = [];
+    rewindSampleLeft = 0;
+    rewindActive = false;
+    rewindStepLeft = 0;
+    timeEnergy = 0;
+    timeRewindPointer = null;
     score = 0;
     mazeBaseBonus = 0;
     combo = 0;
@@ -3208,6 +3416,15 @@ export function createGame(
     if (phase === "over") return;
     e.preventDefault();
     pointerHeld = true;
+    if (phase === "playing" && !paused && isTime() && !timeRewindBlocked()) {
+      const point = pointerWorld(e);
+      if (inTimeButton(point.x, point.y)) {
+        timeRewindPointer = e.pointerId;
+        rewindWorld();
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        return;
+      }
+    }
     if (phase === "playing" && !paused && isBolt() && boltOverheatLeft > 0) return;
     if (phase === "playing" && !paused && isMaze()) {
       // iOS requires this permission request to originate from a real touch.
@@ -3264,6 +3481,16 @@ export function createGame(
 
   function onUp(e: PointerEvent) {
     if (e.button !== undefined && e.button !== 0) return;
+    if (timeRewindPointer === e.pointerId) {
+      timeRewindPointer = null;
+      rewindActive = false;
+      rewindStepLeft = 0;
+      rewindHistory = [];
+      rewindSampleLeft = 0;
+      pointerHeld = false;
+      emitHud();
+      return;
+    }
     if (mazePointerId === e.pointerId) {
       mazePointerId = null;
       // A released stick levels the board. Recalibrate the current phone pose as
@@ -3353,6 +3580,12 @@ export function createGame(
   function goTitle() {
     phase = "title";
     paused = false;
+    rewindHistory = [];
+    rewindSampleLeft = 0;
+    rewindActive = false;
+    rewindStepLeft = 0;
+    timeEnergy = 0;
+    timeRewindPointer = null;
     score = 0;
     mazeBaseBonus = 0;
     combo = 0;
@@ -3413,6 +3646,12 @@ export function createGame(
   }
 
   function leaveSandbox() {
+    if (devGfxBackup) {
+      // Developer-only effect toggles are never allowed to leak into normal play.
+      // Repair the previously leaked shadow setting as part of this restoration.
+      gfx = { ...devGfxBackup, ballShadow: true };
+      devGfxBackup = null;
+    }
     devOn = false;
     devScene = "void";
     devFreeze = false;
@@ -3424,14 +3663,15 @@ export function createGame(
     if (!booted) return;
     devUnlocked = true;
     persist();
+    if (!devOn) devGfxBackup = { ...gfx };
     devOn = true;
     if (!devScene) devScene = "void";
     beginPlay();
     hint = false;
     timerArmed = false;
     timer = timerMax;
-    devFreeze = true;
-    devHoldHeat = true;
+    devFreeze = false;
+    devHoldHeat = false;
     madeCount = 1;
     applyKitPhys();
     emitHud();
@@ -3451,9 +3691,17 @@ export function createGame(
     hoop.baseY = hoop.y;
     hoop.baseX = hoop.x;
     hoop.moveDir = 1;
-    hoop.moveAmp = (MOVE_SPD0_LO + MOVE_SPD0_HI) * 0.5;
+    // Runtime motion expects pixels per second; the previous raw 0.063 value
+    // was effectively immobile on every viewport.
+    hoop.moveAmp = world.h * (MOVE_SPD0_LO + MOVE_SPD0_HI) * 0.5;
     hoop.moveT = 0;
+    // Nudge immediately so selecting a motion mode has visible feedback.
+    if (hoop.moveKind === 0 || hoop.moveKind === 1 || hoop.moveKind === 2) {
+      const { minY, maxY } = hoopYLimits(world);
+      hoop.y = Math.min(maxY, Math.max(minY, hoop.y + world.h * 0.025));
+    }
   }
+
 
   function applyDev(cmd: DevCmd) {
     switch (cmd.t) {
@@ -3475,8 +3723,8 @@ export function createGame(
         if (cmd.id === "street" || cmd.id === "prison") {
           applyScenePack(cmd.id);
           resetGraf();
-          bootStageModifier({ announce: phase === "playing" });
         }
+        bootStageModifier({ announce: phase === "playing" });
         emitHud();
         return;
       case "playMode": {
@@ -3490,12 +3738,13 @@ export function createGame(
           hint = false;
           timerArmed = false;
           timer = timerMax;
-          devFreeze = true;
-          devHoldHeat = true;
+          devFreeze = false;
+          devHoldHeat = false;
           madeCount = 1;
           applyKitPhys();
         }
         if (playMode === "rogue" && rogueRun) {
+          if (devOn) rogueRun.target = Infinity;
           rogueRun.gold = Math.max(rogueRun.gold, 99);
           rogueRun.peakGold = Math.max(rogueRun.peakGold, rogueRun.gold);
           if (devOn) rogueRun.endless = true;
@@ -3581,6 +3830,32 @@ export function createGame(
         }
         return;
       }
+      case "rogueGold": {
+        if (!rogueRun) rogueRun = createRogueRun();
+        rogueRun.gold = Math.max(0, Math.floor(cmd.n));
+        rogueRun.peakGold = Math.max(rogueRun.peakGold, rogueRun.gold);
+        emitHud();
+        return;
+      }
+      case "rogueScore": {
+        if (!rogueRun) rogueRun = createRogueRun();
+        score = Math.max(0, Math.floor(cmd.n));
+        rogueRun.stageScore = score;
+        emitHud();
+        return;
+      }
+      case "rogueTarget": {
+        if (!rogueRun) rogueRun = createRogueRun();
+        rogueRun.target = Math.max(1, Math.floor(cmd.n));
+        emitHud();
+        return;
+      }
+      case "rogueGrant": {
+        if (!rogueRun) rogueRun = createRogueRun();
+        devGrantRogue(rogueRun, cmd.id);
+        emitHud();
+        return;
+      }
       case "rogueFuse": {
         if (!devOn) enterSandbox();
         playMode = "rogue";
@@ -3604,16 +3879,17 @@ export function createGame(
         return;
       }
       case "modifier": {
-        if (cmd.id === "auto") {
-          devModifierForce = null;
-        } else {
-          devModifierForce = cmd.id;
-          if (isRogueMode() && rogueRun) rogueRun.modifier = cmd.id;
-        }
+        devModifierForce = cmd.id === "auto" ? null : cmd.id;
+        if (isRogueMode() && rogueRun && devModifierForce) rogueRun.modifier = devModifierForce;
         if (phase === "playing") bootStageModifier();
         emitHud();
         return;
       }
+      case "prisonProjectiles":
+        devPrisonProjectiles = cmd.on;
+        stageMod.setProjectiles?.(cmd.on);
+        emitHud();
+        return;
       case "score":
         score = Math.max(0, Math.floor(cmd.n));
         emitHud();
@@ -3651,6 +3927,7 @@ export function createGame(
         emitHud();
         return;
       case "armTimer":
+        devFreeze = false;
         timerArmed = true;
         timeUp = false;
         buzzer = false;
@@ -3729,12 +4006,35 @@ export function createGame(
       case "skin":
         applyBall(cmd.id);
         return;
+      case "resetMatch":
+        beginPlay();
+        if (devOn) {
+          hint = false;
+          timerArmed = false;
+          devFreeze = false;
+          devHoldHeat = false;
+        }
+        return;
+      case "gfx":
+        gfx = { ...gfx, [cmd.key]: cmd.on };
+        emitHud();
+        return;
       case "phys":
         devPhys = { ...devPhys, [cmd.k]: clampPhysKey(cmd.k, cmd.n) };
         emitHud();
         return;
+      case "physGroupReset": {
+        const defaults = ballDefaultPhys();
+        devPhys = { ...devPhys };
+        const keys: (keyof DevPhys)[] = cmd.group === "ball"
+          ? ["jumpUp", "jumpFwd", "ball", "grav"]
+          : ["buoy", "air", "roll", "floor", "hoop", "rimFric", "boardFric"];
+        for (const key of keys) devPhys[key] = defaults[key];
+        emitHud();
+        return;
+      }
       case "physReset":
-        devPhys = { ...DEFAULT_PHYS };
+        devPhys = ballDefaultPhys();
         emitHud();
         return;
     }
@@ -3846,13 +4146,17 @@ export function createGame(
       if (!h.bonusTaken && h.closePassed && dist >= leaveR) {
         h.bonusTaken = true;
         mazeBaseBonus += 1;
-        callouts.push({ text: "\u57fa\u7840 +1", x: h.x, y: h.y - h.r * 1.5, life: 0.8, max: 0.8, kind: "base" });
+        callouts.push({ text: "基础 +1", x: h.x, y: h.y - h.r * 1.5, life: 0.8, max: 0.8, kind: "base" });
         emitHud();
       }
     }
   }
 
   function physics(dt: number) {
+    if (rewindActive) {
+      stepRewind(dt);
+      return;
+    }
     stepGraf(dt);
     if (quantumTunnelLeft > 0) {
       quantumTunnelLeft = Math.max(0, quantumTunnelLeft - dt);
@@ -4319,6 +4623,7 @@ export function createGame(
         callouts.pop();
       } else i += 1;
     }
+    captureRewindSnapshot(dt);
   }
 
   function boardTravel() {
@@ -5175,15 +5480,13 @@ export function createGame(
     }
     combo = Math.max(combo, streak);
     if (!ghost && isQuantum()) {
-      const tier = Math.floor(combo / 10) * 10;
-      if (tier >= 20 && tier > quantumCheckedTier) {
-        quantumCheckedTier = tier;
-        const chance = Math.min(0.5, tier / 100);
-        if (Math.random() < chance) {
-          quantumTunnelLeft = 6;
-          ball.blink = true;
-          callouts.push({ text: "????", x: ball.x, y: ball.y - ball.r * 2.2, life: 0.9, max: 0.9, kind: "tag" });
-        }
+      // Every make checks against the current combo count as a percentage.
+      // 27 combo = 27%; 100 combo and above = guaranteed phase.
+      const chance = Math.min(1, Math.max(0, combo) / 100);
+      if (Math.random() < chance) {
+        quantumTunnelLeft = 6;
+        ball.blink = true;
+        callouts.push({ text: "量子隧穿", x: ball.x, y: ball.y - ball.r * 2.2, life: 0.9, max: 0.9, kind: "tag" });
       }
     }
 
@@ -5321,6 +5624,11 @@ export function createGame(
       }
     }
     score += gain;
+    if (!ghost && isTime() && !clutch && timerMax > 0) {
+      // Store 5% of the unused-clock fraction as Time Ball rewind energy.
+      const earned = Math.max(0, Math.min(1, timer / timerMax)) * 5;
+      timeEnergy = Math.min(TIME_ENERGY_MAX, timeEnergy + earned);
+    }
     noteGraf();
     if (isRogueMode() && rogueRun && !ghost) {
       rogueRun.stageScore = score;
@@ -5728,8 +6036,10 @@ export function createGame(
       const raw = (now - last) / 1000;
       last = now;
       const tick = Math.min(raw, 0.1);
-      if (bgmOn) cloudT += tick;
-      stepClouds(tick);
+      if (!rewindActive) {
+        if (bgmOn) cloudT += tick;
+        stepClouds(tick);
+      }
       if (!paused) {
         const dt = Math.min(raw, 0.1);
         time += dt;
@@ -5779,11 +6089,9 @@ export function createGame(
           const timer01 = phase === "over" ? 1 : hackerAwaken ? 1 - clock01 : clock01;
           let scoreOverride: string | null =
             isRogueMode() && rogueRun
-              ? rogueRun.endless
-                ? "刷马桶"
-                : `${rogueRun.target}:${rogueRun.stageScore}`
+              ? `${Number.isFinite(rogueRun.target) ? rogueRun.target : "?"}:${rogueRun.runScore + rogueRun.stageScore}`
               : null;
-          let scoreFlash = false;
+                    let scoreFlash = false;
           const barLabel = yardHud?.active ? yardHud.barLabel : null;
           const k = Number.isFinite(camShake) ? Math.min(1, Math.max(0, camShake) / 0.16) : 0;
           const amp = k > 0.002 ? 4.6 * k * k : 0;
@@ -5849,6 +6157,7 @@ export function createGame(
             phase === "playing" && isMaze()
               ? { gravity: mazePointerId === null ? { x: 0, y: 0 } : mazeGravity }
               : null,
+            isTime() ? { energy: timeEnergy, active: rewindActive, disabled: timeRewindBlocked() } : null,
           );
           ctx.restore();
           stageMod.drawScreen?.(ctx, world);

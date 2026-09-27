@@ -116,6 +116,12 @@ export type StageModifier = {
   drawWorldBack?(ctx: CanvasRenderingContext2D, world: World, time: number): void;
   /** Full viewport, after the court clip. */
   drawScreen?(ctx: CanvasRenderingContext2D, world: World): void;
+  /** Serializable transient state for engine time-replay snapshots. */
+  rewindState?(): unknown;
+  /** Restore a state previously supplied by rewindState. */
+  restoreRewindState?(state: unknown): void;
+  /** Enable or disable modifier-owned projectiles without disabling the scene. */
+  setProjectiles?(on: boolean): void;
   end(): void;
 };
 

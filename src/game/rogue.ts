@@ -98,7 +98,9 @@ export type RogueRun = {
   peakMake: number;
   /** Acc for jiahao floor gold. */
   rollGoldAcc: number;
-  /** Secondary ball fused at run start (skills OR onto primary). */
+  /** Secondary balls fused onto the primary; developer mode may test up to three. */
+  fuseBalls: BallId[];
+  /** Legacy first fuse retained for saved-run compatibility. */
   fuseBall: BallId | null;
   /** Whether the open-run fuse picker was dismissed (incl. 不融合). */
   fusePicked: boolean;
@@ -142,6 +144,7 @@ export type RogueHud = {
   buffFlameLeft: number;
   pendingFlameReuse: boolean;
   fuseBall: BallId | null;
+  fuseBalls: BallId[];
   fusePicked: boolean;
   modifier: ModifierId;
 };
@@ -233,6 +236,7 @@ export function createRogueRun(): RogueRun {
     peakMake: 0,
     rollGoldAcc: 0,
     fuseBall: null,
+    fuseBalls: [],
     fusePicked: false,
     modifier: rollStageModifier(1),
   };
@@ -769,6 +773,7 @@ export function toRogueHud(run: RogueRun | null): RogueHud | null {
     buffFlameLeft: run.buffFlameLeft,
     pendingFlameReuse: run.pendingFlameReuse,
     fuseBall: run.fuseBall,
+    fuseBalls: run.fuseBalls ?? (run.fuseBall ? [run.fuseBall] : []),
     fusePicked: run.fusePicked,
     modifier: run.modifier,
   };

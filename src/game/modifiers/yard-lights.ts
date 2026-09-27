@@ -591,6 +591,7 @@ export function createYardLights(): StageModifier {
   let patrolTagLeft = 0;
   /** Announce 放风时间 on first playing tick (title begin stays silent). */
   let recessStartPending = false;
+  let projectilesOn = true;
 
   function resetSpots(world: World) {
     const layout = loadSearchlightLayout();
@@ -903,7 +904,10 @@ export function createYardLights(): StageModifier {
       }
 
       if (phase === "recess") {
-        recessLeft -= dt;
+        // The yard cannot enter curfew until the player has made their first basket.
+        // Keep its starting patrol state ready, but do not consume its timer yet.
+        if (host.getMadeCount() > 0) recessLeft -= dt;
+        else recessLeft = RECESS;
         dim = Math.max(0, dim - dt * 1.2);
         clearTraces();
         hunt = "sweep";
@@ -1037,7 +1041,7 @@ export function createYardLights(): StageModifier {
               s.ty = by;
               s.lock = LIT_LOCK;
             }
-            spawnVolley(host);
+            if (projectilesOn) spawnVolley(host);
             fireCool = COOL;
             statusMode = "infraction";
           }
@@ -1075,7 +1079,7 @@ export function createYardLights(): StageModifier {
           escapeAcc = 0;
           statusMode = "infraction";
           if (fireCool <= 0) {
-            spawnVolley(host);
+            if (projectilesOn) spawnVolley(host);
             fireCool = COOL;
           }
         } else {
@@ -1324,6 +1328,38 @@ export function createYardLights(): StageModifier {
 
     hud() {
       return yardHud();
+    },
+
+    rewindState() {
+      return structuredClone({
+        phase, recessLeft, lockdownLeft, spots, traces, bolts, dim, warned, live,
+        lightFx, timeAcc, hunt, litAcc, escapeAcc, fireCool, lockdownIndex,
+        statusMode, lostLeft, patrolTagLeft, recessStartPending,
+      });
+    },
+
+    restoreRewindState(state) {
+      if (!state || typeof state !== "object") return;
+      const saved = structuredClone(state) as {
+        phase: Phase; recessLeft: number; lockdownLeft: number; spots: Spot[]; traces: Trace[]; bolts: Bolt[];
+        dim: number; warned: boolean; live: boolean; lightFx: Record<"left" | "right", LightFx>; timeAcc: number;
+        hunt: HuntMode; litAcc: number; escapeAcc: number; fireCool: number; lockdownIndex: number;
+        statusMode: "patrol" | "infraction" | "lost"; lostLeft: number; patrolTagLeft: number; recessStartPending: boolean;
+      };
+      phase = saved.phase; recessLeft = saved.recessLeft; lockdownLeft = saved.lockdownLeft;
+      spots = saved.spots; traces = saved.traces; bolts = saved.bolts; dim = saved.dim; warned = saved.warned;
+      live = saved.live; lightFx = saved.lightFx; timeAcc = saved.timeAcc; hunt = saved.hunt;
+      litAcc = saved.litAcc; escapeAcc = saved.escapeAcc; fireCool = saved.fireCool;
+      lockdownIndex = saved.lockdownIndex; statusMode = saved.statusMode; lostLeft = saved.lostLeft;
+      patrolTagLeft = saved.patrolTagLeft; recessStartPending = saved.recessStartPending;
+    },
+
+    setProjectiles(on) {
+      projectilesOn = on;
+      if (!on) {
+        traces = [];
+        bolts = [];
+      }
     },
 
     end() {

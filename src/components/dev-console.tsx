@@ -1,357 +1,47 @@
 import { useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, Pause } from "lucide-react";
-import {
-  DEV_FX,
-  DEV_GRAF,
-  DEV_MODIFIERS,
-  DEV_MOVES,
-  DEV_PHYS,
-  DEV_PLAY_MODES,
-  DEV_SCENES,
-  DEV_STAGES,
-  type DevCmd,
-  type DevPhys,
-} from "@/game/dev";
-import type { DevHud } from "@/game/dev";
+import { DEV_FX, DEV_GRAF, DEV_MODIFIERS, DEV_MOVES, DEV_PHYS, DEV_PLAY_MODES, DEV_SCENES, DEV_STAGES, type DevCmd, type DevPhys, type DevHud } from "@/game/dev";
 import { playableBalls } from "@/game/balls";
-import type { PlayMode } from "@/game/types";
-import { modifierName } from "@/game/modifiers";
+import type { Gfx } from "@/game/types";
+import type { RogueHud } from "@/game/rogue";
+import { ROGUE_CATALOG, type RogueCatalogEntry } from "@/game/rogue-catalog";
 import { cn } from "@/lib/utils";
 
-type Tab = "match" | "fx" | "phys" | "world";
+type Tab = "match" | "scene" | "ball" | "rogue" | "shop";
+const numeric = (value: string, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 
-export function DevConsole({
-  dev,
-  score,
-  combo,
-  onCmd,
-  onMenu,
-  onSearchlights,
-}: {
-  dev: DevHud;
-  score: number;
-  combo: number;
-  onCmd: (cmd: DevCmd) => void;
-  onMenu: () => void;
-  onSearchlights: () => void;
-}) {
+export function DevConsole({ dev, score, combo, gfx, rogue, onCmd, onMenu, onSearchlights }: { dev: DevHud; score: number; combo: number; gfx: Gfx; rogue: RogueHud | null; onCmd: (cmd: DevCmd) => void; onMenu: () => void; onSearchlights: () => void }) {
   const [open, setOpen] = useState(true);
   const [tab, setTab] = useState<Tab>("match");
-
-  return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center">
-      <div className="pointer-events-auto w-full max-w-[min(100%,calc(100dvh*9/16))] px-3 pb-[max(0.6rem,env(safe-area-inset-bottom))]">
-        <div className="mb-1 flex gap-1">
-          <button
-            type="button"
-            onClick={onMenu}
-            className="flex size-9 items-center justify-center rounded-lg border border-border bg-bg-elevated"
-            aria-label="菜单"
-          >
-            <Pause className="size-4 text-fg" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="flex h-9 flex-1 items-center justify-between rounded-lg border border-border bg-bg-elevated px-3"
-          >
-            <span className="text-xs font-medium tracking-widest text-muted">开发者控制台</span>
-            {open ? <ChevronDown className="size-4 text-muted" /> : <ChevronUp className="size-4 text-muted" />}
-          </button>
-        </div>
-        {open ? (
-          <div className="max-h-[min(46dvh,24rem)] overflow-y-auto rounded-xl border border-border bg-bg-elevated p-3 shadow-lg">
-            <div className="mb-3 grid grid-cols-4 gap-1 rounded-lg border border-border bg-bg-subtle p-1">
-              {(
-                [
-                  ["match", "对局"],
-                  ["fx", "特效"],
-                  ["phys", "物理"],
-                  ["world", "场景"],
-                ] as [Tab, string][]
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setTab(id)}
-                  className={cn(
-                    "h-9 rounded-md text-sm font-medium",
-                    tab === id ? "bg-accent text-accent-fg" : "text-fg",
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            {tab === "match" ? (
-              <MatchTab score={score} combo={combo} freeze={dev.freeze} holdHeat={dev.holdHeat} onCmd={onCmd} />
-            ) : null}
-            {tab === "fx" ? <FxTab sear={dev.sear} burning={dev.burning} moveKind={dev.moving ? dev.moveKind : -1} onCmd={onCmd} /> : null}
-            {tab === "phys" ? <PhysTab phys={dev.phys} onCmd={onCmd} /> : null}
-            {tab === "world" ? (
-              <WorldTab
-                scene={dev.scene}
-                ballId={dev.ballId}
-                fuseBall={dev.fuseBall}
-                playMode={dev.playMode}
-                modifierForce={dev.modifierForce}
-                modifier={dev.modifier}
-                onCmd={onCmd}
-                onSearchlights={onSearchlights}
-              />
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
+  return <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center"><div className="pointer-events-auto w-full max-w-[min(100%,calc(100dvh*9/16))] px-3 pb-[max(0.6rem,env(safe-area-inset-bottom))]">
+    <div className="mb-1 flex gap-1"><button type="button" onClick={onMenu} className="flex size-9 items-center justify-center rounded-lg border border-border bg-bg-elevated" aria-label="菜单"><Pause className="size-4 text-fg" /></button><button type="button" onClick={() => setOpen((v) => !v)} className="flex h-9 flex-1 items-center justify-between rounded-lg border border-border bg-bg-elevated px-3"><span className="text-xs font-medium tracking-widest text-muted">开发者控制台</span>{open ? <ChevronDown className="size-4 text-muted" /> : <ChevronUp className="size-4 text-muted" />}</button></div>
+    {open ? <div className="max-h-[min(53dvh,31rem)] overflow-y-auto rounded-xl border border-border bg-bg-elevated p-3 shadow-lg"><div className="mb-3 grid grid-cols-5 gap-1 rounded-lg border border-border bg-bg-subtle p-1">{([["match","对局"],["scene","场景"],["ball","篮球"],["rogue","肉鸽"],["shop","肉鸽商店"]] as [Tab,string][]).map(([id,label]) => <button key={id} type="button" onClick={() => setTab(id)} className={cn("h-9 rounded-md text-xs font-medium",tab===id?"bg-accent text-accent-fg":"text-fg")}>{label}</button>)}</div>
+      {tab === "match" && <MatchTab dev={dev} score={score} combo={combo} onCmd={onCmd} />}
+      {tab === "scene" && <SceneTab dev={dev} gfx={gfx} onCmd={onCmd} onSearchlights={onSearchlights} />}
+      {tab === "ball" && <BallTab dev={dev} onCmd={onCmd} />}
+      {tab === "rogue" && <RogueTab rogue={rogue} dev={dev} onCmd={onCmd} />}
+      {tab === "shop" && <ShopTab rogue={rogue} onCmd={onCmd} />}
+    </div> : null}</div></div>;
 }
+function Chip({label,on,onClick}:{label:string;on?:boolean;onClick:()=>void}) { return <button type="button" onClick={onClick} className={cn("h-9 min-w-11 rounded-md px-2.5 text-sm font-medium",on?"bg-accent text-accent-fg":"border border-border bg-bg-subtle text-fg")}>{label}</button>; }
+function Row({title,children}:{title:string;children:ReactNode}) { return <div className="mb-3"><p className="mb-1.5 text-xs tracking-widest text-muted">{title}</p><div className="flex flex-wrap gap-1.5">{children}</div></div>; }
+function NumberEdit({label,value,onSet}:{label:string;value:number;onSet:(n:number)=>void}) { const [draft,setDraft]=useState(String(value)); return <div className="mb-3"><p className="mb-1.5 text-xs tracking-widest text-muted">{label}</p><div className="flex gap-1.5"><input inputMode="numeric" value={draft} onChange={(e)=>setDraft(e.target.value)} className="h-10 min-w-0 flex-1 rounded-md border border-border bg-bg-subtle px-3 text-sm text-fg"/><Chip label="设置" onClick={()=>onSet(numeric(draft,value))}/></div></div>; }
+function MatchTab({dev,score,combo,onCmd}:{dev:DevHud;score:number;combo:number;onCmd:(cmd:DevCmd)=>void}) { return <><NumberEdit label="累计分数" value={score} onSet={(n)=>onCmd({t:"score",n})}/><NumberEdit label="连击数" value={combo} onSet={(n)=>onCmd({t:"combo",n})}/><Row title="冷却条 / 时间"><Chip label="满" onClick={()=>onCmd({t:"timer01",n:1})}/><Chip label="60%" onClick={()=>onCmd({t:"timer01",n:.6})}/><Chip label="10%" onClick={()=>onCmd({t:"timer01",n:.1})}/><Chip label="冻结" on={dev.freeze} onClick={()=>onCmd({t:"freeze",on:!dev.freeze})}/><Chip label="开始计时" onClick={()=>onCmd({t:"armTimer"})}/><Chip label="时间到" onClick={()=>onCmd({t:"timeUp"})}/><Chip label="绝杀" onClick={()=>onCmd({t:"buzzer"})}/></Row><Row title="对局"><Chip label="重置篮球" onClick={()=>onCmd({t:"resetBall"})}/><Chip label="恢复默认" onClick={()=>onCmd({t:"resetMatch"})}/></Row></>; }
+function SceneTab({dev,gfx,onCmd,onSearchlights}:{dev:DevHud;gfx:Gfx;onCmd:(cmd:DevCmd)=>void;onSearchlights:()=>void}) {
+  const keys: [keyof Pick<Gfx,"ballShade"|"ballShadow"|"particles"|"graffitiFx"|"impact"|"flash"|"buzzerSpot">,string][] = [["ballShade","球光影"],["ballShadow","投影"],["particles","粒子"],["graffitiFx","涂鸦"],["impact","镜头"],["flash","闪光"],["buzzerSpot","绝杀聚光"]];
+  return <>
 
-function Chip({
-  label,
-  on,
-  onClick,
-}: {
-  label: string;
-  on?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "h-9 min-w-11 rounded-md px-2.5 text-sm font-medium",
-        on ? "bg-accent text-accent-fg" : "border border-border bg-bg-subtle text-fg",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
+    <Row title="涂鸦">{DEV_GRAF.map((graf)=><Chip key={graf.key} label={graf.label} onClick={()=>onCmd({t:"graf",key:graf.key})}/>)}</Row>
 
-function Row({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="mb-3">
-      <p className="mb-1.5 text-xs tracking-widest text-muted">{title}</p>
-      <div className="flex flex-wrap gap-1.5">{children}</div>
-    </div>
-  );
+    <Row title="当前篮架移动">{DEV_MOVES.map((move)=><Chip key={move.kind} label={move.label} on={dev.moving&&dev.moveKind===move.kind} onClick={()=>onCmd({t:"move",kind:move.kind})}/>)}</Row>
+    <Row title="场景词条">{DEV_MODIFIERS.map((modifier)=><Chip key={modifier.id} label={modifier.label} on={dev.modifierForce===modifier.id} onClick={()=>onCmd({t:"modifier",id:modifier.id})}/>)}</Row>
+    <Row title="监狱">{dev.scene === "prison" ? <><Chip label="子弹" on={dev.prisonProjectiles} onClick={()=>onCmd({t:"prisonProjectiles",on:!dev.prisonProjectiles})}/><Chip label="探照灯布置" onClick={onSearchlights}/></> : <span className="text-xs text-subtle">切换到监狱背景后可测试探照灯与子弹</span>}</Row>
+    <Row title="当前背景特效">{keys.map(([key,label])=><Chip key={key} label={label} on={gfx[key]} onClick={()=>onCmd({t:"gfx",key,on:!gfx[key]})}/>)}</Row>
+    <Row title="测试阶段">{DEV_FX.map((fx)=><Chip key={fx.kind} label={fx.label} onClick={()=>onCmd({t:"fx",kind:fx.kind})}/>)}</Row>
+    <Row title="恢复"><Chip label="物理默认" onClick={()=>onCmd({t:"physReset"})}/><Chip label="清除涂鸦" onClick={()=>onCmd({t:"graf",key:"clear"})}/></Row>
+  </>;
 }
-
-function MatchTab({
-  score,
-  combo,
-  freeze,
-  holdHeat,
-  onCmd,
-}: {
-  score: number;
-  combo: number;
-  freeze: boolean;
-  holdHeat: boolean;
-  onCmd: (cmd: DevCmd) => void;
-}) {
-  return (
-    <div>
-      <Row title={`得分 ${score}`}>
-        <Chip label="-10" onClick={() => onCmd({ t: "addScore", n: -10 })} />
-        <Chip label="-1" onClick={() => onCmd({ t: "addScore", n: -1 })} />
-        <Chip label="+1" onClick={() => onCmd({ t: "addScore", n: 1 })} />
-        <Chip label="+10" onClick={() => onCmd({ t: "addScore", n: 10 })} />
-        <Chip label="+50" onClick={() => onCmd({ t: "addScore", n: 50 })} />
-        <Chip label="清零" onClick={() => onCmd({ t: "score", n: 0 })} />
-      </Row>
-      <Row title={`连击 ${combo}`}>
-        {DEV_STAGES.map((s) => (
-          <Chip key={s.n} label={s.label} on={combo === s.n} onClick={() => onCmd({ t: "combo", n: s.n })} />
-        ))}
-      </Row>
-      <Row title="冷却条">
-        <Chip label="冻住" on={freeze} onClick={() => onCmd({ t: "freeze", on: !freeze })} />
-        <Chip label="锁热度" on={holdHeat} onClick={() => onCmd({ t: "holdHeat", on: !holdHeat })} />
-        <Chip label="满" onClick={() => onCmd({ t: "timer01", n: 1 })} />
-        <Chip label="60%" onClick={() => onCmd({ t: "timer01", n: 0.6 })} />
-        <Chip label="40%" onClick={() => onCmd({ t: "timer01", n: 0.4 })} />
-        <Chip label="10%" onClick={() => onCmd({ t: "timer01", n: 0.1 })} />
-        <Chip label="开始计时" onClick={() => onCmd({ t: "armTimer" })} />
-        <Chip label="时间到" onClick={() => onCmd({ t: "timeUp" })} />
-        <Chip label="绝杀窗" onClick={() => onCmd({ t: "buzzer" })} />
-      </Row>
-      <Row title="球">
-        <Chip label="重置球" onClick={() => onCmd({ t: "resetBall" })} />
-      </Row>
-    </div>
-  );
-}
-
-function FxTab({
-  sear,
-  burning,
-  moveKind,
-  onCmd,
-}: {
-  sear: number;
-  burning: boolean;
-  moveKind: number;
-  onCmd: (cmd: DevCmd) => void;
-}) {
-  return (
-    <div>
-      <Row title="触发">
-        {DEV_FX.map((f) => (
-          <Chip key={f.kind} label={f.label} onClick={() => onCmd({ t: "fx", kind: f.kind })} />
-        ))}
-      </Row>
-      <Row title="涂鸦">
-        {DEV_GRAF.map((g) => (
-          <Chip key={g.key} label={g.label} onClick={() => onCmd({ t: "graf", key: g.key })} />
-        ))}
-      </Row>
-      <Row title="篮架焦痕">
-        {([0, 1, 2, 3] as const).map((n) => (
-          <Chip key={n} label={String(n)} on={sear === n} onClick={() => onCmd({ t: "sear", n })} />
-        ))}
-        <Chip label="烧网" on={burning} onClick={() => onCmd({ t: "burnNet", on: !burning })} />
-      </Row>
-      <Row title="移动篮架">
-        {DEV_MOVES.map((m) => (
-          <Chip key={m.kind} label={m.label} on={moveKind === m.kind} onClick={() => onCmd({ t: "move", kind: m.kind })} />
-        ))}
-      </Row>
-    </div>
-  );
-}
-
-function PhysTab({ phys, onCmd }: { phys: DevPhys; onCmd: (cmd: DevCmd) => void }) {
-  return (
-    <div>
-      {DEV_PHYS.map((row) => {
-        const pct = Math.round(phys[row.k] * 100);
-        const presets = row.min === 0 ? [0, 25, 50, 100, 150, 200] : [50, 80, 100, 130, 160, 200];
-        return (
-          <div key={row.k} className="mb-3">
-            <div className="mb-1 flex items-baseline justify-between">
-              <p className="text-xs tracking-widest text-muted">{row.label}</p>
-              <p className="text-sm tabular-nums text-fg">{pct}%</p>
-            </div>
-            <p className="mb-1.5 text-xs text-subtle">{row.hint}</p>
-            <input
-              type="range"
-              min={row.min}
-              max={200}
-              step={5}
-              value={pct}
-              onChange={(e) => onCmd({ t: "phys", k: row.k, n: Number(e.target.value) / 100 })}
-              className="h-11 w-full accent-accent"
-            />
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {presets.map((n) => (
-                <Chip
-                  key={n}
-                  label={`${n}`}
-                  on={pct === n}
-                  onClick={() => onCmd({ t: "phys", k: row.k, n: n / 100 })}
-                />
-              ))}
-            </div>
-          </div>
-        );
-      })}
-      <Row title="预设">
-        <Chip label="恢复默认" onClick={() => onCmd({ t: "physReset" })} />
-      </Row>
-    </div>
-  );
-}
-
-function WorldTab({
-  scene,
-  ballId,
-  fuseBall,
-  playMode,
-  modifierForce,
-  modifier,
-  onCmd,
-  onSearchlights,
-}: {
-  scene: DevHud["scene"];
-  ballId: DevHud["ballId"];
-  fuseBall: DevHud["fuseBall"];
-  playMode: PlayMode;
-  modifierForce: DevHud["modifierForce"];
-  modifier: DevHud["modifier"];
-  onCmd: (cmd: DevCmd) => void;
-  onSearchlights: () => void;
-}) {
-  return (
-    <div>
-      <Row title="模式">
-        {DEV_PLAY_MODES.map((m) => (
-          <Chip
-            key={m.id}
-            label={m.label}
-            on={playMode === m.id}
-            onClick={() => onCmd({ t: "playMode", mode: m.id })}
-          />
-        ))}
-      </Row>
-      {playMode === "rogue" ? (
-        <>
-          <Row title="肉鸽工具">
-            <Chip label="+50金" onClick={() => onCmd({ t: "rogueTool", kind: "gold" })} />
-            <Chip label="分数清零" onClick={() => onCmd({ t: "rogueTool", kind: "clearScore" })} />
-            <Chip label="开商店" onClick={() => onCmd({ t: "rogueTool", kind: "shop" })} />
-            <Chip label="通关结算" onClick={() => onCmd({ t: "rogueTool", kind: "clearSettle" })} />
-          </Row>
-          <Row title={`关卡词条 · 当前 ${modifierName(modifier)}`}>
-            {DEV_MODIFIERS.map((m) => (
-              <Chip
-                key={m.id}
-                label={m.label}
-                on={m.id === "auto" ? modifierForce == null : modifierForce === m.id}
-                onClick={() => onCmd({ t: "modifier", id: m.id })}
-              />
-            ))}
-          </Row>
-          <Row title="融合球">
-            {playableBalls()
-              .filter((b) => b.id !== ballId)
-              .map((b) => (
-              <Chip
-                key={b.id}
-                label={b.name}
-                on={fuseBall === b.id}
-                onClick={() => onCmd({ t: "rogueFuse", id: b.id })}
-              />
-            ))}
-            <Chip
-              label="清除融合"
-              on={fuseBall == null}
-              onClick={() => onCmd({ t: "rogueFuse", id: null })}
-            />
-          </Row>
-        </>
-      ) : null}
-      <Row title="场景">
-        {DEV_SCENES.map((s) => (
-          <Chip key={s.id} label={s.label} on={scene === s.id} onClick={() => onCmd({ t: "scene", id: s.id })} />
-        ))}
-      </Row>
-      <Row title="球">
-        {playableBalls().map((b) => (
-          <Chip key={b.id} label={b.name} on={ballId === b.id} onClick={() => onCmd({ t: "skin", id: b.id })} />
-        ))}
-      </Row>
-      <Row title="监狱工具">
-        <Chip label="探照灯布置" onClick={onSearchlights} />
-      </Row>
-      <Row title="沙盒">
-        <Chip label="退出开发者" onClick={() => onCmd({ t: "exit" })} />
-      </Row>
-      <p className="text-xs leading-relaxed text-subtle">
-        选「肉鸽」可在沙盒里测关卡/商店/饰品。空空间没有墙和天空，街头会载入当前场景包。融合球即时叠加技能，外观仍用主球。「探照灯布置」打开监狱墙面编辑页，可拖动灯位与旋转锚点并保存。
-      </p>
-    </div>
-  );
-}
+function BallTab({dev,onCmd}:{dev:DevHud;onCmd:(cmd:DevCmd)=>void}) { return <><Row title="测试模式">{DEV_PLAY_MODES.map(m=><Chip key={m.id} label={m.label} on={dev.playMode===m.id} onClick={()=>onCmd({t:"playMode",mode:m.id})}/>)}</Row><Row title="选择篮球">{playableBalls().map(b=><Chip key={b.id} label={b.name} on={dev.ballId===b.id} onClick={()=>onCmd({t:"skin",id:b.id})}/>)}</Row><PhysTab phys={dev.phys} onCmd={onCmd}/><Row title="恢复"><Chip label="恢复默认" onClick={()=>onCmd({t:"physReset"})}/></Row></>; }
+function PhysTab({phys,onCmd}:{phys:DevPhys;onCmd:(cmd:DevCmd)=>void}) { const groups = [["ball", "\u7403\u7269\u7406"], ["scene", "\u573a\u666f\u7269\u7406"]] as const; return <>{groups.map(([group, title]) => <section key={group} className="mb-4 border-t border-border pt-3 first:border-t-0 first:pt-0"><div className="mb-2 flex items-center justify-between"><p className="text-xs font-bold tracking-[0.2em] text-accent">{title}</p><button type="button" onClick={()=>onCmd({t:"physGroupReset",group})} className="rounded border border-border px-2 py-1 text-[10px] text-muted">????</button></div>{DEV_PHYS.filter(row => row.group === group).map(row=>{const pct=Math.round(phys[row.k]*100);return <div key={row.k} className="mb-3"><div className="mb-1 flex justify-between"><p className="text-xs tracking-widest text-muted">{row.label}</p><p className="text-xs text-fg">{pct}%</p></div><p className="mb-1 text-[10px] text-subtle">{row.hint}</p><input type="range" min={row.min} max={200} step={5} value={pct} onChange={e=>onCmd({t:"phys",k:row.k,n:Number(e.target.value)/100})} className="h-10 w-full accent-accent"/></div>})}</section>)}</>; }
+function RogueTab({rogue,dev,onCmd}:{rogue:RogueHud|null;dev:DevHud;onCmd:(cmd:DevCmd)=>void}) { const fuses=dev.fuseBalls; return <><NumberEdit label="金币" value={rogue?.gold??0} onSet={n=>onCmd({t:"rogueGold",n})}/><NumberEdit label="关卡分数" value={rogue?.stageScore??0} onSet={n=>onCmd({t:"rogueScore",n})}/><NumberEdit label="目标分数" value={rogue?.target??Infinity} onSet={n=>onCmd({t:"rogueTarget",n})}/><Row title="通关"><Chip label="通关结算画面" onClick={()=>onCmd({t:"rogueTool",kind:"clearSettle"})}/><Chip label="开商店" onClick={()=>onCmd({t:"rogueTool",kind:"shop"})}/></Row><Row title={`融合球 · 最多三次 (${fuses.length}/3)`}>{playableBalls().filter(b=>b.id!==dev.ballId).map(b=><Chip key={b.id} label={b.name} on={fuses.includes(b.id)} onClick={()=>onCmd({t:"rogueFuse",id:b.id})}/>)}</Row><Row title="融合"><Chip label="清除融合" onClick={()=>onCmd({t:"rogueFuse",id:null})}/></Row></>; }
+function ShopTab({rogue,onCmd}:{rogue:RogueHud|null;onCmd:(cmd:DevCmd)=>void}) { const [kind,setKind]=useState<"item"|"ornament">("item"); const entries=ROGUE_CATALOG.filter((entry)=>entry.status==="active"&&entry.kind===kind); const count=(entry:RogueCatalogEntry)=>entry.kind==="ornament"?rogue?.ornaments.find(o=>o.id===entry.id)?.stacks??0:rogue?.items[entry.id as never]??0; return <><Row title="分类"><Chip label="道具" on={kind==="item"} onClick={()=>setKind("item")}/><Chip label="饰品" on={kind==="ornament"} onClick={()=>setKind("ornament")}/></Row><div className="grid grid-cols-2 gap-1.5">{entries.map(entry=>{const n=count(entry);return <button key={entry.id} type="button" onClick={()=>onCmd({t:"rogueGrant",id:entry.id})} className="rounded-md border border-border bg-bg-subtle p-2 text-left"><p className="text-sm font-medium text-fg">{entry.name} <span className="text-accent">×{n}</span></p><p className="mt-1 line-clamp-2 text-xs text-subtle">{entry.desc}</p></button>})}</div></>; }

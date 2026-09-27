@@ -14,7 +14,8 @@ export type BallId =
   | "rain"
   | "vector"
   | "maze"
-  | "quantum";
+  | "quantum"
+  | "time";
 
 export type BallKit = {
   id: BallId;
@@ -37,6 +38,8 @@ export type BallKit = {
   codeRain?: boolean;
   /** Quantum ball: high-combo chance to phase through the basket rig. */
   quantum?: boolean;
+  /** Time ball: stores unused clock as rewind energy. */
+  time?: boolean;
   src?: string;
   fallback?: string;
   wrap: "ground" | "height";
@@ -71,6 +74,8 @@ export const BALLS: BallKit[] = [
     skill: "首球后按滚速充电（每0.1秒最高8%）；空心+1%、擦板+8%；电量>90%打铁+1分并掉电1%；长按0.5秒连灌",
     heat: false,
     bolt: true,
+    src: "/game/balls/lightning.png?v=1",
+    fallback: "/game/balls/lightning.png?v=1",
     wrap: "ground",
     score: "normal",
     phys: {
@@ -125,9 +130,18 @@ export const BALLS: BallKit[] = [
   {
     id: "quantum",
     name: "量子球",
-    skill: "连击20起每10连击触发一次隧穿判定：10%起、最高50%；成功后6秒穿过篮架",
+    skill: "每次进球按当前连击数进行隧穿判定：1连=1%、100连及以上必定触发；成功后6秒穿过篮架",
     heat: false,
     quantum: true,
+    wrap: "ground",
+    score: "normal",
+  },
+  {
+    id: "time",
+    name: "时间球",
+    skill: "进球按剩余倒计时比例充能；长按地面快退键倒放，最多回退5秒；绝杀时禁用",
+    heat: false,
+    time: true,
     wrap: "ground",
     score: "normal",
   },
@@ -268,7 +282,8 @@ export function parseBall(v: unknown): BallId {
     v === "rain" ||
     v === "vector" ||
     v === "maze" ||
-    v === "quantum"
+    v === "quantum" ||
+    v === "time"
       ? v
       : DEFAULT_BALL;
   return isPlayableBall(id) ? id : DEFAULT_BALL;
@@ -305,6 +320,7 @@ export type EffectiveBall = {
   vector: boolean;
   maze: boolean;
   quantum: boolean;
+  time: boolean;
   wrap: "ground" | "height";
   rScale: number;
   phys?: Partial<DevPhys>;
@@ -312,53 +328,42 @@ export type EffectiveBall = {
   fallback?: string;
 };
 
-export function effectiveBall(primaryId: BallId, fuseId: BallId | null): EffectiveBall {
+export function effectiveBall(primaryId: BallId, fuseId: BallId | BallId[] | null): EffectiveBall {
   const primary = getBall(primaryId);
-  const fuse = fuseId && fuseId !== primaryId ? getBall(fuseId) : null;
-  const heat = primary.heat || Boolean(fuse?.heat);
-  const frost = Boolean(primary.frost) || Boolean(fuse?.frost);
-  const champ = Boolean(primary.champ) || Boolean(fuse?.champ);
-  const anti = Boolean(primary.anti) || Boolean(fuse?.anti);
-  const bolt = Boolean(primary.bolt) || Boolean(fuse?.bolt);
-  const chain = Boolean(primary.chain) || Boolean(fuse?.chain);
-  const ninja = primaryId === "ninja" || fuseId === "ninja";
-  const glass = primary.score === "glass" || fuse?.score === "glass";
-  const codeRain = Boolean(primary.codeRain) || Boolean(fuse?.codeRain);
-  const vector = Boolean(primary.vector) || Boolean(fuse?.vector);
-  const maze = Boolean(primary.maze) || Boolean(fuse?.maze);
-  const quantum = Boolean(primary.quantum) || Boolean(fuse?.quantum);
-  const skill = fuse
-    ? `${primary.skill} · 融${fuse.name}：${fuse.skill}`
-    : primary.skill;
-  const name = fuse ? `${primary.name}+${fuse.name}` : primary.name;
+  const ids = (Array.isArray(fuseId) ? fuseId : fuseId ? [fuseId] : []).filter((id) => id !== primaryId);
+  const fuses = ids.map(getBall);
+  const any = <K extends keyof BallKit>(key: K) => Boolean(primary[key]) || fuses.some((fuse) => Boolean(fuse[key]));
+  const heat = any("heat");
+  const frost = any("frost");
+  const champ = any("champ");
+  const anti = any("anti");
+  const bolt = any("bolt");
+  const chain = any("chain");
+  const ninja = primaryId === "ninja" || ids.includes("ninja");
+  const glass = primary.score === "glass" || fuses.some((fuse) => fuse.score === "glass");
+  const codeRain = any("codeRain");
+  const vector = any("vector");
+  const maze = any("maze");
+  const quantum = any("quantum");
+  const time = any("time");
+  const skill = fuses.length ? `${primary.skill} · ${fuses.map((fuse) => `融${fuse.name}?${fuse.skill}`).join(" · ")}` : primary.skill;
+  const name = fuses.length ? `${primary.name}+${fuses.map((fuse) => fuse.name).join("+")}` : primary.name;
   return {
     id: primaryId,
-    fuseId: fuse ? fuse.id : null,
-    name,
-    skill,
-    heat,
-    frost,
-    champ,
-    anti,
-    bolt,
-    chain,
-    ninja,
-    glass,
-    codeRain,
-    vector,
-    maze,
-    quantum,
+    fuseId: fuses[0]?.id ?? null,
+    name, skill, heat, frost, champ, anti, bolt, chain, ninja, glass, codeRain, vector, maze, quantum, time,
     wrap: primary.wrap,
-    rScale: (primary.rScale ?? 1) * (fuse?.rScale ?? 1),
+    rScale: (primary.rScale ?? 1) * fuses.reduce((scale, fuse) => scale * (fuse.rScale ?? 1), 1),
     phys: primary.phys,
     src: primary.src,
     fallback: primary.fallback,
   };
 }
 
-/** Pause / settle loadout: `经典球 + 冰冻球` or just primary. */
-export function ballFuseLabel(primaryId: BallId, fuseId: BallId | null): string {
+export function ballFuseLabel(primaryId: BallId, fuseId: BallId | BallId[] | null): string {
   const primary = getBall(primaryId).name;
-  if (!fuseId || fuseId === primaryId) return primary;
-  return `${primary} + ${getBall(fuseId).name}`;
+  const ids = (Array.isArray(fuseId) ? fuseId : fuseId ? [fuseId] : []).filter((id) => id !== primaryId);
+  return ids.length ? `${primary} + ${ids.map((id) => getBall(id).name).join(" + ")}` : primary;
 }
+
+/** Pause / settle loadout: `经典球 + 冰冻球` or just primary. */

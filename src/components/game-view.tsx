@@ -353,6 +353,8 @@ export function GameView() {
           dev={hud.dev}
           score={hud.score}
           combo={hud.combo}
+          gfx={hud.gfx}
+          rogue={hud.rogue}
           onCmd={(cmd) => gameRef.current?.dev(cmd)}
           onMenu={() => {
             gameRef.current?.pause();
@@ -846,12 +848,14 @@ function BallThumb({ kit, large = false }: { kit: (typeof BALLS)[number]; large?
   }
   if (kit.id === "bolt") {
     return (
-      <span
-        className={`${big} rounded-full shadow-inner`}
-        style={{
-          background:
-            "radial-gradient(circle at 32% 28%, #fff7a8 0%, #ffe14a 40%, #5ad0ff 75%, #2a6dff 100%)",
-        }}
+      <img
+        src={kit.src}
+        alt=""
+        width={large ? 80 : 64}
+        height={large ? 80 : 64}
+        decoding="async"
+        draggable={false}
+        className={`${big} rounded-full object-cover shadow-inner`}
       />
     );
   }
