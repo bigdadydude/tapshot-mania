@@ -2417,7 +2417,7 @@ export function createGame(
     mazeHoleSpawnLeft = 2.8;
     mazeRespawnLeft = 0;
     ball.blink = false;
-    mazeTiltActive = typeof DeviceOrientationEvent !== "undefined";
+    mazeTiltActive = typeof DeviceOrientationEvent !== "undefined" || typeof DeviceMotionEvent !== "undefined";
     mazeTiltBase = null;
     mazeMotionBase = null;
     hackerSpeed = HACKER_SPEED_BASE;
@@ -2542,7 +2542,7 @@ export function createGame(
     mazeHoleSpawnLeft = 2.8;
     mazeRespawnLeft = 0;
     ball.blink = false;
-    mazeTiltActive = typeof DeviceOrientationEvent !== "undefined";
+    mazeTiltActive = typeof DeviceOrientationEvent !== "undefined" || typeof DeviceMotionEvent !== "undefined";
     mazeTiltBase = null;
     mazeMotionBase = null;
     hackerSpeed = HACKER_SPEED_BASE;
@@ -3140,17 +3140,25 @@ export function createGame(
   }
 
   async function requestMazeTiltPermission() {
-    type DeviceOrientationWithPermission = typeof DeviceOrientationEvent & {
+    type MotionPermissionEvent = {
       requestPermission?: () => Promise<PermissionState>;
     };
-    const orientation = DeviceOrientationEvent as DeviceOrientationWithPermission;
+    // iOS may gate these two streams independently; Android browsers generally
+    // expose neither method and can start delivering events immediately.
+    const orientation = DeviceOrientationEvent as typeof DeviceOrientationEvent & MotionPermissionEvent;
+    const motion = DeviceMotionEvent as typeof DeviceMotionEvent & MotionPermissionEvent;
     try {
-      if (orientation.requestPermission && (await orientation.requestPermission()) !== "granted") return;
+      const requests: Promise<PermissionState>[] = [];
+      if (orientation.requestPermission) requests.push(orientation.requestPermission());
+      if (motion.requestPermission) requests.push(motion.requestPermission());
+      const results = await Promise.all(requests);
+      if (results.some((result) => result !== "granted")) return;
       mazeTiltActive = true;
+      // First valid reading from either stream establishes the neutral board.
       mazeTiltBase = null;
       mazeMotionBase = null;
     } catch {
-      // Browsers without motion permission keep joystick controls available.
+      // If a platform rejects an optional stream, keep touch controls usable.
     }
   }
 
@@ -3168,7 +3176,8 @@ export function createGame(
     const dy = Math.max(-1, Math.min(1, y / tilt));
     const dead = 0.045;
     mazeGravity = {
-      x: Math.abs(dx) < dead ? 0 : dx,
+      // Device gamma/acceleration's horizontal sign is opposite the court's X axis.
+      x: Math.abs(dx) < dead ? 0 : -dx,
       y: Math.abs(dy) < dead ? 0 : dy,
     };
   }
@@ -3362,7 +3371,7 @@ export function createGame(
     mazeHoleSpawnLeft = 2.8;
     mazeRespawnLeft = 0;
     ball.blink = false;
-    mazeTiltActive = typeof DeviceOrientationEvent !== "undefined";
+    mazeTiltActive = typeof DeviceOrientationEvent !== "undefined" || typeof DeviceMotionEvent !== "undefined";
     mazeTiltBase = null;
     mazeMotionBase = null;
     hackerSpeed = HACKER_SPEED_BASE;
