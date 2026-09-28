@@ -793,12 +793,14 @@ function BallThumb({ kit, large = false }: { kit: (typeof BALLS)[number]; large?
   if (kit.id === "prison") return <PrisonBallThumb className={big} />;
   if (kit.id === "ninja") {
     return (
-      <span
-        className={`${big} rounded-full shadow-inner`}
-        style={{
-          background:
-            "radial-gradient(circle at 32% 28%, #c4b0ff 0%, #7c4dff 42%, #4a1fb8 100%)",
-        }}
+      <img
+        src={kit.src ?? kit.fallback}
+        alt=""
+        width={large ? 80 : 64}
+        height={large ? 80 : 64}
+        decoding="async"
+        draggable={false}
+        className={`${big} rounded-full object-cover shadow-inner`}
       />
     );
   }

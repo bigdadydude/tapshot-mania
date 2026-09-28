@@ -88,6 +88,8 @@ export const BALLS: BallKit[] = [
     name: "忍者球",
     skill: "连击10/26/47各获一个影分身；分身只加连击，不计分",
     heat: false,
+    src: "/game/balls/ninja1.png?v=1",
+    fallback: "/game/balls/ninja1.png?v=1",
     wrap: "ground",
     score: "normal",
     phys: {

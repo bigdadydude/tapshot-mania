@@ -28,6 +28,20 @@ const timeControlImages: Record<"button" | "circle", HTMLImageElement | null> = 
   button: null,
   circle: null,
 };
+let boltThunderImage: HTMLImageElement | null = null;
+let boltThunderRequested = false;
+
+function boltThunder() {
+  if (boltThunderImage?.complete && boltThunderImage.naturalWidth > 0) return boltThunderImage;
+  if (!boltThunderRequested) {
+    boltThunderRequested = true;
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => { boltThunderImage = image; };
+    image.src = "/game/balls/lightning-thunder.png";
+  }
+  return null;
+}
 
 function timeControlImage(kind: "button" | "circle") {
   const cached = timeControlImages[kind];
@@ -1385,64 +1399,49 @@ function drawPrisonBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean)
 }
 
 function drawNinjaBall(
-	ctx: CanvasRenderingContext2D,
-	ball: Ball,
-	lit: boolean,
-	alpha = 1,
-	tone: "purple" | "gray" = "purple",
+  ctx: CanvasRenderingContext2D,
+  ball: Ball,
+  lit: boolean,
+  alpha = 1,
+  tone: "purple" | "gray" = "purple",
 ) {
-	const { x, y, r, spin, squash } = ball;
-	const gray = tone === "gray";
-	ctx.save();
-	ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
-	ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
-	ctx.scale(1 / squash, squash);
-	ctx.beginPath();
-	ctx.arc(0, 0, r, 0, Math.PI * 2);
-	ctx.clip();
-	ctx.save();
-	ctx.rotate(spin);
-	const skin = ctx.createRadialGradient(-r * 0.28, -r * 0.34, r * 0.08, r * 0.12, r * 0.18, r * 1.08);
-	if (gray) {
-		skin.addColorStop(0, "#d4d4d8");
-		skin.addColorStop(0.4, "#9a9aa2");
-		skin.addColorStop(1, "#4a4a52");
-	} else {
-		skin.addColorStop(0, "#c9b6ff");
-		skin.addColorStop(0.4, "#7c4dff");
-		skin.addColorStop(1, "#3b1a9e");
-	}
-	ctx.fillStyle = skin;
-	ctx.fillRect(-r - 1, -r - 1, r * 2 + 2, r * 2 + 2);
-	ctx.strokeStyle = gray ? "rgba(24,24,28,0.55)" : "rgba(20,8,48,0.55)";
-	ctx.lineWidth = Math.max(1.2, r * 0.06);
-	ctx.beginPath();
-	ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
-	ctx.stroke();
-	ctx.beginPath();
-	ctx.moveTo(-r, 0);
-	ctx.lineTo(r, 0);
-	ctx.moveTo(0, -r);
-	ctx.lineTo(0, r);
-	ctx.stroke();
-	ctx.restore();
-	if (lit) {
-		const shade = ctx.createRadialGradient(0, 0, r * 0.48, 0, 0, r);
-		shade.addColorStop(0, "rgba(0,0,0,0)");
-		shade.addColorStop(1, gray ? "rgba(12,12,16,0.42)" : "rgba(20,8,50,0.4)");
-		ctx.fillStyle = shade;
-		ctx.beginPath();
-		ctx.arc(0, 0, r, 0, Math.PI * 2);
-		ctx.fill();
-		const spec = ctx.createRadialGradient(-r * 0.3, -r * 0.38, 0, -r * 0.2, -r * 0.28, r * 0.48);
-		spec.addColorStop(0, "rgba(255,255,255,0.4)");
-		spec.addColorStop(1, "rgba(255,255,255,0)");
-		ctx.fillStyle = spec;
-		ctx.beginPath();
-		ctx.arc(0, 0, r, 0, Math.PI * 2);
-		ctx.fill();
-	}
-	ctx.restore();
+  const { x, y, r, spin, squash } = ball;
+  const gray = tone === "gray";
+  const texture = ballImage("ninja");
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+  ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+  ctx.scale(1 / squash, squash);
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.clip();
+  if (texture) {
+    ctx.save();
+    ctx.rotate(spin);
+    if (gray) ctx.filter = "grayscale(1) contrast(0.88)";
+    ctx.drawImage(texture, -r, -r, r * 2, r * 2);
+    ctx.restore();
+  } else {
+    const skin = ctx.createRadialGradient(-r * 0.28, -r * 0.34, r * 0.08, r * 0.12, r * 0.18, r * 1.08);
+    skin.addColorStop(0, gray ? "#d4d4d8" : "#c9b6ff");
+    skin.addColorStop(0.4, gray ? "#9a9aa2" : "#7c4dff");
+    skin.addColorStop(1, gray ? "#4a4a52" : "#3b1a9e");
+    ctx.fillStyle = skin;
+    ctx.fillRect(-r - 1, -r - 1, r * 2 + 2, r * 2 + 2);
+  }
+  if (lit) {
+    const shade = ctx.createRadialGradient(0, 0, r * 0.48, 0, 0, r);
+    shade.addColorStop(0, "rgba(0,0,0,0)");
+    shade.addColorStop(1, gray ? "rgba(12,12,16,0.35)" : "rgba(20,8,50,0.3)");
+    ctx.fillStyle = shade;
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    const spec = ctx.createRadialGradient(-r * 0.3, -r * 0.38, 0, -r * 0.2, -r * 0.28, r * 0.48);
+    spec.addColorStop(0, "rgba(255,255,255,0.32)");
+    spec.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = spec;
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+  }
+  ctx.restore();
 }
 
 function drawFrostVeil(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World) {
@@ -1858,18 +1857,28 @@ function drawBoltTrail(ctx: CanvasRenderingContext2D, pts: { x: number; y: numbe
 }
 
 function drawBoltWhitePulse(ctx: CanvasRenderingContext2D, ball: Ball, time: number) {
-	const pulse = 0.5 + 0.5 * Math.sin(time * 2.2);
-	ctx.save();
-	ctx.translate(ball.x, ball.y + (ball.squash < 1 ? ball.r * (1 - ball.squash) : 0));
-	ctx.scale(1 / ball.squash, ball.squash);
-	ctx.globalCompositeOperation = "screen";
-	ctx.fillStyle = `rgba(255,255,255,${0.08 + pulse * 0.34})`;
-	ctx.shadowColor = "rgba(255,255,255,0.9)";
-	ctx.shadowBlur = ball.r * (0.25 + pulse * 0.55);
-	ctx.beginPath();
-	ctx.arc(0, 0, ball.r * 1.02, 0, Math.PI * 2);
-	ctx.fill();
-	ctx.restore();
+  const thunder = boltThunder();
+  if (!thunder) return;
+  const pulse = 0.56 + 0.44 * Math.sin(time * 8.8);
+  const { r, squash, spin } = ball;
+  ctx.save();
+  ctx.translate(ball.x, ball.y + (squash < 1 ? r * (1 - squash) : 0));
+  ctx.scale(1 / squash, squash);
+  // The supplied art is an internal lightning area, not a full-ball white wash.
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.globalCompositeOperation = "screen";
+  // Full breathing cycle: completely dark at the trough, then a sharp charged glow.
+  const breath = Math.pow(0.5 + 0.5 * Math.sin(time * 4.4 - Math.PI / 2), 1.65);
+  ctx.globalAlpha = breath;
+  ctx.shadowColor = `rgba(210, 250, 255, ${breath})`;
+  ctx.shadowBlur = r * (0.1 + breath * 0.55);
+  ctx.rotate(spin);
+  ctx.drawImage(thunder, -r, -r, r * 2, r * 2);
+  ctx.globalAlpha = breath * (0.7 + pulse * 0.3);
+  ctx.drawImage(thunder, -r, -r, r * 2, r * 2);
+  ctx.restore();
 }
 function drawBoltBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean, time: number) {
   const { x, y, r, spin, squash } = ball;
