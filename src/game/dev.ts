@@ -73,6 +73,9 @@ export type DevHud = {
   /** Currently active modifier (from run or force). */
   modifier: ModifierId;
   prisonProjectiles: boolean;
+  /** A value set from the sandbox Match tab is held through gameplay updates. */
+  scoreLocked: boolean;
+  comboLocked: boolean;
 };
 
 export const DEFAULT_DEV: DevHud = {
@@ -95,6 +98,8 @@ export const DEFAULT_DEV: DevHud = {
   modifierForce: null,
   modifier: "none",
   prisonProjectiles: true,
+  scoreLocked: false,
+  comboLocked: false,
 };
 
 export type DevCmd =

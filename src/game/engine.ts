@@ -193,6 +193,9 @@ export function createGame(
   let devModifierForce: ModifierId | null = null;
   let combo = 0;
   let streak = 0;
+  // Sandbox Match-tab settings hold these values steady until the user sets a new one or exits.
+  let devScoreLock: number | null = null;
+  let devComboLock: number | null = null;
   let mix = {
     master: save.master,
     music: save.music,
@@ -1150,6 +1153,22 @@ export function createGame(
     return rogueRun.runScore + rogueRun.stageScore;
   }
 
+  function applyDevStatLocks() {
+    if (!devOn) return;
+    if (devScoreLock !== null) {
+      score = devScoreLock;
+      if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
+    }
+    if (devComboLock !== null) {
+      combo = devComboLock;
+      streak = devComboLock;
+      comboClock = 0;
+      comboCounting = true;
+      recoverTo = 0;
+      recoverMakes = 0;
+    }
+  }
+
   function emitHud() {
     const raw01 = timerMax > 0 ? timer / timerMax : 0;
     const timer01 = hackerAwaken ? 1 - raw01 : raw01;
@@ -1189,6 +1208,8 @@ export function createGame(
         modifierForce: devModifierForce,
         modifier: stageMod.id,
         prisonProjectiles: devPrisonProjectiles,
+        scoreLocked: devScoreLock !== null,
+        comboLocked: devComboLock !== null,
       },
       ballId,
       playMode,
@@ -3661,6 +3682,8 @@ export function createGame(
     devScene = "void";
     devFreeze = false;
     devHoldHeat = false;
+    devScoreLock = null;
+    devComboLock = null;
     devPhys = { ...DEFAULT_PHYS };
   }
 
@@ -3896,7 +3919,9 @@ export function createGame(
         emitHud();
         return;
       case "score":
-        score = Math.max(0, Math.floor(cmd.n));
+        devScoreLock = Math.max(0, Math.floor(cmd.n));
+        score = devScoreLock;
+        if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
         emitHud();
         return;
       case "addScore":
@@ -3905,6 +3930,7 @@ export function createGame(
         return;
       case "combo": {
         const n = Math.max(0, Math.floor(cmd.n));
+        devComboLock = n;
         combo = n;
         streak = n;
         comboClock = 0;
@@ -6064,6 +6090,7 @@ export function createGame(
         let steps = 0;
         while (acc >= STEP && steps < MAX_STEPS) {
           physics(STEP);
+          applyDevStatLocks();
           acc -= STEP;
           steps++;
         }

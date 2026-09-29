@@ -806,12 +806,14 @@ function BallThumb({ kit, large = false }: { kit: (typeof BALLS)[number]; large?
   }
   if (kit.id === "frost") {
     return (
-      <span
-        className={`${big} rounded-full shadow-inner`}
-        style={{
-          background:
-            "radial-gradient(circle at 32% 28%, #e8f6ff 0%, #7ec8ff 45%, #2a6a9e 100%)",
-        }}
+      <img
+        src={kit.src ?? kit.fallback}
+        alt=""
+        width={large ? 80 : 64}
+        height={large ? 80 : 64}
+        decoding="async"
+        draggable={false}
+        className={`${big} rounded-full object-cover shadow-inner`}
       />
     );
   }

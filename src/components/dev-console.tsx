@@ -16,6 +16,19 @@ const ZH = {
   restoreDefault: String.fromCharCode(0x6062, 0x590d, 0x9ed8, 0x8ba4),
   gyroDebug: String.fromCharCode(0x9640, 0x87ba, 0x4eea, 0x8c03, 0x8bd5),
   restoreMaze: String.fromCharCode(0x6062, 0x590d, 0x8ff7, 0x5bab, 0x9ed8, 0x8ba4),
+  locked: String.fromCharCode(0x5df2, 0x9501, 0x5b9a),
+  resetLocked: String.fromCharCode(0x91cd, 0x65b0, 0x8bbe, 0x7f6e),
+  setAndLock: String.fromCharCode(0x8bbe, 0x7f6e, 0x5e76, 0x9501, 0x5b9a),
+  score: String.fromCharCode(0x7d2f, 0x8ba1, 0x5206, 0x6570),
+  combo: String.fromCharCode(0x8fde, 0x51fb, 0x6570),
+  cooldownTime: String.fromCharCode(0x51b7, 0x5374, 0x6761, 0x20, 0x002f, 0x20, 0x65f6, 0x95f4),
+  full: String.fromCharCode(0x6ee1),
+  freeze: String.fromCharCode(0x51bb, 0x7ed3),
+  startTimer: String.fromCharCode(0x5f00, 0x59cb, 0x8ba1, 0x65f6),
+  timeUp: String.fromCharCode(0x65f6, 0x95f4, 0x5230),
+  buzzer: String.fromCharCode(0x7edd, 0x6740),
+  match: String.fromCharCode(0x5bf9, 0x5c40),
+  resetBall: String.fromCharCode(0x91cd, 0x7f6e, 0x7bee, 0x7403),
 };
 
 export function DevConsole({ dev, score, combo, gfx, rogue, onCmd, onMenu, onSearchlights }: { dev: DevHud; score: number; combo: number; gfx: Gfx; rogue: RogueHud | null; onCmd: (cmd: DevCmd) => void; onMenu: () => void; onSearchlights: () => void }) {
@@ -33,8 +46,8 @@ export function DevConsole({ dev, score, combo, gfx, rogue, onCmd, onMenu, onSea
 }
 function Chip({label,on,onClick}:{label:string;on?:boolean;onClick:()=>void}) { return <button type="button" onClick={onClick} className={cn("h-9 min-w-11 rounded-md px-2.5 text-sm font-medium",on?"bg-accent text-accent-fg":"border border-border bg-bg-subtle text-fg")}>{label}</button>; }
 function Row({title,children}:{title:string;children:ReactNode}) { return <div className="mb-3"><p className="mb-1.5 text-xs tracking-widest text-muted">{title}</p><div className="flex flex-wrap gap-1.5">{children}</div></div>; }
-function NumberEdit({label,value,onSet}:{label:string;value:number;onSet:(n:number)=>void}) { const [draft,setDraft]=useState(String(value)); return <div className="mb-3"><p className="mb-1.5 text-xs tracking-widest text-muted">{label}</p><div className="flex gap-1.5"><input inputMode="numeric" value={draft} onChange={(e)=>setDraft(e.target.value)} className="h-10 min-w-0 flex-1 rounded-md border border-border bg-bg-subtle px-3 text-sm text-fg"/><Chip label="设置" onClick={()=>onSet(numeric(draft,value))}/></div></div>; }
-function MatchTab({dev,score,combo,onCmd}:{dev:DevHud;score:number;combo:number;onCmd:(cmd:DevCmd)=>void}) { return <><NumberEdit label="累计分数" value={score} onSet={(n)=>onCmd({t:"score",n})}/><NumberEdit label="连击数" value={combo} onSet={(n)=>onCmd({t:"combo",n})}/><Row title="冷却条 / 时间"><Chip label="满" onClick={()=>onCmd({t:"timer01",n:1})}/><Chip label="60%" onClick={()=>onCmd({t:"timer01",n:.6})}/><Chip label="10%" onClick={()=>onCmd({t:"timer01",n:.1})}/><Chip label="冻结" on={dev.freeze} onClick={()=>onCmd({t:"freeze",on:!dev.freeze})}/><Chip label="开始计时" onClick={()=>onCmd({t:"armTimer"})}/><Chip label="时间到" onClick={()=>onCmd({t:"timeUp"})}/><Chip label="绝杀" onClick={()=>onCmd({t:"buzzer"})}/></Row><Row title="对局"><Chip label="重置篮球" onClick={()=>onCmd({t:"resetBall"})}/><Chip label="恢复默认" onClick={()=>onCmd({t:"resetMatch"})}/></Row></>; }
+function NumberEdit({label,value,locked=false,onSet}:{label:string;value:number;locked?:boolean;onSet:(n:number)=>void}) { const [draft,setDraft]=useState(String(value)); return <div className="mb-3"><div className="mb-1.5 flex items-center justify-between"><p className="text-xs tracking-widest text-muted">{label}</p>{locked ? <span className="text-[10px] font-medium tracking-wider text-accent">{ZH.locked}</span> : null}</div><div className="flex gap-1.5"><input inputMode="numeric" value={draft} onChange={(e)=>setDraft(e.target.value)} className="h-10 min-w-0 flex-1 rounded-md border border-border bg-bg-subtle px-3 text-sm text-fg"/><Chip label={locked ? ZH.resetLocked : ZH.setAndLock} onClick={()=>onSet(numeric(draft,value))}/></div></div>; }
+function MatchTab({dev,score,combo,onCmd}:{dev:DevHud;score:number;combo:number;onCmd:(cmd:DevCmd)=>void}) { return <><NumberEdit label={ZH.score} value={score} locked={dev.scoreLocked} onSet={(n)=>onCmd({t:"score",n})}/><NumberEdit label={ZH.combo} value={combo} locked={dev.comboLocked} onSet={(n)=>onCmd({t:"combo",n})}/><Row title={ZH.cooldownTime}><Chip label={ZH.full} onClick={()=>onCmd({t:"timer01",n:1})}/><Chip label="60%" onClick={()=>onCmd({t:"timer01",n:.6})}/><Chip label="10%" onClick={()=>onCmd({t:"timer01",n:.1})}/><Chip label={ZH.freeze} on={dev.freeze} onClick={()=>onCmd({t:"freeze",on:!dev.freeze})}/><Chip label={ZH.startTimer} onClick={()=>onCmd({t:"armTimer"})}/><Chip label={ZH.timeUp} onClick={()=>onCmd({t:"timeUp"})}/><Chip label={ZH.buzzer} onClick={()=>onCmd({t:"buzzer"})}/></Row><Row title={ZH.match}><Chip label={ZH.resetBall} onClick={()=>onCmd({t:"resetBall"})}/><Chip label={ZH.restoreDefault} onClick={()=>onCmd({t:"resetMatch"})}/></Row></>; }
 function SceneTab({dev,gfx,onCmd,onSearchlights}:{dev:DevHud;gfx:Gfx;onCmd:(cmd:DevCmd)=>void;onSearchlights:()=>void}) {
   const keys: [keyof Pick<Gfx,"ballShade"|"ballShadow"|"particles"|"graffitiFx"|"impact"|"flash"|"buzzerSpot">,string][] = [["ballShade","球光影"],["ballShadow","投影"],["particles","粒子"],["graffitiFx","涂鸦"],["impact","镜头"],["flash","闪光"],["buzzerSpot","绝杀聚光"]];
   return <>

@@ -43,12 +43,157 @@ function boltThunder() {
   return null;
 }
 
+const quantumFrameImages: (HTMLImageElement | null)[] = [null, null, null, null];
+const quantumFrameRequested = [false, false, false, false];
+let quantumAuraImage: HTMLImageElement | null = null;
+let quantumAuraRequested = false;
+const quantumFontImages: (HTMLImageElement | null)[] = [null, null, null, null, null];
+const quantumFontRequested = [false, false, false, false, false];
+
+function quantumFont(index: number) {
+  const font = Math.max(0, Math.min(4, index));
+  const cached = quantumFontImages[font];
+  if (cached?.complete && cached.naturalWidth > 0) return cached;
+  if (!quantumFontRequested[font]) {
+    quantumFontRequested[font] = true;
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => { quantumFontImages[font] = image; };
+    image.src = `/game/balls/quantum-font/ghost-font${font + 1}.png?v=1`;
+    quantumFontImages[font] = image;
+  }
+  return null;
+}
+
+function quantumAura() {
+  if (quantumAuraImage?.complete && quantumAuraImage.naturalWidth > 0) return quantumAuraImage;
+  if (!quantumAuraRequested) {
+    quantumAuraRequested = true;
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => { quantumAuraImage = image; };
+    image.src = "/game/balls/quantum-aura.png?v=1";
+    quantumAuraImage = image;
+  }
+  return null;
+}
+
+function quantumFrame(index: number) {
+  const frame = Math.max(0, Math.min(3, index));
+  const cached = quantumFrameImages[frame];
+  if (cached?.complete && cached.naturalWidth > 0) return cached;
+  if (!quantumFrameRequested[frame]) {
+    quantumFrameRequested[frame] = true;
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => { quantumFrameImages[frame] = image; };
+    image.src = `/game/balls/quantum${frame}.png?v=1`;
+    quantumFrameImages[frame] = image;
+  }
+  return null;
+}
+
+function drawQuantumBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean, time: number) {
+  // Tunneling is intentionally legible: disappear between each alternate quantum frame.
+  const sequence: Array<number | null> = [null, 1, null, 2, null, 3];
+  const frame = ball.blink ? sequence[Math.floor(time * 18) % sequence.length]! : 0;
+  if (frame === null) return;
+  const texture = quantumFrame(frame) ?? ballImage("quantum");
+  const { x, y, r, spin, squash } = ball;
+  ctx.save();
+  ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
+  ctx.scale(1 / squash, squash);
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.clip();
+  if (texture) {
+    const flash = Math.floor(time * 18);
+    ctx.save();
+    if (ball.blink) {
+      // Alternate cold blue and alert red phase frames during tunneling.
+      ctx.filter = flash % 2 === 0
+        ? "sepia(1) saturate(4.5) hue-rotate(315deg) brightness(1.12)"
+        : "sepia(1) saturate(4.5) hue-rotate(145deg) brightness(1.12)";
+    }
+    ctx.rotate(spin);
+    ctx.drawImage(texture, -r, -r, r * 2, r * 2);
+    ctx.restore();
+
+    const aura = quantumAura();
+    if (aura) {
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha = ball.blink ? 1 : 0.9;
+      ctx.rotate(time * 0.5);
+      ctx.drawImage(aura, -r, -r, r * 2, r * 2);
+      // A second low-opacity screen pass brightens luminous strokes without
+      // flattening the source artwork into a solid white disk.
+      ctx.globalAlpha = ball.blink ? 0.48 : 0.28;
+      ctx.drawImage(aura, -r, -r, r * 2, r * 2);
+      ctx.restore();
+    }
+
+    if (ball.blink) {
+      // Deliberately no ball-spin rotation: the glyph stays upright on screen.
+      const flash = Math.floor(time * 18);
+      const font = quantumFont(flash % 5);
+      if (font) {
+        ctx.save();
+        ctx.globalCompositeOperation = "source-over";
+        ctx.globalAlpha = 1;
+        const size = r * 2.08;
+        ctx.drawImage(font, -size / 2, -size / 2, size, size);
+        ctx.restore();
+      }
+    }
+
+    if (ball.blink) {
+      // Fragment the visible phase frame into shifting signal bands, while the
+      // neighboring null frames keep the actual teleport discontinuity sharp.
+      const phase = Math.floor(time * 72);
+      const bandH = Math.max(2, r * 0.13);
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      for (let band = 0; band < 4; band += 1) {
+        const bandY = -r + ((phase * 9 + band * r * 0.58) % (r * 2));
+        const offset = ((phase + band * 7) % 2 ? 1 : -1) * r * (0.1 + band * 0.035);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(-r, bandY, r * 2, bandH);
+        ctx.clip();
+        ctx.globalAlpha = 0.5 - band * 0.065;
+        ctx.filter = band % 2 ? "hue-rotate(135deg) saturate(2.6)" : "hue-rotate(-35deg) saturate(2.4)";
+        ctx.translate(offset, 0);
+        ctx.rotate(spin);
+        ctx.drawImage(texture, -r, -r, r * 2, r * 2);
+        ctx.restore();
+      }
+      ctx.filter = "none";
+      ctx.globalAlpha = 0.42;
+      ctx.fillStyle = "#b9f7ff";
+      for (let line = 0; line < 3; line += 1) {
+        const y = -r + ((phase * 5 + line * r * 0.68) % (r * 2));
+        ctx.fillRect(-r * 0.94, y, r * 1.88, Math.max(1, r * 0.025));
+      }
+      ctx.restore();
+    }
+  }
+  if (lit) {
+    const shine = ctx.createRadialGradient(-r * 0.28, -r * 0.36, 0, 0, 0, r);
+    shine.addColorStop(0, "rgba(255,255,255,0.26)");
+    shine.addColorStop(1, "rgba(88,42,255,0)");
+    ctx.fillStyle = shine;
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+  }
+  ctx.restore();
+}
+
 function timeControlImage(kind: "button" | "circle") {
   const cached = timeControlImages[kind];
   if (cached) return cached.complete && cached.naturalWidth > 0 ? cached : null;
   const image = new Image();
   image.decoding = "async";
-  image.src = `/game/backforward-${kind}.png`;
+  image.src = `/game/backforward-${kind}.png?v=2`;
   timeControlImages[kind] = image;
   return null;
 }
@@ -624,19 +769,24 @@ function prisonBarPair(label: string | null): {
 	return null;
 }
 
-function timerFillRed() {
-	const img = artImage("timerFill");
-	if (!img) return null;
-	const id = `${img.naturalWidth}x${img.naturalHeight}`;
+function timerFillRed(img: CanvasImageSource & { naturalWidth?: number; naturalHeight?: number }) {
+	const width = img.naturalWidth ?? 0;
+	const height = img.naturalHeight ?? 0;
+	if (!width || !height) return null;
+	const id = `${width}x${height}:${img instanceof HTMLImageElement ? img.src : "canvas"}`;
 	if (fillRed && fillRedId === id) return fillRed;
 	const c = document.createElement("canvas");
-	c.width = img.naturalWidth;
-	c.height = img.naturalHeight;
+	c.width = width;
+	c.height = height;
 	const x = c.getContext("2d");
 	if (!x) return null;
-	x.filter = "hue-rotate(172deg) saturate(1.85)";
+	// Preserve the fill artwork's alpha mask, then tint only its visible pixels.
+	// Hue rotation was too subtle for the prison-specific green/blue source art.
 	x.drawImage(img, 0, 0);
-	x.filter = "none";
+	x.globalCompositeOperation = "source-atop";
+	x.fillStyle = "#ef2f22";
+	x.fillRect(0, 0, width, height);
+	x.globalCompositeOperation = "source-over";
 	fillRed = c;
 	fillRedId = id;
 	return c;
@@ -1470,23 +1620,28 @@ function drawIceBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
 	ctx.clip();
 	ctx.save();
 	ctx.rotate(spin);
-	const skin = ctx.createRadialGradient(-r * 0.28, -r * 0.34, r * 0.08, r * 0.12, r * 0.18, r * 1.08);
-	skin.addColorStop(0, "#e8f6ff");
-	skin.addColorStop(0.4, "#7ec8ff");
-	skin.addColorStop(1, "#2a6a9e");
-	ctx.fillStyle = skin;
-	ctx.fillRect(-r - 1, -r - 1, r * 2 + 2, r * 2 + 2);
-	ctx.strokeStyle = "rgba(20, 50, 80, 0.45)";
-	ctx.lineWidth = Math.max(1.2, r * 0.06);
-	ctx.beginPath();
-	ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
-	ctx.stroke();
-	ctx.beginPath();
-	ctx.moveTo(-r, 0);
-	ctx.lineTo(r, 0);
-	ctx.moveTo(0, -r);
-	ctx.lineTo(0, r);
-	ctx.stroke();
+	const texture = ballImage("frost");
+	if (texture) {
+		ctx.drawImage(texture, -r, -r, r * 2, r * 2);
+	} else {
+		const skin = ctx.createRadialGradient(-r * 0.28, -r * 0.34, r * 0.08, r * 0.12, r * 0.18, r * 1.08);
+		skin.addColorStop(0, "#e8f6ff");
+		skin.addColorStop(0.4, "#7ec8ff");
+		skin.addColorStop(1, "#2a6a9e");
+		ctx.fillStyle = skin;
+		ctx.fillRect(-r - 1, -r - 1, r * 2 + 2, r * 2 + 2);
+		ctx.strokeStyle = "rgba(20, 50, 80, 0.45)";
+		ctx.lineWidth = Math.max(1.2, r * 0.06);
+		ctx.beginPath();
+		ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
+		ctx.stroke();
+		ctx.beginPath();
+		ctx.moveTo(-r, 0);
+		ctx.lineTo(r, 0);
+		ctx.moveTo(0, -r);
+		ctx.lineTo(0, r);
+		ctx.stroke();
+	}
 	ctx.restore();
 	if (lit) {
 		const shade = ctx.createRadialGradient(0, 0, r * 0.48, 0, 0, r);
@@ -2046,7 +2201,10 @@ function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _wor
 		drawMazeBall(ctx, ball, lit);
 		return;
 	}
-	if (ballId === "quantum" && ball.blink && Math.floor(time * 16) % 2 === 0) return;
+	if (ballId === "quantum") {
+		drawQuantumBall(ctx, ball, lit, time);
+		return;
+	}
 	if (ballId === "prison") {
 		drawPrisonBall(ctx, ball, lit);
 		return;
@@ -2590,8 +2748,8 @@ function drawCountdown(
 			ctx.clip();
 			const danger = buzzer ? 1 : fill >= 0.4 ? 0 : Math.min(1, Math.pow((0.4 - fill) / 0.2, 0.55));
 			ctx.drawImage(fillImg, bx, by, dw, dh);
-			if (danger > 0 && !pair) {
-				const red = timerFillRed();
+			if (danger > 0) {
+				const red = timerFillRed(fillImg);
 				if (red) {
 					ctx.globalAlpha = danger;
 					ctx.drawImage(red, bx, by, dw, dh);
