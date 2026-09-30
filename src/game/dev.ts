@@ -3,6 +3,7 @@ import type { BallId } from "./balls";
 import type { PlayMode } from "./types";
 import type { ModifierId } from "./modifiers";
 import { MODIFIER_LABELS } from "./modifiers";
+import type { BalanceConfig, BalanceRow, BalanceSession } from "./balance-test";
 
 export type DevSceneId = "void" | "street" | "prison";
 
@@ -76,6 +77,7 @@ export type DevHud = {
   /** A value set from the sandbox Match tab is held through gameplay updates. */
   scoreLocked: boolean;
   comboLocked: boolean;
+  balance: { session: BalanceSession | null; config: BalanceConfig; skillOn: boolean; rows: BalanceRow[] };
 };
 
 export const DEFAULT_DEV: DevHud = {
@@ -100,6 +102,7 @@ export const DEFAULT_DEV: DevHud = {
   prisonProjectiles: true,
   scoreLocked: false,
   comboLocked: false,
+  balance: { session: null, config: { k: 0.06, r0Tolerance: 0.08, r1Min: 0.9, r1Max: 1.1, strength: {} }, skillOn: true, rows: [] },
 };
 
 export type DevCmd =
@@ -138,6 +141,11 @@ export type DevCmd =
   | { t: "maze"; k: keyof DevMaze; n: number }
   | { t: "mazeReset" }
   | { t: "resetMatch" }
+  | { t: "balanceStart"; ballId: BallId; baseline: BallId }
+  | { t: "balanceSkill"; on: boolean }
+  | { t: "balanceNext" }
+  | { t: "balanceClear" }
+  | { t: "balanceConfig"; k?: number; r0Tolerance?: number; r1Min?: number; r1Max?: number; ballId?: BallId; strengthKey?: "score" | "safety" | "tempo" | "cost"; n?: number }
   | { t: "gfx"; key: "ballShade" | "ballShadow" | "particles" | "graffitiFx" | "impact" | "flash" | "buzzerSpot"; on: boolean };
 
 export const DEV_MODIFIERS: { id: ModifierId | "auto"; label: string }[] = [

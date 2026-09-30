@@ -20,6 +20,7 @@ import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { hackerPadLayout, hitHackerPad, type HackerDir } from "./hacker-pad";
 import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
+import { loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
 import { DEFAULT_MAZE, DEFAULT_PHYS, clampMaze, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevMaze, type DevPhys, type DevSceneId } from "./dev";
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
@@ -220,6 +221,17 @@ export function createGame(
   let devPhys: DevPhys = { ...DEFAULT_PHYS };
   let devMaze: DevMaze = { ...DEFAULT_MAZE };
   let devPrisonProjectiles = true;
+  let balanceStore: BalanceStore = typeof window === "undefined" ? { version: 1, config: { k: .06, r0Tolerance: .08, r1Min: .9, r1Max: 1.1, strength: {} }, sessions: [] } : loadBalanceStore();
+  let balanceSession: BalanceSession | null = null;
+  let balanceSkillOn = true;
+  let balancePeakCombo = 0;
+  let balanceTriggers = 0;
+  let balanceSkillScore = 0;
+  /** Prevent gameOver and manual retry from saving the same balance trial twice. */
+  let balanceTrialRecorded = false;
+  let balanceMisses = 0;
+  let balanceLastMakeAt: number | null = null;
+  let balanceMaxMakeGapSeconds = 0;
   audio.setMix(mix);
 
   let ball = makeBall(world, 1, ballRadius(world.ballR, ballId));
@@ -309,33 +321,21 @@ export function createGame(
     return effectiveBall(ballId, fuseIds());
   }
 
-  function isPrison() {
-    return kit().chain;
-  }
+  function skillsEnabled() { return !devOn || !balanceSession || balanceSkillOn; }
 
-  function isNinja() {
-    return kit().ninja;
-  }
+  function isPrison() { return skillsEnabled() && kit().chain; }
 
-  function isHacker() {
-    return kit().codeRain;
-  }
+  function isNinja() { return skillsEnabled() && kit().ninja; }
 
-  function isVector() {
-    return kit().vector;
-  }
+  function isHacker() { return skillsEnabled() && kit().codeRain; }
 
-  function isMaze() {
-    return kit().maze;
-  }
+  function isVector() { return skillsEnabled() && kit().vector; }
 
-  function isQuantum() {
-    return kit().quantum;
-  }
+  function isMaze() { return skillsEnabled() && kit().maze; }
 
-  function isTime() {
-    return kit().time;
-  }
+  function isQuantum() { return skillsEnabled() && kit().quantum; }
+
+  function isTime() { return skillsEnabled() && kit().time; }
 
   function timeRewindBlocked() {
     return buzzer || timeUp;
@@ -525,7 +525,11 @@ export function createGame(
   }
 
   function markShotMissed() {
-    if (shotOpen && !shotMade) shotMissed = true;
+    if (shotOpen && !shotMade) {
+      shotMissed = true;
+      // Count one completed miss per shot, only after the balance minute is live.
+      if (balanceSession && isMinuteMode() && timerArmed) balanceMisses += 1;
+    }
   }
 
   /** Break active streak (timeout or finished miss jump). Heat may keep decaying. */
@@ -1154,6 +1158,7 @@ export function createGame(
   }
 
   function applyDevStatLocks() {
+    if (balanceSession) balancePeakCombo = Math.max(balancePeakCombo, streak);
     if (!devOn) return;
     if (devScoreLock !== null) {
       score = devScoreLock;
@@ -1210,6 +1215,7 @@ export function createGame(
         prisonProjectiles: devPrisonProjectiles,
         scoreLocked: devScoreLock !== null,
         comboLocked: devComboLock !== null,
+        balance: { session: balanceSession, config: balanceStore.config, skillOn: balanceSkillOn, rows: balanceSession ? balanceReport(balanceSession, balanceStore.config) : [] },
       },
       ballId,
       playMode,
@@ -1277,8 +1283,10 @@ export function createGame(
     return v;
   }
 
+  // Glass uses a dedicated score/durability mode rather than a BallKit skill
+  // flag, but it is still an ability for an R0 skills-off comparison.
   function isGlass() {
-    return kit().glass;
+    return skillsEnabled() && kit().glass;
   }
 
   function glassScaledHurt(
@@ -1401,25 +1409,15 @@ export function createGame(
     return Math.max(52, world.w * 0.15);
   }
 
-  function canHeat() {
-    return kit().heat;
-  }
+  function canHeat() { return skillsEnabled() && kit().heat; }
 
-  function isFrost() {
-    return kit().frost;
-  }
+  function isFrost() { return skillsEnabled() && kit().frost; }
 
-  function isChamp() {
-    return kit().champ;
-  }
+  function isChamp() { return skillsEnabled() && kit().champ; }
 
-  function isAnti() {
-    return kit().anti;
-  }
+  function isAnti() { return skillsEnabled() && kit().anti; }
 
-  function isBolt() {
-    return kit().bolt;
-  }
+  function isBolt() { return skillsEnabled() && kit().bolt; }
 
   function modifierHost() {
     return {
@@ -2623,6 +2621,13 @@ export function createGame(
   }
 
   function beginPlay() {
+    balancePeakCombo = 0;
+    balanceTriggers = 0;
+    balanceSkillScore = 0;
+    balanceTrialRecorded = false;
+    balanceMisses = 0;
+    balanceLastMakeAt = null;
+    balanceMaxMakeGapSeconds = 0;
     phase = "playing";
     paused = false;
     rewindHistory = [];
@@ -2755,8 +2760,22 @@ export function createGame(
     emitHud();
   }
 
+  function recordBalanceTrial() {
+    // A test run is valid only after its first make has armed the minute clock.
+    // This also lets "again" abandon an active, scored test safely.
+    if (!balanceSession || !devOn || !isMinuteMode() || !timerArmed || balanceTrialRecorded) return;
+    const state: SkillState = balanceSkillOn ? "on" : "off";
+    balanceSession.trials.push({ id: crypto.randomUUID(), sessionId: balanceSession.id, ballId, skillState: ballId === balanceSession.baseline ? "on" : state, score, maxCombo: balancePeakCombo, triggers: balanceTriggers, skillScore: balanceSkillScore, makes: madeCount, misses: balanceMisses, maxMakeGapSeconds: balanceMaxMakeGapSeconds, timestamp: new Date().toISOString(), gameRev: GAME_REV, configKey: balanceConfigKey(balanceStore.config) });
+    const existing = balanceStore.sessions.findIndex((session) => session.id === balanceSession!.id);
+    if (existing >= 0) balanceStore.sessions[existing] = balanceSession;
+    else balanceStore.sessions.push(balanceSession);
+    saveBalanceStore(balanceStore);
+    balanceTrialRecorded = true;
+  }
+
   function gameOver(opts?: { quiet?: boolean }) {
     if (phase === "over") return;
+    recordBalanceTrial();
     phase = "over";
     paused = false;
     buzzer = false;
@@ -4037,6 +4056,37 @@ export function createGame(
       case "skin":
         applyBall(cmd.id);
         return;
+      case "balanceStart": {
+        if (!devOn) enterSandbox();
+        balanceSession = { id: crypto.randomUUID(), baseline: cmd.baseline, ballId: cmd.ballId, scene: devScene, physKey: JSON.stringify(devPhys), createdAt: new Date().toISOString(), gameRev: GAME_REV, trials: [] };
+        // A balance trial begins with a full 60 seconds on standby. The shared
+        // scoring path arms this clock on the first made basket, just like normal
+        // minute mode, so opening the test console never consumes test time.
+        balanceSkillOn = true;
+        playMode = "minute";
+        applyBall(cmd.baseline);
+        beginPlay();
+        hint = false;
+        emitHud();
+        return;
+      }
+      case "balanceSkill": balanceSkillOn = cmd.on; refreshFuseSkills(); emitHud(); return;
+      case "balanceNext": {
+        if (!balanceSession) return;
+        const hasBaseline = balanceSession.trials.some((trial) => trial.ballId === balanceSession!.baseline);
+        playMode = "minute";
+        applyBall(hasBaseline ? balanceSession.ballId : balanceSession.baseline);
+        balanceSkillOn = hasBaseline;
+        beginPlay();
+        hint = false;
+        // Keep timerArmed false: first basket starts the 60-second trial.
+        emitHud();
+        return;
+      }
+      case "balanceClear": balanceSession = null; emitHud(); return;
+      case "balanceConfig": {
+        const c=balanceStore.config; if(typeof cmd.k==="number") c.k=Math.max(0,Math.min(1,cmd.k)); if(typeof cmd.r0Tolerance==="number") c.r0Tolerance=Math.max(0,Math.min(1,cmd.r0Tolerance)); if(typeof cmd.r1Min==="number") c.r1Min=Math.max(0,Math.min(2,cmd.r1Min)); if(typeof cmd.r1Max==="number") c.r1Max=Math.max(0,Math.min(2,cmd.r1Max)); if(cmd.ballId&&cmd.strengthKey&&typeof cmd.n==="number"){const s=c.strength[cmd.ballId]||{...DEFAULT_STRENGTH}; s[cmd.strengthKey]=Math.max(-3,Math.min(3,Math.round(cmd.n))); c.strength[cmd.ballId]=s;} saveBalanceStore(balanceStore); emitHud(); return;
+      }
       case "resetMatch":
         beginPlay();
         if (devOn) {
@@ -5516,6 +5566,17 @@ export function createGame(
     comboCounting = true;
     comboClock = 0;
     if (!ghost) {
+      // timer is game-time only, so this excludes pauses and developer-console time.
+      // The first make starts the minute; every later make contributes a real gap.
+      if (balanceSession && isMinuteMode()) {
+        const wasArmed = timerArmed;
+        const elapsed = wasArmed ? Math.max(0, timerMax - timer) : 0;
+        if (wasArmed && balanceLastMakeAt !== null) {
+          balanceMaxMakeGapSeconds = Math.max(balanceMaxMakeGapSeconds, elapsed - balanceLastMakeAt);
+        }
+        if (!wasArmed) balanceMisses = 0;
+        balanceLastMakeAt = elapsed;
+      }
       shotMade = true;
       shotMissed = false;
       shotAirborne = false;
@@ -6267,6 +6328,8 @@ export function createGame(
     },
     retry() {
       audio.unlock();
+      // The normal "again" button must not discard a manually tested balance run.
+      recordBalanceTrial();
       beginPlay();
     },
     pause() {
