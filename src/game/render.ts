@@ -43,12 +43,23 @@ function boltThunder() {
   return null;
 }
 
-const quantumFrameImages: (HTMLImageElement | null)[] = [null, null, null, null];
-const quantumFrameRequested = [false, false, false, false];
 let quantumAuraImage: HTMLImageElement | null = null;
 let quantumAuraRequested = false;
 const quantumFontImages: (HTMLImageElement | null)[] = [null, null, null, null, null];
 const quantumFontRequested = [false, false, false, false, false];
+
+function quantumAura() {
+  if (quantumAuraImage?.complete && quantumAuraImage.naturalWidth > 0) return quantumAuraImage;
+  if (!quantumAuraRequested) {
+    quantumAuraRequested = true;
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => { quantumAuraImage = image; };
+    image.src = "/game/balls/quantum-aura.png?v=1";
+    quantumAuraImage = image;
+  }
+  return null;
+}
 
 function quantumFont(index: number) {
   const font = Math.max(0, Math.min(4, index));
@@ -65,40 +76,15 @@ function quantumFont(index: number) {
   return null;
 }
 
-function quantumAura() {
-  if (quantumAuraImage?.complete && quantumAuraImage.naturalWidth > 0) return quantumAuraImage;
-  if (!quantumAuraRequested) {
-    quantumAuraRequested = true;
-    const image = new Image();
-    image.decoding = "async";
-    image.onload = () => { quantumAuraImage = image; };
-    image.src = "/game/balls/quantum-aura.png?v=1";
-    quantumAuraImage = image;
-  }
-  return null;
-}
-
-function quantumFrame(index: number) {
-  const frame = Math.max(0, Math.min(3, index));
-  const cached = quantumFrameImages[frame];
-  if (cached?.complete && cached.naturalWidth > 0) return cached;
-  if (!quantumFrameRequested[frame]) {
-    quantumFrameRequested[frame] = true;
-    const image = new Image();
-    image.decoding = "async";
-    image.onload = () => { quantumFrameImages[frame] = image; };
-    image.src = `/game/balls/quantum${frame}.png?v=1`;
-    quantumFrameImages[frame] = image;
-  }
-  return null;
+function quantumBaseTexture() {
+  return ballImage("quantum");
 }
 
 function drawQuantumBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean, time: number) {
-  // Tunneling is intentionally legible: disappear between each alternate quantum frame.
-  const sequence: Array<number | null> = [null, 1, null, 2, null, 3];
-  const frame = ball.blink ? sequence[Math.floor(time * 18) % sequence.length]! : 0;
-  if (frame === null) return;
-  const texture = quantumFrame(frame) ?? ballImage("quantum");
+  // Tunneling remains legible by disappearing on alternating phase frames.
+  const visible = !ball.blink || Math.floor(time * 18) % 2 === 1;
+  if (!visible) return;
+  const texture = quantumBaseTexture();
   const { x, y, r, spin, squash } = ball;
   ctx.save();
   ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
