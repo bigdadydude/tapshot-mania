@@ -5,7 +5,7 @@ import { playableBalls } from "@/game/balls";
 import type { Gfx } from "@/game/types";
 import type { RogueHud } from "@/game/rogue";
 import { ROGUE_CATALOG, type RogueCatalogEntry } from "@/game/rogue-catalog";
-import { csv, calibrateKDetailed, historicalSummary, loadBalanceStore, saveBalanceStore, sessionProgress, strengthTotal, type BalanceSession, type BalanceStore, type VerdictLabel } from "@/game/balance-test";
+import { csv, calibrateKDetailed, historicalSummary, loadBalanceStore, saveBalanceStore, sessionProgress, skillEfficiencyEntrance, strengthTotal, DEFAULT_AUTO_WEIGHTS, type BalanceSession, type BalanceStore, type VerdictLabel } from "@/game/balance-test";
 import { cn } from "@/lib/utils";
 
 type Tab = "match" | "scene" | "ball" | "balance" | "rogue" | "shop";
@@ -285,14 +285,23 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
                   {b.auto.costReady ? b.auto.dims.cost?.toFixed(2) ?? "—" : "待测"}
                 </p>
                 <p className="mt-1 text-[10px] text-subtle">
+                  权重 得分{(b.config.autoWeights ?? DEFAULT_AUTO_WEIGHTS).score} / 容错
+                  {(b.config.autoWeights ?? DEFAULT_AUTO_WEIGHTS).safety} / 节奏
+                  {(b.config.autoWeights ?? DEFAULT_AUTO_WEIGHTS).tempo} / 爆发
+                  {(b.config.autoWeights ?? DEFAULT_AUTO_WEIGHTS).burst} / 代价
+                  {(b.config.autoWeights ?? DEFAULT_AUTO_WEIGHTS).cost}（可配置起始值）
+                </p>
+                <p className="mt-1 text-[10px] text-subtle">
                   ΔR {b.auto.scoreGain?.toFixed(2)} · 打铁率Δ {b.auto.missRateGain?.toFixed(2)} · 间隔Δ{" "}
                   {b.auto.gapGain?.toFixed(2)} · 连击Δ {b.auto.comboGain?.toFixed(2)} · 归因占比{" "}
                   {b.auto.attributionShare?.toFixed(2)}
                 </p>
+                <p className="mt-1 text-[10px] text-subtle">判定：不足 10 局不给结论；3 局起用去极值平均；定稿建议 20 局。</p>
               </>
             ) : (
               <p className="text-xs text-subtle">需要基准 + 技能关 + 技能开数据。代价在输入遥测齐全前显示「待测」。</p>
             )}
+            <p className="mt-2 text-[10px] text-subtle">{skillEfficiencyEntrance(s.ballId).message}</p>
           </section>
 
           <Row title="强度 S（设计备注）">

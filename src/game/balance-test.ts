@@ -696,3 +696,23 @@ export function csv(store: BalanceStore) {
   }
   return "\ufeff" + lines.join("\n");
 }
+
+/**
+ * Supplemental “skill-only efficiency” harness for independently triggerable skills.
+ * Results must not mix into normal B / R0 / R1 aggregates.
+ */
+export type SkillEfficiencyNote = {
+  available: boolean;
+  message: string;
+};
+
+export function skillEfficiencyEntrance(ballId: BallId): SkillEfficiencyNote {
+  const independent = new Set<BallId>(["bolt", "time", "frost", "quantum", "anti", "vector", "ninja", "champ"]);
+  if (!independent.has(ballId)) {
+    return { available: false, message: "该球没有可独立触发的技能入口；请用常规一分钟测试。" };
+  }
+  return {
+    available: true,
+    message: "专项仅技能效率测试为补充入口，不替代一分钟测试，也不计入 B / R0 / R1。",
+  };
+}
