@@ -142,8 +142,9 @@ export type DevCmd =
   | { t: "mazeReset" }
   | { t: "resetMatch" }
   | { t: "balanceStart"; ballId: BallId; baseline: BallId }
+  | { t: "balancePick"; ballId: BallId }
   | { t: "balanceSkill"; on: boolean }
-  | { t: "balanceNext" }
+  | { t: "balanceRetry" }
   | { t: "balanceClear" }
   | { t: "balanceConfig"; k?: number; r0Tolerance?: number; r1Min?: number; r1Max?: number; ballId?: BallId; strengthKey?: "score" | "safety" | "tempo" | "cost"; n?: number }
   | { t: "gfx"; key: "ballShade" | "ballShadow" | "particles" | "graffitiFx" | "impact" | "flash" | "buzzerSpot"; on: boolean };

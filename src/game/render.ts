@@ -2012,21 +2012,11 @@ function drawBoltWhitePulse(ctx: CanvasRenderingContext2D, ball: Ball, time: num
   ctx.drawImage(thunder, -r, -r, r * 2, r * 2);
   ctx.restore();
 }
-function drawBoltBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean, time: number) {
+function drawBoltBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean, _time: number) {
   const { x, y, r, spin, squash } = ball;
   ctx.save();
   ctx.translate(x, y + (squash < 1 ? r * (1 - squash) : 0));
   ctx.scale(1 / squash, squash);
-  if (lit) {
-    const glow = ctx.createRadialGradient(0, 0, r * 0.2, 0, 0, r * 1.7);
-    glow.addColorStop(0, "rgba(255,240,120,0.35)");
-    glow.addColorStop(0.55, "rgba(80,180,255,0.12)");
-    glow.addColorStop(1, "rgba(40,80,255,0)");
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(0, 0, r * 1.7, 0, Math.PI * 2);
-    ctx.fill();
-  }
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.clip();

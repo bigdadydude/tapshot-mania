@@ -4164,41 +4164,67 @@ export function createGame(
         return;
       case "balanceStart": {
         if (!devOn) enterSandbox();
-        balanceSession = {
-          id: crypto.randomUUID(),
-          baseline: cmd.baseline,
-          ballId: cmd.ballId,
-          scene: devScene,
-          playMode: "minute",
-          physKey: JSON.stringify(devPhys),
-          createdAt: new Date().toISOString(),
-          gameRev: GAME_REV,
-          configSnapshot: structuredClone(balanceStore.config),
-          trials: [],
-        };
-        // A balance trial begins with a full 60 seconds on standby. The shared
-        // scoring path arms this clock on the first made basket, just like normal
-        // minute mode, so opening the test console never consumes test time.
-        balanceSkillOn = true;
+        const testBall = parseBall(cmd.ballId);
+        const baselineBall = parseBall(cmd.baseline);
+        if (!balanceSession) {
+          balanceSession = {
+            id: crypto.randomUUID(),
+            baseline: baselineBall,
+            // Focus ball for R0/R1; Classic-only runs keep ballId as classic until a special is picked.
+            ballId: testBall === baselineBall ? baselineBall : testBall,
+            scene: devScene,
+            playMode: "minute",
+            physKey: JSON.stringify(devPhys),
+            createdAt: new Date().toISOString(),
+            gameRev: GAME_REV,
+            configSnapshot: structuredClone(balanceStore.config),
+            trials: [],
+          };
+        } else if (testBall !== baselineBall) {
+          balanceSession.ballId = testBall;
+        }
+        // Start the selected ball as-is — Classic runs feed B; specials feed R0/R1.
         playMode = "minute";
-        applyBall(cmd.baseline);
+        applyBall(testBall);
+        if (testBall === baselineBall) balanceSkillOn = true;
         beginPlay();
         hint = false;
         emitHud();
         return;
       }
+      case "balancePick": {
+        if (!devOn) enterSandbox();
+        const pick = parseBall(cmd.ballId);
+        applyBall(pick);
+        if (balanceSession && pick !== balanceSession.baseline) {
+          balanceSession.ballId = pick;
+        }
+        emitHud();
+        return;
+      }
       case "balanceSkill": balanceSkillOn = cmd.on; refreshFuseSkills(); emitHud(); return;
-      case "balanceNext": {
-        if (!balanceSession) return;
-        const hasBaseline = balanceSession.trials.some(
-          (trial) => trial.skillState === "baseline" || trial.ballId === balanceSession!.baseline,
-        );
+      case "balanceRetry": {
+        // No session yet → same as starting a fresh minute on the selected ball.
+        if (!balanceSession) {
+          const testBall = parseBall(ballId);
+          balanceSession = {
+            id: crypto.randomUUID(),
+            baseline: "plain",
+            ballId: testBall === "plain" ? "plain" : testBall,
+            scene: devScene,
+            playMode: "minute",
+            physKey: JSON.stringify(devPhys),
+            createdAt: new Date().toISOString(),
+            gameRev: GAME_REV,
+            configSnapshot: structuredClone(balanceStore.config),
+            trials: [],
+          };
+        } else {
+          recordBalanceTrial("retry");
+        }
         playMode = "minute";
-        applyBall(hasBaseline ? balanceSession.ballId : balanceSession.baseline);
-        balanceSkillOn = hasBaseline;
         beginPlay();
         hint = false;
-        // Keep timerArmed false: first basket starts the 60-second trial.
         emitHud();
         return;
       }
