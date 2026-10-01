@@ -236,6 +236,8 @@ export function createGame(
   let balanceHolds = 0;
   let balanceSkillInputs = 0;
   let balanceSkillActiveSeconds = 0;
+  /** Countdown seconds the bolt is locked by overheat. A cost, not activation time. */
+  let balanceSkillLockSeconds = 0;
   let balanceDirectMakes = 0;
   let balanceDirectScore = 0;
   let balanceRescues = 0;
@@ -1719,12 +1721,7 @@ export function createGame(
     pointerHeld = false;
     boltOverheatLeft = BOLT_OVERHEAT_DUR;
     boltOverheatStartCharge = Math.max(1, boltCharge);
-    ball.x = Math.max(ball.r, Math.min(world.w - ball.r, ball.x));
-    ball.y = world.floorY - ball.r;
-    ball.vx = 0;
-    ball.vy = 0;
-    ball.omega = 0;
-    ball.scored = false;
+    pinBoltOverheatBall();
     shotAirborne = false;
     callouts.push({
       text: "过热",
@@ -1740,15 +1737,21 @@ export function createGame(
     }
   }
 
+  function pinBoltOverheatBall() {
+    ball.x = Math.max(ball.r, Math.min(world.w - ball.r, ball.x));
+    ball.y = world.floorY - ball.r;
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.omega = 0;
+    ball.scored = false;
+  }
+
   function stepBoltOverheat(dt: number) {
     if (!isBolt() || boltOverheatLeft <= 0) return false;
     boltOverheatLeft = Math.max(0, boltOverheatLeft - dt);
     const p = boltOverheatLeft / BOLT_OVERHEAT_DUR;
     boltCharge = Math.min(boltCharge, boltOverheatStartCharge * p);
-    ball.y = world.floorY - ball.r;
-    ball.vx = 0;
-    ball.vy = 0;
-    ball.omega = 0;
+    pinBoltOverheatBall();
     ball.squash += (0.94 - ball.squash) * (1 - Math.exp(-10 * dt));
     if (boltOverheatLeft <= 0) {
       boltCharge = 0;
@@ -2657,6 +2660,7 @@ export function createGame(
     balanceHolds = 0;
     balanceSkillInputs = 0;
     balanceSkillActiveSeconds = 0;
+    balanceSkillLockSeconds = 0;
     balanceDirectMakes = 0;
     balanceDirectScore = 0;
     balanceRescues = 0;
@@ -2857,6 +2861,7 @@ export function createGame(
       holds: balanceHolds,
       skillInputs: balanceSkillInputs,
       skillActiveSeconds: Math.round(balanceSkillActiveSeconds * 100) / 100,
+      skillLockSeconds: Math.round(balanceSkillLockSeconds * 100) / 100,
       directMakes: balanceDirectMakes,
       directScore: balanceDirectScore,
       rescues: balanceRescues,
@@ -4418,9 +4423,11 @@ export function createGame(
     if (boardHitLock > 0) boardHitLock -= dt;
     if (burnFlash > 0) burnFlash = Math.max(0, burnFlash - dt);
 
-    if (stepBoltOverheat(dt)) return;
+    // Overheat locks the ball only. Clock, hoops, frost, combo, and stage mechanisms keep stepping.
+    const boltOverheated = stepBoltOverheat(dt);
 
     if (
+      !boltOverheated &&
       phase === "playing" &&
       !paused &&
       pointerHeld &&
@@ -4457,6 +4464,9 @@ export function createGame(
           hoop.frostLeft > 0 ||
           Boolean(other && other.frostLeft > 0);
         if (skillBusy) balanceSkillActiveSeconds += drain;
+        // Overheat is lost time (ball locked), not time the skill is active.
+        // Count the same countdown drain, and not the dive frame that starts it.
+        if (boltOverheated) balanceSkillLockSeconds += drain;
       }
       if (timer <= 0) {
         timer = 0;
@@ -4599,7 +4609,7 @@ export function createGame(
     boltFloorSpeed = 0;
     boltBoardGrip = false;
     boltFastFill = false;
-    const boltLock = stepBoltStorm(dt);
+    const boltLock = boltOverheated || stepBoltStorm(dt);
 
     if (!boltLock) {
     prevBallX = ball.x;
@@ -4835,6 +4845,9 @@ export function createGame(
         );
       }
     }
+    } else if (boltOverheated && phase === "playing" && !stageMod.holdsBall?.()) {
+      // Projectiles and other post-step mechanisms still advance; the ball stays pinned below.
+      stageMod.afterPhysics?.(dt, modifierHost());
     }
 
     stepBoltBoardTop(dt);
@@ -4877,6 +4890,7 @@ export function createGame(
         callouts.pop();
       } else i += 1;
     }
+    if (boltOverheated) pinBoltOverheatBall();
     captureRewindSnapshot(dt);
   }
 

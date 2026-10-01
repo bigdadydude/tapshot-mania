@@ -47,6 +47,8 @@ export type BalanceTrial = {
   holds?: number;
   skillInputs?: number;
   skillActiveSeconds?: number;
+  /** Countdown seconds spent locked out (bolt overheat). Recorded cost, not an S input. */
+  skillLockSeconds?: number;
   directMakes?: number;
   directScore?: number;
   rescues?: number;
@@ -656,7 +658,7 @@ export function historicalSummary(
 
 export function csv(store: BalanceStore) {
   const lines = [
-    "sessionId,ballId,skillState,score,maxCombo,makes,misses,maxMakeGapSeconds,effectiveSeconds,completed,endReason,clicks,holds,skillInputs,skillActiveSeconds,triggers,skillScore,directMakes,directScore,rescues,unattributedScore,timestamp,gameRev,configKey,scene,playMode",
+    "sessionId,ballId,skillState,score,maxCombo,makes,misses,maxMakeGapSeconds,effectiveSeconds,completed,endReason,clicks,holds,skillInputs,skillActiveSeconds,skillLockSeconds,triggers,skillScore,directMakes,directScore,rescues,unattributedScore,timestamp,gameRev,configKey,scene,playMode",
   ];
   for (const s of store.sessions) {
     for (const t of s.trials) {
@@ -677,6 +679,7 @@ export function csv(store: BalanceStore) {
           t.holds ?? "",
           t.skillInputs ?? "",
           t.skillActiveSeconds ?? "",
+          t.skillLockSeconds ?? "",
           t.triggers,
           t.skillScore,
           t.directMakes ?? "",
