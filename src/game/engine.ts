@@ -20,7 +20,7 @@ import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { hackerPadLayout, hitHackerPad, type HackerDir } from "./hacker-pad";
 import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
-import { loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
+import { automaticStrength, loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
 import { DEFAULT_MAZE, DEFAULT_PHYS, clampMaze, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevMaze, type DevPhys, type DevSceneId } from "./dev";
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
@@ -221,7 +221,7 @@ export function createGame(
   let devPhys: DevPhys = { ...DEFAULT_PHYS };
   let devMaze: DevMaze = { ...DEFAULT_MAZE };
   let devPrisonProjectiles = true;
-  let balanceStore: BalanceStore = typeof window === "undefined" ? { version: 1, config: { k: .06, r0Tolerance: .08, r1Min: .9, r1Max: 1.1, strength: {} }, sessions: [] } : loadBalanceStore();
+  let balanceStore: BalanceStore = typeof window === "undefined" ? { version: 1, config: { k: .06, r0Tolerance: .08, r1Min: .9, r1Max: 1.1, strength: {}, autoWeights: { score: 0.3, safety: 0.25, tempo: 0.15, burst: 0.15, cost: -0.15 } }, sessions: [] } : loadBalanceStore();
   let balanceSession: BalanceSession | null = null;
   let balanceSkillOn = true;
   let balancePeakCombo = 0;
@@ -232,6 +232,15 @@ export function createGame(
   let balanceMisses = 0;
   let balanceLastMakeAt: number | null = null;
   let balanceMaxMakeGapSeconds = 0;
+  let balanceClicks = 0;
+  let balanceHolds = 0;
+  let balanceSkillInputs = 0;
+  let balanceSkillActiveSeconds = 0;
+  let balanceDirectMakes = 0;
+  let balanceDirectScore = 0;
+  let balanceRescues = 0;
+  let balanceUnattributedScore = 0;
+  let balancePlainGainAcc = 0;
   audio.setMix(mix);
 
   let ball = makeBall(world, 1, ballRadius(world.ballR, ballId));
@@ -322,6 +331,7 @@ export function createGame(
   }
 
   function skillsEnabled() { return !devOn || !balanceSession || balanceSkillOn; }
+  function balanceLocked() { return Boolean(balanceSession && devOn); }
 
   function isPrison() { return skillsEnabled() && kit().chain; }
 
@@ -1215,7 +1225,19 @@ export function createGame(
         prisonProjectiles: devPrisonProjectiles,
         scoreLocked: devScoreLock !== null,
         comboLocked: devComboLock !== null,
-        balance: { session: balanceSession, config: balanceStore.config, skillOn: balanceSkillOn, rows: balanceSession ? balanceReport(balanceSession, balanceStore.config) : [] },
+        balance: {
+          session: balanceSession,
+          config: balanceStore.config,
+          skillOn: balanceSkillOn,
+          rows: balanceSession
+            ? balanceReport(balanceSession, balanceStore.config, {
+                gameRev: GAME_REV,
+                scene: balanceSession.scene,
+                playMode: balanceSession.playMode || "minute",
+              })
+            : [],
+          auto: balanceSession ? automaticStrength(balanceSession, balanceStore.config) : null,
+        },
       },
       ballId,
       playMode,
@@ -1641,6 +1663,9 @@ export function createGame(
     boltStormMakes = 0;
     hint = false;
     if (!timerArmed) timerArmed = true;
+    noteBalanceHold();
+    noteBalanceSkillInput();
+    noteBalanceSkillEffect({ trigger: true });
     beginBoltDive();
   }
 
@@ -2620,7 +2645,7 @@ export function createGame(
     syncChain();
   }
 
-  function beginPlay() {
+  function resetBalanceTrialCounters() {
     balancePeakCombo = 0;
     balanceTriggers = 0;
     balanceSkillScore = 0;
@@ -2628,6 +2653,53 @@ export function createGame(
     balanceMisses = 0;
     balanceLastMakeAt = null;
     balanceMaxMakeGapSeconds = 0;
+    balanceClicks = 0;
+    balanceHolds = 0;
+    balanceSkillInputs = 0;
+    balanceSkillActiveSeconds = 0;
+    balanceDirectMakes = 0;
+    balanceDirectScore = 0;
+    balanceRescues = 0;
+    balanceUnattributedScore = 0;
+    balancePlainGainAcc = 0;
+  }
+
+  function balanceTelemetryLive() {
+    return Boolean(balanceSession && devOn && isMinuteMode() && timerArmed);
+  }
+
+  function noteBalanceClick() {
+    if (balanceTelemetryLive()) balanceClicks += 1;
+  }
+
+  function noteBalanceHold() {
+    if (balanceTelemetryLive()) balanceHolds += 1;
+  }
+
+  function noteBalanceSkillInput() {
+    if (balanceTelemetryLive()) balanceSkillInputs += 1;
+  }
+
+  /** Attribute a skill-driven make/score/rescue at the moment the skill actually helps. */
+  function noteBalanceSkillEffect(opts: {
+    trigger?: boolean;
+    directMake?: boolean;
+    directScore?: number;
+    rescue?: boolean;
+  }) {
+    if (!balanceSession || !devOn || !balanceSkillOn) return;
+    if (ballId === balanceSession.baseline) return;
+    if (opts.trigger) balanceTriggers += 1;
+    if (opts.directMake) balanceDirectMakes += 1;
+    if (opts.directScore && opts.directScore > 0) {
+      balanceDirectScore += opts.directScore;
+      balanceSkillScore += opts.directScore;
+    }
+    if (opts.rescue) balanceRescues += 1;
+  }
+
+  function beginPlay() {
+    resetBalanceTrialCounters();
     phase = "playing";
     paused = false;
     rewindHistory = [];
@@ -2760,12 +2832,39 @@ export function createGame(
     emitHud();
   }
 
-  function recordBalanceTrial() {
+  function recordBalanceTrial(endReason: "time" | "retry" = "time") {
     // A test run is valid only after its first make has armed the minute clock.
-    // This also lets "again" abandon an active, scored test safely.
     if (!balanceSession || !devOn || !isMinuteMode() || !timerArmed || balanceTrialRecorded) return;
-    const state: SkillState = balanceSkillOn ? "on" : "off";
-    balanceSession.trials.push({ id: crypto.randomUUID(), sessionId: balanceSession.id, ballId, skillState: ballId === balanceSession.baseline ? "on" : state, score, maxCombo: balancePeakCombo, triggers: balanceTriggers, skillScore: balanceSkillScore, makes: madeCount, misses: balanceMisses, maxMakeGapSeconds: balanceMaxMakeGapSeconds, timestamp: new Date().toISOString(), gameRev: GAME_REV, configKey: balanceConfigKey(balanceStore.config) });
+    const isBaseline = ballId === balanceSession.baseline;
+    const skillState: SkillState = isBaseline ? "baseline" : balanceSkillOn ? "on" : "off";
+    const effectiveSeconds = Math.max(0, timerMax - timer);
+    balanceSession.trials.push({
+      id: crypto.randomUUID(),
+      sessionId: balanceSession.id,
+      ballId,
+      skillState,
+      score,
+      maxCombo: balancePeakCombo,
+      triggers: balanceTriggers,
+      skillScore: balanceSkillScore,
+      makes: madeCount,
+      misses: balanceMisses,
+      maxMakeGapSeconds: balanceMaxMakeGapSeconds,
+      effectiveSeconds,
+      completed: timer <= 0,
+      endReason,
+      clicks: balanceClicks,
+      holds: balanceHolds,
+      skillInputs: balanceSkillInputs,
+      skillActiveSeconds: Math.round(balanceSkillActiveSeconds * 100) / 100,
+      directMakes: balanceDirectMakes,
+      directScore: balanceDirectScore,
+      rescues: balanceRescues,
+      unattributedScore: isBaseline || !balanceSkillOn ? 0 : Math.round(balanceUnattributedScore),
+      timestamp: new Date().toISOString(),
+      gameRev: GAME_REV,
+      configKey: balanceConfigKey(balanceSession.configSnapshot ?? balanceStore.config),
+    });
     const existing = balanceStore.sessions.findIndex((session) => session.id === balanceSession!.id);
     if (existing >= 0) balanceStore.sessions[existing] = balanceSession;
     else balanceStore.sessions.push(balanceSession);
@@ -3465,6 +3564,7 @@ export function createGame(
       const point = pointerWorld(e);
       if (inTimeButton(point.x, point.y)) {
         timeRewindPointer = e.pointerId;
+        noteBalanceSkillInput();
         rewindWorld();
         try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         return;
@@ -3482,6 +3582,7 @@ export function createGame(
         const gravity = mazeGravityFromPoint(point.x, point.y, layout)!;
         mazeGravity = gravity;
         mazePointerId = e.pointerId;
+        noteBalanceSkillInput();
         try {
           canvas.setPointerCapture(e.pointerId);
         } catch {
@@ -3495,10 +3596,12 @@ export function createGame(
       const dir = hitHackerPad(point.x, point.y, hackerPadLayout(world));
       if (dir) {
         applyHackerDir(dir);
+        noteBalanceSkillInput();
         emitHud();
       }
       return;
     }
+    noteBalanceClick();
     tapJump(e.pointerId);
     if (
       phase === "playing" &&
@@ -3765,6 +3868,7 @@ export function createGame(
         goTitle();
         return;
       case "scene":
+        if (balanceLocked()) return;
         if (!devOn) enterSandbox();
         devScene = cmd.id;
         if (cmd.id === "street" || cmd.id === "prison") {
@@ -3775,6 +3879,7 @@ export function createGame(
         emitHud();
         return;
       case "playMode": {
+        if (balanceLocked()) return;
         if (cmd.mode !== "classic" && cmd.mode !== "minute" && cmd.mode !== "rogue") return;
         if (cmd.mode === "minute" && ballId === "champ") return;
         playMode = cmd.mode;
@@ -4054,11 +4159,23 @@ export function createGame(
         emitHud();
         return;
       case "skin":
+        if (balanceLocked()) return;
         applyBall(cmd.id);
         return;
       case "balanceStart": {
         if (!devOn) enterSandbox();
-        balanceSession = { id: crypto.randomUUID(), baseline: cmd.baseline, ballId: cmd.ballId, scene: devScene, physKey: JSON.stringify(devPhys), createdAt: new Date().toISOString(), gameRev: GAME_REV, trials: [] };
+        balanceSession = {
+          id: crypto.randomUUID(),
+          baseline: cmd.baseline,
+          ballId: cmd.ballId,
+          scene: devScene,
+          playMode: "minute",
+          physKey: JSON.stringify(devPhys),
+          createdAt: new Date().toISOString(),
+          gameRev: GAME_REV,
+          configSnapshot: structuredClone(balanceStore.config),
+          trials: [],
+        };
         // A balance trial begins with a full 60 seconds on standby. The shared
         // scoring path arms this clock on the first made basket, just like normal
         // minute mode, so opening the test console never consumes test time.
@@ -4073,7 +4190,9 @@ export function createGame(
       case "balanceSkill": balanceSkillOn = cmd.on; refreshFuseSkills(); emitHud(); return;
       case "balanceNext": {
         if (!balanceSession) return;
-        const hasBaseline = balanceSession.trials.some((trial) => trial.ballId === balanceSession!.baseline);
+        const hasBaseline = balanceSession.trials.some(
+          (trial) => trial.skillState === "baseline" || trial.ballId === balanceSession!.baseline,
+        );
         playMode = "minute";
         applyBall(hasBaseline ? balanceSession.ballId : balanceSession.baseline);
         balanceSkillOn = hasBaseline;
@@ -4101,18 +4220,22 @@ export function createGame(
         emitHud();
         return;
       case "phys":
+        if (balanceLocked()) return;
         devPhys = { ...devPhys, [cmd.k]: clampPhysKey(cmd.k, cmd.n) };
         emitHud();
         return;
       case "maze":
+        if (balanceLocked()) return;
         devMaze = { ...devMaze, [cmd.k]: clampMaze(cmd.k, cmd.n) };
         emitHud();
         return;
       case "mazeReset":
+        if (balanceLocked()) return;
         devMaze = { ...DEFAULT_MAZE };
         emitHud();
         return;
       case "physGroupReset": {
+        if (balanceLocked()) return;
         const defaults = ballDefaultPhys();
         devPhys = { ...devPhys };
         const keys: (keyof DevPhys)[] = cmd.group === "ball"
@@ -4123,6 +4246,7 @@ export function createGame(
         return;
       }
       case "physReset":
+        if (balanceLocked()) return;
         devPhys = ballDefaultPhys();
         emitHud();
         return;
@@ -4289,13 +4413,25 @@ export function createGame(
     if (phase === "playing" && timerArmed && !buzzer && !timeUp && !devFreeze && !stageMod.holdsBall?.()) {
       let drain = dt;
       if (holeOn) {
-        // Far from hole �?timer drains slower; at center �?normal speed.
+        // Far from hole — timer drains slower; at center — normal speed.
         const dist = Math.hypot(ball.x - holeX, ball.y - holeY);
         const maxD = Math.max(120, world.w * 0.55);
         const t = Math.max(0, Math.min(1, dist / maxD));
         drain = dt * (1 - t * 0.78);
       }
       timer -= drain;
+      if (balanceTelemetryLive() && balanceSkillOn && ballId !== balanceSession?.baseline) {
+        const skillBusy =
+          quantumTunnelLeft > 0 ||
+          Boolean(boltStorm) ||
+          holeOn ||
+          champMode ||
+          rewindActive ||
+          vectorFlight ||
+          hoop.frostLeft > 0 ||
+          Boolean(other && other.frostLeft > 0);
+        if (skillBusy) balanceSkillActiveSeconds += drain;
+      }
       if (timer <= 0) {
         timer = 0;
         if (isHacker() && !hackerAwaken) {
@@ -5589,6 +5725,7 @@ export function createGame(
       if (Math.random() < chance) {
         quantumTunnelLeft = 6;
         ball.blink = true;
+        noteBalanceSkillEffect({ trigger: true });
         callouts.push({ text: "量子隧穿", x: ball.x, y: ball.y - ball.r * 2.2, life: 0.9, max: 0.9, kind: "tag" });
       }
     }
@@ -5727,6 +5864,35 @@ export function createGame(
       }
     }
     score += gain;
+    if (!ghost && balanceSession) {
+      const plainCore = bunshinGhost || ninjaGhost ? 0 : basePart + streakPart + extra + (freed ? prisonBonus : 0) + (clutch && !ninjaGhost ? 5 : 0);
+      balancePlainGainAcc += plainCore;
+      if (balanceSkillOn && ballId !== balanceSession.baseline) {
+        const skillSlice = Math.max(0, gain - plainCore);
+        const skillActive =
+          wasFrozen ||
+          Boolean(boltStorm) ||
+          quantumTunnelLeft > 0 ||
+          holeOn ||
+          champMode ||
+          (isTime() && rewindActive) ||
+          vectorFlight ||
+          skillSlice > 0;
+        if (skillActive) {
+          noteBalanceSkillEffect({
+            trigger: true,
+            directMake: wasFrozen || Boolean(boltStorm) || quantumTunnelLeft > 0 || holeOn || champMode,
+            directScore: skillSlice,
+            rescue: quantumTunnelLeft > 0,
+          });
+        }
+        if (skillSlice > 0 && !skillActive) {
+          balanceUnattributedScore += skillSlice;
+          balanceTriggers += 1;
+          balanceSkillScore += skillSlice;
+        }
+      }
+    }
     if (!ghost && isTime() && !clutch && timerMax > 0) {
       // Store 5% of the unused-clock fraction as Time Ball rewind energy.
       const earned = Math.max(0, Math.min(1, timer / timerMax)) * 5;
@@ -6329,7 +6495,7 @@ export function createGame(
     retry() {
       audio.unlock();
       // The normal "again" button must not discard a manually tested balance run.
-      recordBalanceTrial();
+      recordBalanceTrial("retry");
       beginPlay();
     },
     pause() {
