@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, Pause } from "lucide-react";
 import { DEV_FX, DEV_GRAF, DEV_MAZE, DEV_MODIFIERS, DEV_MOVES, DEV_PHYS, DEV_PLAY_MODES, DEV_SCENES, DEV_STAGES, type DevCmd, type DevMaze, type DevPhys, type DevHud } from "@/game/dev";
-import { playableBalls } from "@/game/balls";
+import { playableBalls, type BallId } from "@/game/balls";
 import type { Gfx } from "@/game/types";
 import type { RogueHud } from "@/game/rogue";
 import { ROGUE_CATALOG, type RogueCatalogEntry } from "@/game/rogue-catalog";
@@ -78,20 +78,59 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
   const [history, setHistory] = useState<BalanceSession[]>(() => loadBalanceStore().sessions);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [calibrateNote, setCalibrateNote] = useState<string | null>(null);
+  const selectedBall = (balls.some((ball) => ball.id === dev.ballId) ? dev.ballId : candidate) as BallId;
+  const isClassic = selectedBall === "plain";
+  const pickBall = (id: BallId) => {
+    setCandidate(id);
+    onCmd({ t: "balancePick", ballId: id });
+  };
   const begin = () => {
-    onCmd({ t: "balanceStart", ballId: candidate as never, baseline: "plain" });
+    onCmd({ t: "balanceStart", ballId: selectedBall, baseline: "plain" });
     setSelectedId(null);
   };
-  const set = (key: "score" | "safety" | "tempo" | "cost", n: number) =>
-    s && onCmd({ t: "balanceConfig", ballId: s.ballId, strengthKey: key, n });
-  const store = (): BalanceStore => ({ version: 1, config: b.config, sessions: loadBalanceStore().sessions });
+  const retry = () => onCmd({ t: "balanceRetry" });
+  const set = (key: "score" | "safety" | "tempo" | "cost", n: number) => {
+    if (!s) return;
+    const target = !isClassic ? selectedBall : s.ballId !== "plain" ? s.ballId : selectedBall;
+    onCmd({ t: "balanceConfig", ballId: target, strengthKey: key, n });
+  };
   const refreshHistory = () => setHistory(loadBalanceStore().sessions);
   const selected = history.find((item) => item.id === selectedId) ?? null;
+  const allStore = (): BalanceStore => {
+    const persisted = loadBalanceStore();
+    const sessions = [...persisted.sessions];
+    if (s && !sessions.some((item) => item.id === s.id)) sessions.push(s);
+    return { version: 1, config: b.config, sessions };
+  };
+  const selectedStore = (): BalanceStore | null => {
+    const session = selected ?? s;
+    if (!session) return null;
+    return { version: 1, config: b.config, sessions: [session] };
+  };
+  const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const exportSelected = (format: "json" | "csv") => {
+    const payload = selectedStore();
+    if (!payload) return;
+    const id = (selected ?? s)!.ballId;
+    if (format === "json") {
+      download(`balance-selected-${id}-${stamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+    } else {
+      download(`balance-selected-${id}-${stamp()}.csv`, csv(payload), "text/csv;charset=utf-8");
+    }
+  };
+  const exportAll = (format: "json" | "csv") => {
+    const payload = allStore();
+    if (format === "json") {
+      download(`balance-all-${stamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+    } else {
+      download(`balance-all-${stamp()}.csv`, csv(payload), "text/csv;charset=utf-8");
+    }
+  };
   const filterRev = s?.gameRev ?? history.find((item) => item.ballId === candidate)?.gameRev;
   const filter = filterRev !== undefined
     ? { gameRev: filterRev, playMode: "minute", scene: s?.scene }
     : undefined;
-  const summary = historicalSummary({ version: 1, config: b.config, sessions: history }, candidate as never, filter);
+  const summary = historicalSummary({ version: 1, config: b.config, sessions: history }, selectedBall as never, filter);
   const progress = s ? sessionProgress(s) : null;
   const verdictLabel = (value: VerdictLabel, strong = "偏强", weak = "偏弱") => {
     if (value === "strong") return strong;
@@ -162,28 +201,25 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
         <p className="mt-1 text-[10px] text-subtle">{summary.sampleNote}</p>
       </section>
 
-      <Row title="待测球">
+      <Row title="测试球">
         {balls.map((x) => (
           <Chip
             key={x.id}
             label={x.name}
-            on={candidate === x.id}
-            onClick={() => {
-              setCandidate(x.id);
-              onCmd({ t: "skin", id: x.id });
-            }}
+            on={selectedBall === x.id}
+            onClick={() => pickBall(x.id)}
           />
         ))}
       </Row>
+      <p className="mb-3 text-[10px] text-subtle">
+        {isClassic
+          ? "当前为经典球：开局记录计入 B 基准。"
+          : "当前为特技球：开局按技能开/关记录 R1 / R0；经典球跑出来的分才是 B。"}
+      </p>
 
       <Row title="一分钟测试">
-        <Chip label="开始基准（经典球）" onClick={begin} />
-        {s ? (
-          <Chip
-            label={s.trials.some((t) => t.skillState === "baseline" || t.ballId === s.baseline) ? "开始特技球一分钟" : "重测基准"}
-            onClick={() => onCmd({ t: "balanceNext" })}
-          />
-        ) : null}
+        <Chip label="开始测试" onClick={begin} />
+        <Chip label="重新测试" onClick={retry} />
         <Chip
           label={`历史 (${history.length})`}
           on={historyOpen}
@@ -262,12 +298,24 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
       {s ? (
         <>
           <p className="mb-3 text-xs text-muted">
-            球：{s.ballId} · 已锁场景/物理/版本/模式/配置 ·{" "}
-            {progress ? `基准 ${progress.base} / 关 ${progress.off} / 开 ${progress.on} · ${progress.status === "complete" ? "完整" : progress.status === "incomplete" ? "不完整" : "进行中"}` : ""}{" "}
-            · 首球进筐后开始 60 秒计时。
+            当前场上：{selectedBall}
+            {isClassic ? "（计入 B）" : `（特技球会话焦点 ${s.ballId}）`}
+            {" · "}已锁场景/物理/版本/模式
+            {progress
+              ? ` · 基准 ${progress.base} / 关 ${progress.off} / 开 ${progress.on} · ${progress.status === "complete" ? "完整" : progress.status === "incomplete" ? "不完整" : "进行中"}`
+              : ""}
+            {" · "}首球进筐后开始 60 秒。
           </p>
-          <Row title={`会话 ${s.ballId}（${s.trials.length} 局）`}>
-            <Chip label={b.skillOn ? "技能开" : "技能关"} on={b.skillOn} onClick={() => onCmd({ t: "balanceSkill", on: !b.skillOn })} />
+          <Row title={`会话（${s.trials.length} 局）`}>
+            {!isClassic ? (
+              <Chip
+                label={b.skillOn ? "技能开" : "技能关"}
+                on={b.skillOn}
+                onClick={() => onCmd({ t: "balanceSkill", on: !b.skillOn })}
+              />
+            ) : (
+              <span className="text-xs text-subtle">经典球无需技能开关</span>
+            )}
             <Chip label="清除会话" onClick={() => onCmd({ t: "balanceClear" })} />
           </Row>
 
@@ -305,12 +353,36 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
           </section>
 
           <Row title="强度 S（设计备注）">
-            <NumberEdit label="得分" value={b.config.strength[s.ballId]?.score ?? 0} onSet={(n) => set("score", n)} />
-            <NumberEdit label="容错" value={b.config.strength[s.ballId]?.safety ?? 0} onSet={(n) => set("safety", n)} />
-            <NumberEdit label="节奏" value={b.config.strength[s.ballId]?.tempo ?? 0} onSet={(n) => set("tempo", n)} />
-            <NumberEdit label="代价" value={b.config.strength[s.ballId]?.cost ?? 0} onSet={(n) => set("cost", n)} />
+            <NumberEdit
+              label="得分"
+              value={b.config.strength[s.ballId === "plain" ? selectedBall : s.ballId]?.score ?? 0}
+              onSet={(n) => set("score", n)}
+            />
+            <NumberEdit
+              label="容错"
+              value={b.config.strength[s.ballId === "plain" ? selectedBall : s.ballId]?.safety ?? 0}
+              onSet={(n) => set("safety", n)}
+            />
+            <NumberEdit
+              label="节奏"
+              value={b.config.strength[s.ballId === "plain" ? selectedBall : s.ballId]?.tempo ?? 0}
+              onSet={(n) => set("tempo", n)}
+            />
+            <NumberEdit
+              label="代价"
+              value={b.config.strength[s.ballId === "plain" ? selectedBall : s.ballId]?.cost ?? 0}
+              onSet={(n) => set("cost", n)}
+            />
             <p className="text-xs text-muted">
-              S = {strengthTotal(b.config.strength[s.ballId] ?? { score: 0, safety: 0, tempo: 0, cost: 0 })}
+              S ={" "}
+              {strengthTotal(
+                b.config.strength[s.ballId === "plain" ? selectedBall : s.ballId] ?? {
+                  score: 0,
+                  safety: 0,
+                  tempo: 0,
+                  cost: 0,
+                },
+              )}
             </p>
           </Row>
 
@@ -333,16 +405,28 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
             ))}
           </div>
 
-          <Row title="导出">
-            <Chip label="JSON" onClick={() => download("balance-test.json", JSON.stringify(store(), null, 2), "application/json")} />
-            <Chip label="CSV" onClick={() => download("balance-test.csv", csv(store()), "text/csv;charset=utf-8")} />
+          <Row title="校准">
             <Chip label="校准 k" onClick={runCalibrate} />
           </Row>
           {calibrateNote ? <p className="mb-3 text-[10px] text-subtle">{calibrateNote}</p> : null}
         </>
       ) : (
-        <p className="text-xs text-muted">选择一颗特技球，先从经典球基准开始。</p>
+        <p className="mb-3 text-xs text-muted">选好测试球后点「开始测试」。经典球计入 B，特技球测 R0/R1。</p>
       )}
+
+      <Row title="导出">
+        <Chip label="导出选中 JSON" onClick={() => exportSelected("json")} />
+        <Chip label="导出选中 CSV" onClick={() => exportSelected("csv")} />
+        <Chip label="导出全部 JSON" onClick={() => exportAll("json")} />
+        <Chip label="导出全部 CSV" onClick={() => exportAll("csv")} />
+      </Row>
+      <p className="mb-1 text-[10px] text-subtle">
+        {selected
+          ? `选中：历史会话 ${selected.ballId}（${selected.trials.length} 局）`
+          : s
+            ? `选中：当前会话 ${s.ballId}（${s.trials.length} 局）；打开历史点一条可改选中`
+            : "导出选中需先有当前会话，或打开历史点选一条"}
+      </p>
     </>
   );
 }
