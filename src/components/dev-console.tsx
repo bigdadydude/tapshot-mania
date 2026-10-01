@@ -96,6 +96,12 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
   };
   const refreshHistory = () => setHistory(loadBalanceStore().sessions);
   const selected = history.find((item) => item.id === selectedId) ?? null;
+  const onLocks = (s?.trials ?? []).filter(
+    (trial) => trial.skillState === "on" && typeof trial.skillLockSeconds === "number",
+  );
+  const lockMean = onLocks.length
+    ? onLocks.reduce((sum, trial) => sum + (trial.skillLockSeconds ?? 0), 0) / onLocks.length
+    : null;
   const allStore = (): BalanceStore => {
     const persisted = loadBalanceStore();
     const sessions = [...persisted.sessions];
@@ -282,7 +288,7 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
                     {trial.maxMakeGapSeconds === undefined ? "—" : `${trial.maxMakeGapSeconds.toFixed(1)}s`}
                     {trial.completed ? " · 打满" : " · 未满"} · 触发 {trial.triggers} · 技能分 {trial.skillScore}
                     {trial.clicks !== undefined
-                      ? ` · 点击 ${trial.clicks}/长按 ${trial.holds ?? 0}/技能输入 ${trial.skillInputs ?? 0}/激活 ${trial.skillActiveSeconds ?? 0}s`
+                      ? ` · 点击 ${trial.clicks}/长按 ${trial.holds ?? 0}/技能输入 ${trial.skillInputs ?? 0}/激活 ${trial.skillActiveSeconds ?? 0}s${trial.skillLockSeconds !== undefined ? `/锁定 ${trial.skillLockSeconds}s` : ""}`
                       : ""}
                     {trial.directMakes !== undefined
                       ? ` · 直接进球 ${trial.directMakes}/直接分 ${trial.directScore ?? 0}/挽救 ${trial.rescues ?? 0}/未归因 ${trial.unattributedScore ?? 0}`
@@ -349,6 +355,11 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
             ) : (
               <p className="text-xs text-subtle">需要基准 + 技能关 + 技能开数据。代价在输入遥测齐全前显示「待测」。</p>
             )}
+            {lockMean !== null ? (
+              <p className="mt-2 text-[10px] text-subtle">
+                技能开锁定 {lockMean.toFixed(2)}s（代价记录，不计入技能激活时长，也不进 S）
+              </p>
+            ) : null}
             <p className="mt-2 text-[10px] text-subtle">{skillEfficiencyEntrance(s.ballId).message}</p>
           </section>
 

@@ -236,6 +236,8 @@ export function createGame(
   let balanceHolds = 0;
   let balanceSkillInputs = 0;
   let balanceSkillActiveSeconds = 0;
+  /** Countdown seconds the bolt is locked by overheat. A cost, not activation time. */
+  let balanceSkillLockSeconds = 0;
   let balanceDirectMakes = 0;
   let balanceDirectScore = 0;
   let balanceRescues = 0;
@@ -2658,6 +2660,7 @@ export function createGame(
     balanceHolds = 0;
     balanceSkillInputs = 0;
     balanceSkillActiveSeconds = 0;
+    balanceSkillLockSeconds = 0;
     balanceDirectMakes = 0;
     balanceDirectScore = 0;
     balanceRescues = 0;
@@ -2858,6 +2861,7 @@ export function createGame(
       holds: balanceHolds,
       skillInputs: balanceSkillInputs,
       skillActiveSeconds: Math.round(balanceSkillActiveSeconds * 100) / 100,
+      skillLockSeconds: Math.round(balanceSkillLockSeconds * 100) / 100,
       directMakes: balanceDirectMakes,
       directScore: balanceDirectScore,
       rescues: balanceRescues,
@@ -4453,9 +4457,6 @@ export function createGame(
         const skillBusy =
           quantumTunnelLeft > 0 ||
           Boolean(boltStorm) ||
-          // Same occupancy as the dive: countdown seconds while the ult still owns the ball.
-          // boltStorm is cleared when overheat starts, so this does not double-count that step.
-          boltOverheated ||
           holeOn ||
           champMode ||
           rewindActive ||
@@ -4463,6 +4464,9 @@ export function createGame(
           hoop.frostLeft > 0 ||
           Boolean(other && other.frostLeft > 0);
         if (skillBusy) balanceSkillActiveSeconds += drain;
+        // Overheat is lost time (ball locked), not time the skill is active.
+        // Count the same countdown drain, and not the dive frame that starts it.
+        if (boltOverheated) balanceSkillLockSeconds += drain;
       }
       if (timer <= 0) {
         timer = 0;
