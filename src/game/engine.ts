@@ -6200,7 +6200,7 @@ export function createGame(
             phase === "playing" && isMaze()
               ? { gravity: mazePointerId === null ? { x: 0, y: 0 } : mazeGravity }
               : null,
-            isTime() ? { energy: timeEnergy, active: rewindActive, disabled: timeRewindBlocked() } : null,
+            phase === "playing" && isTime() ? { energy: timeEnergy, active: rewindActive, disabled: timeRewindBlocked() } : null,
           );
           ctx.restore();
           stageMod.drawScreen?.(ctx, world);

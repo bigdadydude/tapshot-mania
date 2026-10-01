@@ -1874,12 +1874,7 @@ function drawTimeRewindControl(ctx: CanvasRenderingContext2D, world: World, ener
   const d = r * 2 * scale;
   ctx.save();
   ctx.globalAlpha = disabled ? 0.38 : 1;
-  if (button) {
-    ctx.drawImage(button, x - d / 2, y - d / 2, d, d);
-  } else {
-    ctx.fillStyle = active ? "#d59c0c" : "#edb413";
-    ctx.beginPath(); ctx.arc(x, y, r * scale, 0, Math.PI * 2); ctx.fill();
-  }
+  if (button) ctx.drawImage(button, x - d / 2, y - d / 2, d, d);
   if (circle && pct > 0.002) {
     // Start at 12 o'clock and reveal the authored ring clockwise as energy increases.
     ctx.save();
@@ -1890,10 +1885,6 @@ function drawTimeRewindControl(ctx: CanvasRenderingContext2D, world: World, ener
     ctx.clip();
     ctx.drawImage(circle, x - d / 2, y - d / 2, d, d);
     ctx.restore();
-  } else if (!circle) {
-    ctx.strokeStyle = "rgba(255,255,255,0.92)";
-    ctx.lineWidth = Math.max(2.2, r * 0.065);
-    ctx.beginPath(); ctx.arc(x, y, r * scale - 4, 0, Math.PI * 2); ctx.stroke();
   }
   ctx.restore();
 }
