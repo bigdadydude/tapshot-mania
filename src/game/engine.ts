@@ -1719,12 +1719,7 @@ export function createGame(
     pointerHeld = false;
     boltOverheatLeft = BOLT_OVERHEAT_DUR;
     boltOverheatStartCharge = Math.max(1, boltCharge);
-    ball.x = Math.max(ball.r, Math.min(world.w - ball.r, ball.x));
-    ball.y = world.floorY - ball.r;
-    ball.vx = 0;
-    ball.vy = 0;
-    ball.omega = 0;
-    ball.scored = false;
+    pinBoltOverheatBall();
     shotAirborne = false;
     callouts.push({
       text: "过热",
@@ -1740,15 +1735,21 @@ export function createGame(
     }
   }
 
+  function pinBoltOverheatBall() {
+    ball.x = Math.max(ball.r, Math.min(world.w - ball.r, ball.x));
+    ball.y = world.floorY - ball.r;
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.omega = 0;
+    ball.scored = false;
+  }
+
   function stepBoltOverheat(dt: number) {
     if (!isBolt() || boltOverheatLeft <= 0) return false;
     boltOverheatLeft = Math.max(0, boltOverheatLeft - dt);
     const p = boltOverheatLeft / BOLT_OVERHEAT_DUR;
     boltCharge = Math.min(boltCharge, boltOverheatStartCharge * p);
-    ball.y = world.floorY - ball.r;
-    ball.vx = 0;
-    ball.vy = 0;
-    ball.omega = 0;
+    pinBoltOverheatBall();
     ball.squash += (0.94 - ball.squash) * (1 - Math.exp(-10 * dt));
     if (boltOverheatLeft <= 0) {
       boltCharge = 0;
@@ -4418,9 +4419,11 @@ export function createGame(
     if (boardHitLock > 0) boardHitLock -= dt;
     if (burnFlash > 0) burnFlash = Math.max(0, burnFlash - dt);
 
-    if (stepBoltOverheat(dt)) return;
+    // Overheat locks the ball only. Clock, hoops, frost, combo, and stage mechanisms keep stepping.
+    const boltOverheated = stepBoltOverheat(dt);
 
     if (
+      !boltOverheated &&
       phase === "playing" &&
       !paused &&
       pointerHeld &&
@@ -4450,6 +4453,9 @@ export function createGame(
         const skillBusy =
           quantumTunnelLeft > 0 ||
           Boolean(boltStorm) ||
+          // Same occupancy as the dive: countdown seconds while the ult still owns the ball.
+          // boltStorm is cleared when overheat starts, so this does not double-count that step.
+          boltOverheated ||
           holeOn ||
           champMode ||
           rewindActive ||
@@ -4599,7 +4605,7 @@ export function createGame(
     boltFloorSpeed = 0;
     boltBoardGrip = false;
     boltFastFill = false;
-    const boltLock = stepBoltStorm(dt);
+    const boltLock = boltOverheated || stepBoltStorm(dt);
 
     if (!boltLock) {
     prevBallX = ball.x;
@@ -4835,6 +4841,9 @@ export function createGame(
         );
       }
     }
+    } else if (boltOverheated && phase === "playing" && !stageMod.holdsBall?.()) {
+      // Projectiles and other post-step mechanisms still advance; the ball stays pinned below.
+      stageMod.afterPhysics?.(dt, modifierHost());
     }
 
     stepBoltBoardTop(dt);
@@ -4877,6 +4886,7 @@ export function createGame(
         callouts.pop();
       } else i += 1;
     }
+    if (boltOverheated) pinBoltOverheatBall();
     captureRewindSnapshot(dt);
   }
 
