@@ -18,6 +18,7 @@ import {
 } from "@/game/rogue";
 import { ROGUE_CATALOG, RARITY_LABEL, type RogueCatalogEntry } from "@/game/rogue-catalog";
 import { modifierName } from "@/game/modifiers";
+import { autoStrengthForBall, loadBalanceStore, mergeLiveSession, type AutoBallReadout } from "@/game/balance-test";
 import { cn } from "@/lib/utils";
 
 primeArt();
@@ -62,6 +63,20 @@ export function GameView() {
   // Starting from the ball tab (or another sandbox entry) never creates a session,
   // and the settlement card used to fall through to the title screen.
   const devMinuteOver = hud.dev.on && hud.playMode === "minute";
+  const balanceTrialCount = hud.dev.balance.session?.trials.length ?? 0;
+  const balanceConfigStamp = JSON.stringify(hud.dev.balance.config);
+  const balanceOverReadout = useMemo(() => {
+    const session = hud.dev.balance.session;
+    if (!hud.dev.on || !session) return null;
+    const store = mergeLiveSession(loadBalanceStore(), session, hud.dev.balance.config);
+    return autoStrengthForBall(store, session.ballId, {
+      gameRev: session.gameRev,
+      playMode: "minute",
+      scene: session.scene,
+    });
+    // Trials are pushed onto the same session object, so the length has to invalidate the cache.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hud.dev.on, hud.dev.balance.session?.id, hud.dev.balance.session?.ballId, hud.dev.balance.session?.scene, balanceTrialCount, balanceConfigStamp]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -260,6 +275,7 @@ export function GameView() {
               blankHint={devMinuteOver ? "点击空白处返回测试页面" : undefined}
               devMode={hud.dev.on}
               onDevBack={() => gameRef.current?.devBackFromSettle()}
+              balanceReadout={hud.dev.on && hud.dev.balance.session ? balanceOverReadout : null}
             />
           ) : null}
 
@@ -1433,6 +1449,7 @@ function OverCard({
   blankHint,
   devMode = false,
   onDevBack,
+  balanceReadout = null,
 }: {
   score: number;
   best: number;
@@ -1447,6 +1464,8 @@ function OverCard({
   blankHint?: string;
   devMode?: boolean;
   onDevBack?: () => void;
+  /** 平衡测试打完后的自动 S。没有会话时不传。 */
+  balanceReadout?: AutoBallReadout | null;
 }) {
   const isRogue = playMode === "rogue" && rogue;
   const isBest = isRogue
@@ -1568,6 +1587,13 @@ function OverCard({
         </p>
         <p className="mt-2 text-sm text-muted">{rank}</p>
         <p className="mt-3 text-xs text-subtle">{isBest ? "新纪录" : `最高 ${best}`}</p>
+        {balanceReadout ? (
+          <div className="mt-4 min-w-0 border-t border-border pt-3 text-left">
+            <p className="text-xs text-muted">{balanceReadout.ballName} · 结果总览</p>
+            <p className="mt-1 break-words text-sm font-semibold leading-snug text-fg">{balanceReadout.label}</p>
+            <p className="mt-1 break-words text-xs leading-relaxed text-muted">{balanceReadout.componentsLabel}</p>
+          </div>
+        ) : null}
       </div>
       <button
         type="button"
