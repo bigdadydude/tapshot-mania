@@ -54,7 +54,11 @@ export function GameView() {
   const [menu, setMenu] = useState<Menu>("none");
   const [titleTaps, setTitleTaps] = useState(0);
   const [searchlightEdit, setSearchlightEdit] = useState(false);
+  const [devPanelOpen, setDevPanelOpen] = useState(true);
+  const [balanceFocus, setBalanceFocus] = useState(0);
+  const [balanceOverDismissed, setBalanceOverDismissed] = useState(false);
   const enteredDev = useRef(false);
+  const inBalanceTest = hud.dev.on && hud.dev.balance.session != null;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -92,6 +96,10 @@ export function GameView() {
     enteredDev.current = true;
     gameRef.current?.dev({ t: "enter" });
   }, [hud.loadPct]);
+
+  useEffect(() => {
+    if (hud.phase !== "over") setBalanceOverDismissed(false);
+  }, [hud.phase]);
 
   useEffect(() => {
     if (hud.phase === "playing" && hud.paused && menu === "none") {
@@ -134,6 +142,18 @@ export function GameView() {
 
   function resume() {
     gameRef.current?.resume();
+    // Balance pause unmounts the console. Remounting used to force it open
+    // (internal useState(true)). A blank tap should resume with the panel shut.
+    // Other dev sessions keep the old remount-open behavior.
+    if (inBalanceTest) setDevPanelOpen(false);
+    else if (hud.dev.on) setDevPanelOpen(true);
+    setMenu("none");
+  }
+
+  function backFromBalanceOver() {
+    setBalanceOverDismissed(true);
+    setDevPanelOpen(false);
+    setBalanceFocus((n) => n + 1);
     setMenu("none");
   }
 
@@ -225,7 +245,7 @@ export function GameView() {
               onReset={() => gameRef.current?.resetRogueLoadout()}
             />
           ) : null}
-          {hud.phase === "over" && menu === "none" ? (
+          {hud.phase === "over" && menu === "none" && !(inBalanceTest && balanceOverDismissed) ? (
             <OverCard
               score={hud.score}
               best={hud.best}
@@ -235,6 +255,8 @@ export function GameView() {
               playMode={hud.playMode}
               onRetry={() => gameRef.current?.retry()}
               onTitle={toTitle}
+              onBlank={inBalanceTest ? backFromBalanceOver : undefined}
+              blankHint={inBalanceTest ? "点击空白处返回测试页面" : undefined}
               devMode={hud.dev.on}
               onDevBack={() => gameRef.current?.devBackFromSettle()}
             />
@@ -355,6 +377,9 @@ export function GameView() {
           combo={hud.combo}
           gfx={hud.gfx}
           rogue={hud.rogue}
+          panelOpen={devPanelOpen}
+          onPanelOpenChange={setDevPanelOpen}
+          balanceFocus={balanceFocus}
           onCmd={(cmd) => gameRef.current?.dev(cmd)}
           onMenu={() => {
             gameRef.current?.pause();
@@ -1403,6 +1428,8 @@ function OverCard({
   playMode,
   onRetry,
   onTitle,
+  onBlank,
+  blankHint,
   devMode = false,
   onDevBack,
 }: {
@@ -1414,6 +1441,9 @@ function OverCard({
   playMode: PlayMode;
   onRetry: () => void;
   onTitle: () => void;
+  /** Minute-mode blank tap. Balance tests pass this so the title screen stays put. */
+  onBlank?: () => void;
+  blankHint?: string;
   devMode?: boolean;
   onDevBack?: () => void;
 }) {
@@ -1521,10 +1551,11 @@ function OverCard({
     );
   }
 
+  const leave = onBlank ?? onTitle;
   return (
     <div
       className="pointer-events-auto absolute inset-0 z-20 flex flex-col items-center justify-end bg-bg/50 px-6 pb-[max(1.75rem,env(safe-area-inset-bottom))] pt-16"
-      onClick={onTitle}
+      onClick={leave}
     >
       <div
         className="mb-5 w-full max-w-xs rounded-xl border border-border bg-bg-elevated px-6 py-6 text-center shadow-lg"
@@ -1552,7 +1583,7 @@ function OverCard({
         再来一局
       </button>
       <p className="pointer-events-none mt-3 mb-2 text-center text-sm text-fg">
-        点击空白处返回主界面
+        {blankHint ?? "点击空白处返回主界面"}
       </p>
     </div>
   );
