@@ -1,4 +1,4 @@
-import type { BallId } from "./balls";
+import { getBall, playableBalls, type BallId } from "./balls.ts";
 
 export type SkillState = "baseline" | "off" | "on";
 export type SkillStrength = { score: number; safety: number; tempo: number; cost: number };
@@ -11,7 +11,11 @@ export type BalanceConfig = {
   autoWeights?: AutoWeights;
 };
 
-/** Weights for telemetry-derived auto S. Cost is negative when ready. */
+/**
+ * 自动 S 分项权重，初值，可被 config.autoWeights 覆盖。
+ * 代价为负：激活越久、输入越多，自动 S 越低。
+ * 这些权重不进入 R0/R1。R0 用的是手填强度 S 和 k（k 初值 0.06）：R0 = 1 − k×S，R1 ≈ 1。
+ */
 export type AutoWeights = {
   score: number;
   safety: number;
@@ -27,6 +31,12 @@ export const DEFAULT_AUTO_WEIGHTS: AutoWeights = {
   burst: 0.15,
   cost: -0.15,
 };
+
+/**
+ * 展示用样本线。与「不足 10 局不给结论」同一条线，只影响文案，不改变判定函数。
+ * 不满 10 局但公式已能算出数时，界面标「暂算」；满 10 局仍标「暂算」，因为权重是初值。
+ */
+export const AUTO_S_REQUIRED_RUNS = 10;
 
 export type BalanceTrial = {
   id: string;
@@ -391,6 +401,25 @@ function relDelta(on: number | null, off: number | null) {
   return (on - off) / Math.max(1e-6, Math.abs(off) || 1);
 }
 
+/**
+ * 自动 S（遥测估计，只读）。不改 R0/R1，不写回手填 strength。
+ *
+ * 手感目标仍是：R0 = 1 − k×S，R1 ≈ 1。k 初值 0.06；这里的 S 是手填四项之和，不是自动 S。
+ *
+ * 基准、技能关、技能开都至少 1 局才给 autoS，否则 autoS = null（缺一类就不算）。
+ * 权重初值见 DEFAULT_AUTO_WEIGHTS：得分 0.30、容错 0.25、节奏 0.15、爆发 0.15、代价 −0.15。
+ * 分项先夹到 [−1, 1]，自动 S 再夹到 [−3, 3]。代价遥测不齐时不加代价项，展示层标「待测」。
+ *
+ *   得分分项 = clamp( 0.7×(R1−R0) + 0.3×clamp(Δ(分/进球)/10) )
+ *   容错分项 = clamp( (打铁率下降 + 间隔改善 + 完成率差 + clamp(挽救差/5)) / 3 )
+ *   节奏分项 = clamp( (间隔改善 + 间隔波动改善) / 2 )
+ *   爆发分项 = clamp( (连击相对差 + 峰值分相对差 + 技能直接分占比) / 3 )
+ *   代价分项 = clamp( 0.4×Δ激活秒/60 + 0.35×Δ技能输入/20 + 0.25×Δ(点击+长按)/40 )
+ *   自动 S = 得分×w得分 + 容错×w容错 + 节奏×w节奏 + 爆发×w爆发 +（代价齐时）代价×w代价
+ *
+ * R1−R0 = 开技能去极值均分/B − 关技能去极值均分/B。相对差 = (开−关)/max(|关|, 1)，
+ * 间隔改善则把关、开对调，所以间隔变短时为正。
+ */
 export function automaticStrength(session: BalanceSession, config?: BalanceConfig): AutoStrength {
   const empty: AutoStrength = {
     ready: false,
@@ -518,6 +547,175 @@ export function automaticStrength(session: BalanceSession, config?: BalanceConfi
     dims,
     autoS,
     cost: costReady ? "ready" : "pending_input_telemetry",
+  };
+}
+
+export type AutoBallReadout = {
+  ballId: BallId;
+  ballName: string;
+  /** 经典球只提供基准 B，没有技能开关上的自动 S。 */
+  baselineBall: boolean;
+  baseRuns: number;
+  onRuns: number;
+  offRuns: number;
+  requiredRuns: number;
+  /** 现有公式已经给出数字。权重是初值，所以有数字就标暂算。 */
+  provisional: boolean;
+  autoS: number | null;
+  /** 例如「自动 S：0.42（暂算）」或「自动 S：—（开技能 3/10，关技能 10/10，缺基准）」 */
+  label: string;
+  componentsLabel: string;
+  score: number | null;
+  safety: number | null;
+  tempo: number | null;
+  burst: number | null;
+  cost: number | null;
+  /** 代价遥测不齐时固定为「待测」。 */
+  costLabel: string;
+  /** 与 automaticStrength 同一返回值，数值口径不变。 */
+  auto: AutoStrength;
+};
+
+function fmtAuto(n: number | null | undefined) {
+  return typeof n === "number" && Number.isFinite(n) ? n.toFixed(2) : "—";
+}
+
+function sampleClause(onRuns: number, offRuns: number, baseRuns: number, required: number) {
+  return [
+    `开技能 ${onRuns}/${required}`,
+    `关技能 ${offRuns}/${required}`,
+    baseRuns <= 0 ? "缺基准" : `基准 ${baseRuns}/${required}`,
+  ].join("，");
+}
+
+function componentFields(auto: AutoStrength, showDims: boolean) {
+  const score = showDims ? auto.dims.score : null;
+  const safety = showDims ? auto.dims.safety : null;
+  const tempo = showDims ? auto.dims.tempo : null;
+  const burst = showDims ? auto.dims.burst : null;
+  const cost = showDims && auto.costReady ? auto.dims.cost : null;
+  const costLabel = cost !== null ? cost.toFixed(2) : "待测";
+  const componentsLabel = `得分 ${fmtAuto(score)} · 容错 ${fmtAuto(safety)} · 节奏 ${fmtAuto(tempo)} · 爆发 ${fmtAuto(burst)} · 代价 ${costLabel}`;
+  return { score, safety, tempo, burst, cost, costLabel, componentsLabel };
+}
+
+function comparableSessions(store: BalanceStore, filter?: ComparableFilter) {
+  return filter ? store.sessions.filter((session) => sessionComparable(session, filter)) : store.sessions;
+}
+
+/** 把各会话里同一颗球的可比局收成一次现有公式能直接吃的会话，不改原始记录。 */
+function aggregateSession(store: BalanceStore, ballId: BallId, filter?: ComparableFilter): BalanceSession {
+  const trials = comparableSessions(store, filter).flatMap((session) => session.trials);
+  const relevant =
+    ballId === "plain"
+      ? trials.filter((trial) => trial.ballId === "plain" && trial.skillState !== "off")
+      : trials.filter((trial) => {
+          if (trial.ballId === "plain" && trial.skillState !== "off") return true;
+          return trial.ballId === ballId && (trial.skillState === "on" || trial.skillState === "off");
+        });
+  return {
+    id: `auto-${ballId}`,
+    baseline: "plain",
+    ballId,
+    scene: filter?.scene ?? "",
+    playMode: filter?.playMode ?? "minute",
+    physKey: "",
+    createdAt: "",
+    gameRev: filter?.gameRev ?? 0,
+    configSnapshot: store.config,
+    trials: relevant,
+  };
+}
+
+/**
+ * 平衡页卡片、结算总览、导出共用的当前自动 S。
+ * 数字来自 automaticStrength，不另写一套公式；不够算时只说明已有局数和缺什么。
+ */
+export function autoStrengthForBall(
+  store: BalanceStore,
+  ballId: BallId,
+  filter?: ComparableFilter,
+): AutoBallReadout {
+  const requiredRuns = AUTO_S_REQUIRED_RUNS;
+  const session = aggregateSession(store, ballId, filter);
+  const auto = automaticStrength(session, store.config);
+  const baseRuns = stateTrials(session, "base").length;
+  const ballName = getBall(ballId).name;
+  if (ballId === "plain") {
+    return {
+      ballId,
+      ballName,
+      baselineBall: true,
+      baseRuns,
+      onRuns: 0,
+      offRuns: 0,
+      requiredRuns,
+      provisional: false,
+      autoS: null,
+      label: `自动 S：—（基准球不测技能，已有 ${baseRuns}/${requiredRuns} 局）`,
+      auto,
+      ...componentFields(auto, false),
+    };
+  }
+  const onRuns = stateTrials(session, "on").length;
+  const offRuns = stateTrials(session, "off").length;
+  const clause = sampleClause(onRuns, offRuns, baseRuns, requiredRuns);
+  const autoS = auto.autoS;
+  const full = baseRuns >= requiredRuns && onRuns >= requiredRuns && offRuns >= requiredRuns;
+  const label =
+    autoS === null
+      ? `自动 S：—（${clause}）`
+      : `自动 S：${autoS.toFixed(2)}（暂算${full ? "" : ` · ${clause}`}）`;
+  return {
+    ballId,
+    ballName,
+    baselineBall: false,
+    baseRuns,
+    onRuns,
+    offRuns,
+    requiredRuns,
+    provisional: autoS !== null,
+    autoS,
+    label,
+    auto,
+    ...componentFields(auto, autoS !== null),
+  };
+}
+
+export function autoStrengthReport(store: BalanceStore, filter?: ComparableFilter) {
+  return playableBalls().map((ball) => autoStrengthForBall(store, ball.id, filter));
+}
+
+/** 进行中的会话优先于本地已保存副本，避免刚打完的一局还没被卡片看见。 */
+export function mergeLiveSession(
+  persisted: BalanceStore,
+  live: BalanceSession | null,
+  config?: BalanceConfig,
+): BalanceStore {
+  const sessions = persisted.sessions.map((session) => (live && session.id === live.id ? live : session));
+  if (live && !sessions.some((session) => session.id === live.id)) sessions.push(live);
+  return { version: 1, config: config ?? persisted.config, sessions };
+}
+
+export type AutoStrengthExportRow = Omit<AutoBallReadout, "auto" | "baselineBall">;
+
+/**
+ * 在原样会话记录外附上各球当前自动 S。不改 sessions / trials 里已有字段的含义。
+ * aggregate 用平衡页同一套可比样本；store 仍是本次要导出的原始局。
+ */
+export function balanceExportPayload(
+  store: BalanceStore,
+  aggregate: BalanceStore = store,
+  filter?: ComparableFilter,
+) {
+  const autoStrengthByBall: AutoStrengthExportRow[] = autoStrengthReport(aggregate, filter).map((row) => {
+    const { auto: _auto, baselineBall: _baseline, ...rest } = row;
+    return rest;
+  });
+  return {
+    ...store,
+    autoStrengthScope: "当前可比样本汇总，与平衡页各球卡片一致；下面的 sessions 仍是本次导出的原始局。",
+    autoStrengthByBall,
   };
 }
 
@@ -656,11 +854,37 @@ export function historicalSummary(
   };
 }
 
-export function csv(store: BalanceStore) {
-  const lines = [
-    "sessionId,ballId,skillState,score,maxCombo,makes,misses,maxMakeGapSeconds,effectiveSeconds,completed,endReason,clicks,holds,skillInputs,skillActiveSeconds,skillLockSeconds,triggers,skillScore,directMakes,directScore,rescues,unattributedScore,timestamp,gameRev,configKey,scene,playMode",
+const TRIAL_CSV_HEADER =
+  "sessionId,ballId,skillState,score,maxCombo,makes,misses,maxMakeGapSeconds,effectiveSeconds,completed,endReason,clicks,holds,skillInputs,skillActiveSeconds,skillLockSeconds,triggers,skillScore,directMakes,directScore,rescues,unattributedScore,timestamp,gameRev,configKey,scene,playMode";
+
+/** 追加在原有局表头之后。前面的列含义不变。 */
+const AUTO_CSV_HEADER =
+  "会话球,自动S,自动S状态,得分分项,容错分项,节奏分项,爆发分项,代价分项,代价状态,基准局数,开技能局数,关技能局数,自动S说明";
+
+function autoCsvCells(row: AutoBallReadout | undefined, sessionBallId: BallId) {
+  if (!row) return [sessionBallId, "", "", "", "", "", "", "", "", "", "", "", ""];
+  return [
+    sessionBallId,
+    row.autoS === null ? "" : row.autoS.toFixed(2),
+    row.provisional ? "暂算" : "",
+    row.score === null ? "" : row.score.toFixed(2),
+    row.safety === null ? "" : row.safety.toFixed(2),
+    row.tempo === null ? "" : row.tempo.toFixed(2),
+    row.burst === null ? "" : row.burst.toFixed(2),
+    row.cost === null ? "" : row.cost.toFixed(2),
+    row.costLabel,
+    row.baseRuns,
+    row.onRuns,
+    row.offRuns,
+    row.label,
   ];
+}
+
+export function csv(store: BalanceStore, aggregate: BalanceStore = store, filter?: ComparableFilter) {
+  const byBall = new Map(autoStrengthReport(aggregate, filter).map((row) => [row.ballId, row]));
+  const lines = [`${TRIAL_CSV_HEADER},${AUTO_CSV_HEADER}`];
   for (const s of store.sessions) {
+    const readout = byBall.get(s.ballId);
     for (const t of s.trials) {
       lines.push(
         [
@@ -691,6 +915,7 @@ export function csv(store: BalanceStore) {
           JSON.stringify(t.configKey),
           s.scene,
           s.playMode || "minute",
+          ...autoCsvCells(readout, s.ballId),
         ]
           .map((v) => `"${String(v).replaceAll('"', '""')}"`)
           .join(","),

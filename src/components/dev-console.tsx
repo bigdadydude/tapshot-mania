@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, Pause } from "lucide-react";
 import { DEV_FX, DEV_GRAF, DEV_MAZE, DEV_MODIFIERS, DEV_MOVES, DEV_PHYS, DEV_PLAY_MODES, DEV_SCENES, DEV_STAGES, type DevCmd, type DevMaze, type DevPhys, type DevHud } from "@/game/dev";
 import { playableBalls, type BallId } from "@/game/balls";
 import type { Gfx } from "@/game/types";
 import type { RogueHud } from "@/game/rogue";
 import { ROGUE_CATALOG, type RogueCatalogEntry } from "@/game/rogue-catalog";
-import { csv, calibrateKDetailed, historicalSummary, loadBalanceStore, saveBalanceStore, sessionProgress, skillEfficiencyEntrance, strengthTotal, DEFAULT_AUTO_WEIGHTS, type BalanceSession, type BalanceStore, type VerdictLabel } from "@/game/balance-test";
+import { csv, balanceExportPayload, calibrateKDetailed, historicalSummary, loadBalanceStore, mergeLiveSession, saveBalanceStore, sessionProgress, skillEfficiencyEntrance, strengthTotal, autoStrengthReport, DEFAULT_AUTO_WEIGHTS, type AutoBallReadout, type BalanceSession, type BalanceStore, type VerdictLabel } from "@/game/balance-test";
 import { cn } from "@/lib/utils";
 
 type Tab = "match" | "scene" | "ball" | "balance" | "rogue" | "shop";
@@ -74,6 +74,22 @@ function BallTab({dev,onCmd}:{dev:DevHud;onCmd:(cmd:DevCmd)=>void}) { return <><
 function MazeTab({maze,onCmd}:{maze:DevMaze;onCmd:(cmd:DevCmd)=>void}) { return <section className="mb-4 border-y border-accent/40 py-3"><div className="mb-2 flex items-center justify-between"><p className="text-xs font-bold tracking-[0.2em] text-accent">{ZH.gyroDebug}</p><button type="button" onClick={()=>onCmd({t:"mazeReset"})} className="rounded border border-border px-2 py-1 text-[10px] text-muted">{ZH.restoreMaze}</button></div>{DEV_MAZE.map(row=>{const raw=maze[row.k]; const value=(row.k === "sensitivity" || row.k === "deadzone" || row.k === "maxSpeed") ? Math.round(raw*100) : raw; return <div key={row.k} className="mb-3"><div className="mb-1 flex justify-between"><p className="text-xs tracking-widest text-muted">{row.label}</p><p className="text-xs text-fg">{value}{row.unit}</p></div><p className="mb-1 text-[10px] text-subtle">{row.hint}</p><input type="range" min={row.min} max={row.max} step={row.step} value={value} onChange={e=>{const next=Number(e.target.value);onCmd({t:"maze",k:row.k,n:(row.k === "sensitivity" || row.k === "deadzone" || row.k === "maxSpeed") ? next/100 : next})}} className="h-10 w-full accent-accent"/></div>})}</section>; }
 function PhysTab({phys,onCmd}:{phys:DevPhys;onCmd:(cmd:DevCmd)=>void}) { const groups = [["ball", "\u7403\u7269\u7406"], ["scene", "\u573a\u666f\u7269\u7406"]] as const; return <>{groups.map(([group, title]) => <section key={group} className="mb-4 border-t border-border pt-3 first:border-t-0 first:pt-0"><div className="mb-2 flex items-center justify-between"><p className="text-xs font-bold tracking-[0.2em] text-accent">{title}</p><button type="button" onClick={()=>onCmd({t:"physGroupReset",group})} className="rounded border border-border px-2 py-1 text-[10px] text-muted">{"\u6062\u590d\u9ed8\u8ba4"}</button></div>{DEV_PHYS.filter(row => row.group === group).map(row=>{const pct=Math.round(phys[row.k]*100);return <div key={row.k} className="mb-3"><div className="mb-1 flex justify-between"><p className="text-xs tracking-widest text-muted">{row.label}</p><p className="text-xs text-fg">{pct}%</p></div><p className="mb-1 text-[10px] text-subtle">{row.hint}</p><input type="range" min={row.min} max={200} step={5} value={pct} onChange={e=>onCmd({t:"phys",k:row.k,n:Number(e.target.value)/100})} className="h-10 w-full accent-accent"/></div>})}</section>)}</>; }
 function download(name:string, body:string, type:string) { const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([body],{type})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),0); }
+function AutoBallCard({ row, selected }: { row: AutoBallReadout; selected: boolean }) {
+  return (
+    <article
+      className={cn(
+        "mb-1.5 min-w-0 rounded-md border p-2",
+        selected ? "border-accent bg-accent/10" : "border-border bg-bg-elevated",
+      )}
+    >
+      <p className="text-xs text-muted">{row.ballName}{selected ? " · 当前" : ""}</p>
+      <p className={cn("mt-0.5 break-words font-semibold leading-snug text-fg", selected ? "text-base" : "text-sm")}>
+        {row.label}
+      </p>
+      <p className="mt-1 break-words text-xs leading-relaxed text-subtle">{row.componentsLabel}</p>
+    </article>
+  );
+}
 function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void }) {
   const b = dev.balance;
   const s = b.session;
@@ -107,12 +123,31 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
   const lockMean = onLocks.length
     ? onLocks.reduce((sum, trial) => sum + (trial.skillLockSeconds ?? 0), 0) / onLocks.length
     : null;
-  const allStore = (): BalanceStore => {
-    const persisted = loadBalanceStore();
-    const sessions = [...persisted.sessions];
-    if (s && !sessions.some((item) => item.id === s.id)) sessions.push(s);
-    return { version: 1, config: b.config, sessions };
-  };
+  const filterRev = s?.gameRev ?? history.find((item) => item.ballId === candidate)?.gameRev;
+  const filter = useMemo(
+    () =>
+      filterRev !== undefined
+        ? { gameRev: filterRev, playMode: "minute" as const, scene: s?.scene }
+        : undefined,
+    [filterRev, s?.scene],
+  );
+  const summary = historicalSummary({ version: 1, config: b.config, sessions: history }, selectedBall as never, filter);
+  const progress = s ? sessionProgress(s) : null;
+  const configStamp = JSON.stringify(b.config);
+  const trialCount = s?.trials.length ?? 0;
+  const ballReadouts = useMemo(() => {
+    const store = mergeLiveSession(loadBalanceStore(), s, b.config);
+    return autoStrengthReport(store, filter);
+    // Trials are pushed onto the same session object, so the length has to invalidate the cache.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configStamp, trialCount, s?.id, s?.ballId, s?.scene, filter, history.length]);
+  const orderedReadouts = [...ballReadouts].sort((a, c) => {
+    if (a.ballId === selectedBall) return -1;
+    if (c.ballId === selectedBall) return 1;
+    return 0;
+  });
+  const sessionReadout = s ? ballReadouts.find((row) => row.ballId === s.ballId) ?? null : null;
+  const liveStore = (): BalanceStore => mergeLiveSession(loadBalanceStore(), s, b.config);
   const selectedStore = (): BalanceStore | null => {
     const session = selected ?? s;
     if (!session) return null;
@@ -122,27 +157,30 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
   const exportSelected = (format: "json" | "csv") => {
     const payload = selectedStore();
     if (!payload) return;
+    const full = liveStore();
     const id = (selected ?? s)!.ballId;
     if (format === "json") {
-      download(`balance-selected-${id}-${stamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+      download(
+        `balance-selected-${id}-${stamp()}.json`,
+        JSON.stringify(balanceExportPayload(payload, full, filter), null, 2),
+        "application/json",
+      );
     } else {
-      download(`balance-selected-${id}-${stamp()}.csv`, csv(payload), "text/csv;charset=utf-8");
+      download(`balance-selected-${id}-${stamp()}.csv`, csv(payload, full, filter), "text/csv;charset=utf-8");
     }
   };
   const exportAll = (format: "json" | "csv") => {
-    const payload = allStore();
+    const payload = liveStore();
     if (format === "json") {
-      download(`balance-all-${stamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+      download(
+        `balance-all-${stamp()}.json`,
+        JSON.stringify(balanceExportPayload(payload, payload, filter), null, 2),
+        "application/json",
+      );
     } else {
-      download(`balance-all-${stamp()}.csv`, csv(payload), "text/csv;charset=utf-8");
+      download(`balance-all-${stamp()}.csv`, csv(payload, payload, filter), "text/csv;charset=utf-8");
     }
   };
-  const filterRev = s?.gameRev ?? history.find((item) => item.ballId === candidate)?.gameRev;
-  const filter = filterRev !== undefined
-    ? { gameRev: filterRev, playMode: "minute", scene: s?.scene }
-    : undefined;
-  const summary = historicalSummary({ version: 1, config: b.config, sessions: history }, selectedBall as never, filter);
-  const progress = s ? sessionProgress(s) : null;
   const verdictLabel = (value: VerdictLabel, strong = "偏强", weak = "偏弱") => {
     if (value === "strong") return strong;
     if (value === "weak") return weak;
@@ -212,6 +250,12 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
         <p className="mt-1 text-[10px] text-subtle">{summary.sampleNote}</p>
       </section>
 
+      {orderedReadouts[0] ? (
+        <div className="mb-3 min-w-0">
+          <AutoBallCard row={orderedReadouts[0]} selected />
+        </div>
+      ) : null}
+
       <Row title="测试球">
         {balls.map((x) => (
           <Chip
@@ -240,6 +284,13 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
           }}
         />
       </Row>
+
+      <section className="mb-3 min-w-0">
+        <p className="mb-1.5 text-xs font-medium tracking-widest text-muted">各球自动 S</p>
+        {orderedReadouts.slice(1).map((row) => (
+          <AutoBallCard key={row.ballId} row={row} selected={false} />
+        ))}
+      </section>
 
       {historyOpen ? (
         <section className="mb-3 rounded-md border border-border bg-bg-subtle p-2">
@@ -330,35 +381,33 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
             <Chip label="清除会话" onClick={() => onCmd({ t: "balanceClear" })} />
           </Row>
 
-          <section className="mb-3 rounded-md border border-border bg-bg-subtle p-2">
+          <section className="mb-3 min-w-0 rounded-md border border-border bg-bg-subtle p-2">
             <p className="mb-1 text-xs font-medium tracking-widest text-muted">自动 S（只读遥测）</p>
-            {b.auto?.ready ? (
+            {sessionReadout ? (
               <>
-                <p className="text-xs text-fg">
-                  S_auto {b.auto.autoS?.toFixed(2) ?? "—"}
-                  {b.auto.unreliable ? " · 归因偏低，标记不可信" : ""}
-                </p>
-                <p className="mt-1 text-[10px] text-subtle">
-                  得分 {b.auto.dims.score?.toFixed(2) ?? "—"} · 容错 {b.auto.dims.safety?.toFixed(2) ?? "—"} · 节奏{" "}
-                  {b.auto.dims.tempo?.toFixed(2) ?? "—"} · 爆发 {b.auto.dims.burst?.toFixed(2) ?? "—"} · 代价{" "}
-                  {b.auto.costReady ? b.auto.dims.cost?.toFixed(2) ?? "—" : "待测"}
-                </p>
-                <p className="mt-1 text-[10px] text-subtle">
+                <p className="text-sm font-semibold leading-snug text-fg break-words">{sessionReadout.label}</p>
+                <p className="mt-1 text-xs leading-relaxed text-subtle break-words">{sessionReadout.componentsLabel}</p>
+                {sessionReadout.auto.unreliable ? (
+                  <p className="mt-1 text-xs text-subtle">归因偏低，标记不可信</p>
+                ) : null}
+                <p className="mt-1 text-xs leading-relaxed text-subtle break-words">
                   权重 得分{(b.config.autoWeights ?? DEFAULT_AUTO_WEIGHTS).score} / 容错
                   {(b.config.autoWeights ?? DEFAULT_AUTO_WEIGHTS).safety} / 节奏
                   {(b.config.autoWeights ?? DEFAULT_AUTO_WEIGHTS).tempo} / 爆发
                   {(b.config.autoWeights ?? DEFAULT_AUTO_WEIGHTS).burst} / 代价
-                  {(b.config.autoWeights ?? DEFAULT_AUTO_WEIGHTS).cost}（可配置起始值）
+                  {(b.config.autoWeights ?? DEFAULT_AUTO_WEIGHTS).cost}（初值，暂算不改 R0 / R1）
                 </p>
-                <p className="mt-1 text-[10px] text-subtle">
-                  ΔR {b.auto.scoreGain?.toFixed(2)} · 打铁率Δ {b.auto.missRateGain?.toFixed(2)} · 间隔Δ{" "}
-                  {b.auto.gapGain?.toFixed(2)} · 连击Δ {b.auto.comboGain?.toFixed(2)} · 归因占比{" "}
-                  {b.auto.attributionShare?.toFixed(2)}
-                </p>
-                <p className="mt-1 text-[10px] text-subtle">判定：不足 10 局不给结论；3 局起用去极值平均；定稿建议 20 局。</p>
+                {sessionReadout.auto.ready ? (
+                  <p className="mt-1 text-xs leading-relaxed text-subtle break-words">
+                    ΔR {sessionReadout.auto.scoreGain?.toFixed(2)} · 打铁率Δ {sessionReadout.auto.missRateGain?.toFixed(2)} · 间隔Δ{" "}
+                    {sessionReadout.auto.gapGain?.toFixed(2)} · 连击Δ {sessionReadout.auto.comboGain?.toFixed(2)} · 归因占比{" "}
+                    {sessionReadout.auto.attributionShare?.toFixed(2)}
+                  </p>
+                ) : null}
+                <p className="mt-1 text-xs leading-relaxed text-subtle">判定：不足 10 局不给结论；3 局起用去极值平均；定稿建议 20 局。代价未齐时标「待测」。</p>
               </>
             ) : (
-              <p className="text-xs text-subtle">需要基准 + 技能关 + 技能开数据。代价在输入遥测齐全前显示「待测」。</p>
+              <p className="text-xs text-subtle">还没有会话。</p>
             )}
             {lockMean !== null ? (
               <p className="mt-2 text-[10px] text-subtle">
