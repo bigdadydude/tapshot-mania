@@ -58,7 +58,10 @@ export function GameView() {
   const [balanceFocus, setBalanceFocus] = useState(0);
   const [balanceOverDismissed, setBalanceOverDismissed] = useState(false);
   const enteredDev = useRef(false);
-  const inBalanceTest = hud.dev.on && hud.dev.balance.session != null;
+  // Any developer minute that has ended — with or without a balance session.
+  // Starting from the ball tab (or another sandbox entry) never creates a session,
+  // and the settlement card used to fall through to the title screen.
+  const devMinuteOver = hud.dev.on && hud.playMode === "minute";
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -243,7 +246,7 @@ export function GameView() {
               onReset={() => gameRef.current?.resetRogueLoadout()}
             />
           ) : null}
-          {hud.phase === "over" && menu === "none" && !(inBalanceTest && balanceOverDismissed) ? (
+          {hud.phase === "over" && menu === "none" && !(devMinuteOver && balanceOverDismissed) ? (
             <OverCard
               score={hud.score}
               best={hud.best}
@@ -253,8 +256,8 @@ export function GameView() {
               playMode={hud.playMode}
               onRetry={() => gameRef.current?.retry()}
               onTitle={toTitle}
-              onBlank={inBalanceTest ? backFromBalanceOver : undefined}
-              blankHint={inBalanceTest ? "点击空白处返回测试页面" : undefined}
+              onBlank={devMinuteOver ? backFromBalanceOver : undefined}
+              blankHint={devMinuteOver ? "点击空白处返回测试页面" : undefined}
               devMode={hud.dev.on}
               onDevBack={() => gameRef.current?.devBackFromSettle()}
             />
@@ -1439,7 +1442,7 @@ function OverCard({
   playMode: PlayMode;
   onRetry: () => void;
   onTitle: () => void;
-  /** Minute-mode blank tap. Balance tests pass this so the title screen stays put. */
+  /** Developer minute blank tap. Keeps the sandbox and opens the balance page. */
   onBlank?: () => void;
   blankHint?: string;
   devMode?: boolean;
