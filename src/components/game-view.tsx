@@ -142,11 +142,9 @@ export function GameView() {
 
   function resume() {
     gameRef.current?.resume();
-    // Balance pause unmounts the console. Remounting used to force it open
-    // (internal useState(true)). A blank tap should resume with the panel shut.
-    // Other dev sessions keep the old remount-open behavior.
-    if (inBalanceTest) setDevPanelOpen(false);
-    else if (hud.dev.on) setDevPanelOpen(true);
+    // Pause unmounts the console. Remount it collapsed for every developer
+    // session, with or without a balance test.
+    if (hud.dev.on) setDevPanelOpen(false);
     setMenu("none");
   }
 
