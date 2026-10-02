@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, Pause } from "lucide-react";
 import { DEV_FX, DEV_GRAF, DEV_MAZE, DEV_MODIFIERS, DEV_MOVES, DEV_PHYS, DEV_PLAY_MODES, DEV_SCENES, DEV_STAGES, type DevCmd, type DevMaze, type DevPhys, type DevHud } from "@/game/dev";
 import { playableBalls, type BallId } from "@/game/balls";
@@ -33,12 +33,17 @@ const ZH = {
   balance: String.fromCharCode(0x5e73,0x8861),
 };
 
-export function DevConsole({ dev, score, combo, gfx, rogue, onCmd, onMenu, onSearchlights }: { dev: DevHud; score: number; combo: number; gfx: Gfx; rogue: RogueHud | null; onCmd: (cmd: DevCmd) => void; onMenu: () => void; onSearchlights: () => void }) {
-  const [open, setOpen] = useState(true);
+export function DevConsole({ dev, score, combo, gfx, rogue, onCmd, onMenu, onSearchlights, panelOpen, onPanelOpenChange, balanceFocus = 0 }: { dev: DevHud; score: number; combo: number; gfx: Gfx; rogue: RogueHud | null; onCmd: (cmd: DevCmd) => void; onMenu: () => void; onSearchlights: () => void; panelOpen: boolean; onPanelOpenChange: (open: boolean) => void; balanceFocus?: number }) {
   const [tab, setTab] = useState<Tab>("match");
+  const focusSeen = useRef(balanceFocus);
+  useEffect(() => {
+    if (balanceFocus === focusSeen.current) return;
+    focusSeen.current = balanceFocus;
+    setTab("balance");
+  }, [balanceFocus]);
   return <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center"><div className="pointer-events-auto w-full max-w-[min(100%,calc(100dvh*9/16))] px-3 pb-[max(0.6rem,env(safe-area-inset-bottom))]">
-    <div className="mb-1 flex gap-1"><button type="button" onClick={onMenu} className="flex size-9 items-center justify-center rounded-lg border border-border bg-bg-elevated" aria-label="菜单"><Pause className="size-4 text-fg" /></button><button type="button" onClick={() => setOpen((v) => !v)} className="flex h-9 flex-1 items-center justify-between rounded-lg border border-border bg-bg-elevated px-3"><span className="text-xs font-medium tracking-widest text-muted">开发者控制台</span>{open ? <ChevronDown className="size-4 text-muted" /> : <ChevronUp className="size-4 text-muted" />}</button></div>
-    {open ? <div className="max-h-[min(53dvh,31rem)] overflow-y-auto rounded-xl border border-border bg-bg-elevated p-3 shadow-lg"><div className="mb-3 grid grid-cols-6 gap-1 rounded-lg border border-border bg-bg-subtle p-1">{([ ["match",ZH.match],["scene","场景"],["ball","篮球"],["balance","平衡"],["rogue","肉鸽"],["shop","商店"] ] as [Tab,string][]).map(([id,label]) => <button key={id} type="button" onClick={() => setTab(id)} className={cn("h-9 rounded-md text-xs font-medium",tab===id?"bg-accent text-accent-fg":"text-fg")}>{label}</button>)}</div>
+    <div className="mb-1 flex gap-1"><button type="button" onClick={onMenu} className="flex size-9 items-center justify-center rounded-lg border border-border bg-bg-elevated" aria-label="菜单"><Pause className="size-4 text-fg" /></button><button type="button" onClick={() => onPanelOpenChange(!panelOpen)} aria-expanded={panelOpen} className="flex h-9 flex-1 items-center justify-between rounded-lg border border-border bg-bg-elevated px-3"><span className="text-xs font-medium tracking-widest text-muted">开发者控制台</span>{panelOpen ? <ChevronDown className="size-4 text-muted" /> : <ChevronUp className="size-4 text-muted" />}</button></div>
+    {panelOpen ? <div className="max-h-[min(53dvh,31rem)] overflow-y-auto rounded-xl border border-border bg-bg-elevated p-3 shadow-lg"><div className="mb-3 grid grid-cols-6 gap-1 rounded-lg border border-border bg-bg-subtle p-1">{([ ["match",ZH.match],["scene","场景"],["ball","篮球"],["balance","平衡"],["rogue","肉鸽"],["shop","商店"] ] as [Tab,string][]).map(([id,label]) => <button key={id} type="button" onClick={() => setTab(id)} className={cn("h-9 rounded-md text-xs font-medium",tab===id?"bg-accent text-accent-fg":"text-fg")}>{label}</button>)}</div>
       {tab === "match" && <MatchTab dev={dev} score={score} combo={combo} onCmd={onCmd} />}
       {tab === "scene" && <SceneTab dev={dev} gfx={gfx} onCmd={onCmd} onSearchlights={onSearchlights} />}
       {tab === "ball" && <BallTab dev={dev} onCmd={onCmd} />}
