@@ -1,3 +1,5 @@
+import { drawBlackHole } from "./black-hole-render";
+import { drawCity } from "./city-render";
 import type { Ball, Callout, Gfx, Hoop, NinjaCloneDraw, Particle, PrisonHud, TrailPt, World } from "./types";
 import { DEFAULT_GFX, fireStage } from "./types";
 import { artImage, ballImage, cloudImages, graffitiImage } from "./art";
@@ -5,7 +7,7 @@ import type { BallId } from "./balls";
 import { DEFAULT_BALL } from "./balls";
 import type { Chain } from "./chain";
 import { gecko } from "./perf";
-import { getScene, type GrafKey } from "./scenes";
+import { getScene, type GrafKey, type SceneId } from "./scenes";
 import { clearSparseCodeRain, drawSparseCodeRain } from "./sparse-rain";
 import { drawHackerPad, hackerPadLayout, type HackerDir } from "./hacker-pad";
 import { drawMazePad, mazePadLayout, type MazeGravity } from "./maze-pad";
@@ -285,7 +287,7 @@ export function drawScene(
   cloudSy = 1,
   graf: { show: GrafKey | null; incoming: { key: GrafKey; p: number } | null } | null = null,
   gfx: Gfx = DEFAULT_GFX,
-  backdrop: "void" | "street" | "prison" = "street",
+  backdrop: "void" | SceneId = "street",
   ballId: BallId = DEFAULT_BALL,
   glassBase = -1,
   chain: Chain | null = null,
@@ -311,7 +313,14 @@ export function drawScene(
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
 	if (backdrop === "void") drawVoid(ctx, world);
-	else {
+	else if (backdrop === "overpass") drawCity(ctx, world, time);
+	else if (backdrop === "street") {
+		// Graffiti sits above the day-cycle tint; wall/court get the wash first.
+		drawWall(ctx, world, cloudT, cloudSx, cloudSy, null, gfx.clouds !== "off");
+		drawCourt(ctx, world);
+		drawStreetDayCycle(ctx, world, time);
+		drawGraffiti(ctx, world, graf);
+	} else {
 		drawWall(ctx, world, cloudT, cloudSx, cloudSy, graf, gfx.clouds !== "off");
 		drawCourt(ctx, world);
 	}
@@ -396,6 +405,7 @@ export function drawScene(
 			scoreOverride,
 			boltCharge,
 			scoreFlash,
+			ball.trafficNearMiss ?? 0,
 		);
 	}
 }
@@ -978,23 +988,61 @@ function drawWall(
 			ctx.imageSmoothingQuality = "medium";
 			ctx.drawImage(img, 0, 0, layout.sw, layout.sh, layout.ox, layout.oy, layout.dw, layout.dh);
 		}
-		if (graf?.incoming) {
-			const spray = graffitiImage(graf.incoming.key);
-			if (spray) {
-				const g = graffitiLayout(world);
-				ctx.save();
-				clipSpray(ctx, g.ox, g.oy, g.dw, g.dh, graf.incoming.p, false);
-				const gsw = spray.naturalWidth;
-				const gsh = spray.naturalHeight * 0.962;
-				ctx.drawImage(spray, 0, 0, gsw, gsh, g.ox, g.oy, g.dw, g.dh);
-				ctx.restore();
-			}
-		}
+		if (graf) drawGraffitiInClip(ctx, world, graf, true);
 		ctx.restore();
 		return;
 	}
 	ctx.fillStyle = "#2f6a4a";
 	ctx.fillRect(0, Math.max(0, floorY * 0.28), w, floorY);
+}
+
+/** Street: graffiti above day-cycle tint. Prison: still drawn inside drawWall clip. */
+function drawGraffiti(
+	ctx: CanvasRenderingContext2D,
+	world: World,
+	graf: { show: GrafKey | null; incoming: { key: GrafKey; p: number } | null } | null,
+) {
+	if (!graf || (!graf.show && !graf.incoming)) return;
+	const { w, floorY } = world;
+	ctx.save();
+	ctx.beginPath();
+	ctx.rect(0, 0, w, floorY);
+	ctx.clip();
+	drawGraffitiInClip(ctx, world, graf, false);
+	ctx.restore();
+}
+
+function drawGraffitiInClip(
+	ctx: CanvasRenderingContext2D,
+	world: World,
+	graf: { show: GrafKey | null; incoming: { key: GrafKey; p: number } | null },
+	/** When true, settled spray is already baked into the wall layer — only paint incoming. */
+	skipSettled: boolean,
+) {
+	const g = graffitiLayout(world);
+	if (!skipSettled && graf.show) {
+		const spray = graffitiImage(graf.show);
+		if (spray) {
+			const gsw = spray.naturalWidth;
+			const gsh = spray.naturalHeight * 0.962;
+			ctx.imageSmoothingEnabled = true;
+			ctx.imageSmoothingQuality = "medium";
+			ctx.drawImage(spray, 0, 0, gsw, gsh, g.ox, g.oy, g.dw, g.dh);
+		}
+	}
+	if (graf.incoming) {
+		const spray = graffitiImage(graf.incoming.key);
+		if (spray) {
+			ctx.save();
+			clipSpray(ctx, g.ox, g.oy, g.dw, g.dh, graf.incoming.p, false);
+			const gsw = spray.naturalWidth;
+			const gsh = spray.naturalHeight * 0.962;
+			ctx.imageSmoothingEnabled = true;
+			ctx.imageSmoothingQuality = "medium";
+			ctx.drawImage(spray, 0, 0, gsw, gsh, g.ox, g.oy, g.dw, g.dh);
+			ctx.restore();
+		}
+	}
 }
 function drawCourt(ctx: CanvasRenderingContext2D, world: World) {
 	const { w, h, floorY } = world;
@@ -1019,6 +1067,73 @@ function drawCourt(ctx: CanvasRenderingContext2D, world: World) {
 	}
 	ctx.fillStyle = "rgba(28, 32, 38, 0.42)";
 	ctx.fillRect(0, floorY, w, 2);
+}
+
+/** Full street day cycle length (seconds): noon → dusk → night → noon. */
+const STREET_DAY_PERIOD = 90;
+
+type StreetTint = { r: number; g: number; b: number; a: number };
+
+const STREET_DAY_KEYS: { u: number; tint: StreetTint }[] = [
+	{ u: 0.0, tint: { r: 255, g: 210, b: 140, a: 0 } },
+	// 正午：黄色滤镜
+	{ u: 0.1, tint: { r: 255, g: 210, b: 70, a: 0.16 } },
+	{ u: 0.18, tint: { r: 255, g: 200, b: 55, a: 0.22 } },
+	{ u: 0.26, tint: { r: 255, g: 190, b: 140, a: 0.06 } },
+	// 黄昏：红色滤镜
+	{ u: 0.38, tint: { r: 255, g: 72, b: 28, a: 0.3 } },
+	{ u: 0.46, tint: { r: 255, g: 55, b: 22, a: 0.36 } },
+	// 夜晚：紫色滤镜
+	{ u: 0.58, tint: { r: 88, g: 36, b: 168, a: 0.4 } },
+	{ u: 0.72, tint: { r: 70, g: 28, b: 150, a: 0.46 } },
+	{ u: 0.86, tint: { r: 110, g: 70, b: 170, a: 0.18 } },
+	{ u: 1.0, tint: { r: 255, g: 210, b: 140, a: 0 } },
+];
+
+function lerpStreetTint(a: StreetTint, b: StreetTint, t: number): StreetTint {
+	const s = t * t * (3 - 2 * t);
+	return {
+		r: a.r + (b.r - a.r) * s,
+		g: a.g + (b.g - a.g) * s,
+		b: a.b + (b.b - a.b) * s,
+		a: a.a + (b.a - a.a) * s,
+	};
+}
+
+function streetTintAt(time: number): StreetTint {
+	const period = STREET_DAY_PERIOD;
+	const u = (((time % period) + period) % period) / period;
+	const keys = STREET_DAY_KEYS;
+	for (let i = 0; i < keys.length - 1; i++) {
+		const a = keys[i]!;
+		const b = keys[i + 1]!;
+		if (u >= a.u && u <= b.u) {
+			const span = b.u - a.u || 1;
+			return lerpStreetTint(a.tint, b.tint, (u - a.u) / span);
+		}
+	}
+	return keys[keys.length - 1]!.tint;
+}
+
+/** Soft color wash over street sky / wall / court only (ball & HUD drawn later). */
+function drawStreetDayCycle(ctx: CanvasRenderingContext2D, world: World, time: number) {
+	const tint = streetTintAt(time);
+	if (tint.a < 0.004) return;
+	const { w, h, floorY } = world;
+	ctx.save();
+	ctx.fillStyle = `rgba(${tint.r | 0}, ${tint.g | 0}, ${tint.b | 0}, ${tint.a})`;
+	ctx.fillRect(0, 0, w, h);
+	// Night: slight top-down dim so the sky reads darker than the court.
+	const night = Math.max(0, Math.min(1, (tint.b - tint.r) / 80 + tint.a * 0.5));
+	if (night > 0.02) {
+		const g = ctx.createLinearGradient(0, 0, 0, floorY);
+		g.addColorStop(0, `rgba(18, 8, 40, ${0.22 * night})`);
+		g.addColorStop(0.55, `rgba(18, 8, 40, ${0.08 * night})`);
+		g.addColorStop(1, "rgba(18, 8, 40, 0)");
+		ctx.fillStyle = g;
+		ctx.fillRect(0, 0, w, floorY);
+	}
+	ctx.restore();
 }
 
 function drawCourtLines(
@@ -1788,46 +1903,6 @@ function drawMazePit(ctx: CanvasRenderingContext2D, pit: { x: number; y: number;
 	ctx.restore();
 }
 
-function drawBlackHole(
-	ctx: CanvasRenderingContext2D,
-	hole: { x: number; y: number; r: number },
-	time: number,
-) {
-	const { x, y, r } = hole;
-	ctx.save();
-	const glow = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 2.4);
-	glow.addColorStop(0, "rgba(40, 20, 80, 0.55)");
-	glow.addColorStop(0.45, "rgba(20, 10, 40, 0.28)");
-	glow.addColorStop(1, "rgba(0,0,0,0)");
-	ctx.fillStyle = glow;
-	ctx.beginPath();
-	ctx.arc(x, y, r * 2.4, 0, Math.PI * 2);
-	ctx.fill();
-	ctx.save();
-	ctx.translate(x, y);
-	ctx.rotate(time * 0.55);
-	ctx.strokeStyle = "rgba(160, 120, 255, 0.55)";
-	ctx.lineWidth = Math.max(2, r * 0.12);
-	ctx.beginPath();
-	ctx.ellipse(0, 0, r * 1.55, r * 0.55, 0, 0, Math.PI * 2);
-	ctx.stroke();
-	ctx.strokeStyle = "rgba(100, 220, 255, 0.35)";
-	ctx.beginPath();
-	ctx.ellipse(0, 0, r * 1.25, r * 0.4, 0.7, 0, Math.PI * 2);
-	ctx.stroke();
-	ctx.restore();
-	const core = ctx.createRadialGradient(x, y, 0, x, y, r);
-	core.addColorStop(0, "#000000");
-	core.addColorStop(0.55, "#0a0614");
-	core.addColorStop(0.85, "#1a1040");
-	core.addColorStop(1, "rgba(10, 6, 20, 0)");
-	ctx.fillStyle = core;
-	ctx.beginPath();
-	ctx.arc(x, y, r, 0, Math.PI * 2);
-	ctx.fill();
-	ctx.restore();
-}
-
 function drawYellowBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
 	const { x, y, r, squash } = ball;
 	ctx.save();
@@ -2163,8 +2238,17 @@ function drawMazeBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
 }
 
 function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _world: World, time = 0, lit = true, ballId: BallId = DEFAULT_BALL) {
+  if (ball.trafficSafe && Math.floor(time * 10) % 2 === 0) {
+    ctx.save();
+    ctx.translate(ball.x, ball.y + (ball.squash < 1 ? ball.r * (1 - ball.squash) : 0));
+    ctx.scale(1 / ball.squash, ball.squash);
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath(); ctx.arc(0, 0, ball.r, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    return;
+  }
 	if (ballId === "maze") {
-		if (ball.blink && Math.floor(time * 12) % 2 === 0) return;
+		if (!ball.trafficSafe && ball.blink && Math.floor(time * 12) % 2 === 0) return;
 		drawMazeBall(ctx, ball, lit);
 		return;
 	}
@@ -2764,6 +2848,7 @@ function drawHud(
 	scoreOverride: string | null = null,
 	boltCharge = -1,
 	scoreFlash = false,
+	trafficNearMiss = 0,
 ) {
 	const { w } = world;
 	const g = hudGeom(world);
@@ -2895,7 +2980,20 @@ function drawHud(
 	}
 	let tag = null;
 	for (const c of callouts) if (c.kind === "tag") tag = c;
-	if (comboBanner) {
+	if (trafficNearMiss > 0) {
+		// Keep the avoidance base bonus on the combo baseline, even after combo expires.
+		const comboText = comboBanner || (combo >= 2 ? `连击×${combo}` : "");
+		const text = `${comboText ? `${comboText}  ·  ` : ""}擦车而过 ×${trafficNearMiss}`;
+		ctx.save();
+		ctx.font = `800 ${g.comboSize}px 'Noto Sans SC', sans-serif`;
+		ctx.textAlign = "center";
+		ctx.lineWidth = 4;
+		ctx.strokeStyle = "rgba(18,22,30,0.55)";
+		ctx.fillStyle = "#f7f4ef";
+		ctx.strokeText(text, w / 2, g.comboY, w * 0.92);
+		ctx.fillText(text, w / 2, g.comboY, w * 0.92);
+		ctx.restore();
+	} else if (comboBanner) {
 		ctx.save();
 		ctx.font = `800 ${g.comboSize}px 'Noto Sans SC', sans-serif`;
 		ctx.textAlign = "center";

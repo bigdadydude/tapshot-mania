@@ -27,6 +27,7 @@ const idleHud: HudState = {
   score: 0,
   best: 0,
   combo: 0,
+  trafficNearMiss: 0,
   rank: rankFor(0),
   muted: false,
   hint: true,
@@ -665,6 +666,8 @@ function TitleCard({
               ? "9 关闯关攒金，商店强化，终关上万，通关后无限"
               : sceneId === "prison"
                 ? "放风随便投，宵禁后躲开探照灯"
+                : sceneId === "overpass"
+                  ? "进第一球后开始来车，留意两侧预警，被车头撞出界获得5秒无敌"
                 : "点击弹跳，把球投进左右篮筐"}
         </p>
         <p className="mt-1 text-xs text-subtle">
@@ -672,7 +675,7 @@ function TitleCard({
         </p>
       </div>
 
-      <div className="pointer-events-auto mb-2 grid w-full max-w-xs grid-cols-2 gap-1.5">
+      <div className="pointer-events-auto mb-2 grid w-full max-w-xs grid-cols-3 gap-1.5">
         {SCENE_LABELS.map((s) => {
           const on = sceneId === s.id;
           return (
@@ -681,7 +684,7 @@ function TitleCard({
               type="button"
               onClick={() => onScene(s.id)}
               className={cn(
-                "rounded-xl border px-2 py-2 text-center text-sm font-medium",
+                "min-h-11 rounded-xl border px-2 py-2 text-center text-sm font-medium",
                 on ? "border-accent bg-bg-elevated text-fg" : "border-border bg-bg-subtle/80 text-muted",
               )}
             >

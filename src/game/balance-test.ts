@@ -1,4 +1,67 @@
+import { z } from "zod";
 import { getBall, playableBalls, type BallId } from "./balls.ts";
+
+const ballSchema = z.enum(["plain", "lava", "frost", "champ", "anti", "glass", "prison", "rubber", "ninja", "bolt", "rain", "vector", "maze", "quantum", "time"]);
+const finite = z.number().finite();
+const count = finite.nonnegative();
+const identifier = z.string().trim().min(1).max(256);
+const date = z.string().refine((value) => Number.isFinite(Date.parse(value)), "时间格式无效");
+const configSchema = z.object({
+  k: finite, r0Tolerance: finite, r1Min: finite, r1Max: finite,
+  strength: z.partialRecord(ballSchema, z.object({ score: finite, safety: finite, tempo: finite, cost: finite })),
+  autoWeights: z.object({ score: finite, safety: finite, tempo: finite, burst: finite, cost: finite }).optional(),
+});
+const trialSchema = z.object({
+  id: identifier, sessionId: identifier, ballId: ballSchema,
+  skillState: z.enum(["baseline", "off", "on"]),
+  score: count, maxCombo: count, triggers: count, skillScore: count,
+  makes: count.optional(), misses: count.optional(), maxMakeGapSeconds: count.optional(),
+  effectiveSeconds: count.optional(), completed: z.boolean().optional(), endReason: z.enum(["time", "retry"]).optional(),
+  clicks: count.optional(), holds: count.optional(), skillInputs: count.optional(), skillActiveSeconds: count.optional(),
+  directMakes: count.optional(), directScore: count.optional(), rescues: count.optional(), unattributedScore: count.optional(),
+  timestamp: date, gameRev: count.int(), configKey: z.string(),
+});
+const sessionSchema = z.object({
+  id: identifier, baseline: ballSchema, ballId: ballSchema, scene: z.enum(["void", "street", "prison", "overpass"]),
+  playMode: z.enum(["classic", "minute", "rogue"]).default("minute"), physKey: z.string(),
+  createdAt: date, gameRev: count.int(), configSnapshot: configSchema.optional(), trials: z.array(trialSchema),
+}).superRefine((session, ctx) => {
+  session.trials.forEach((trial, index) => {
+    if (trial.sessionId !== session.id) ctx.addIssue({ code: "custom", path: ["trials", index, "sessionId"], message: "局记录与会话 ID 不匹配" });
+  });
+});
+const storeSchema = z.object({ version: z.literal(1), config: configSchema, sessions: z.array(sessionSchema) });
+
+/** Validate the entire file before touching browser state. Unknown fields are discarded. */
+export function parseBalanceImport(value: unknown): BalanceStore {
+  const result = storeSchema.safeParse(value);
+  if (!result.success) {
+    const issue = result.error.issues[0]!;
+    throw new Error(`JSON 数据校验失败：${issue.path.join(".")} · ${issue.message}`);
+  }
+  return { ...result.data, sessions: result.data.sessions.map(normalizeSession) };
+}
+
+/** Add-only merge. Local config, metadata and duplicate records always win. */
+export function mergeBalanceStores(local: BalanceStore, incoming: BalanceStore): BalanceStore {
+  const sessions = structuredClone(local.sessions);
+  const byId = new Map(sessions.map((session) => [session.id, session]));
+  const trialIds = new Set(sessions.flatMap((session) => session.trials.map((trial) => trial.id)));
+  for (const imported of incoming.sessions) {
+    let target = byId.get(imported.id);
+    if (!target) {
+      target = { ...structuredClone(imported), trials: [] };
+      sessions.push(target);
+      byId.set(target.id, target);
+    }
+    for (const trial of imported.trials) {
+      if (trialIds.has(trial.id)) continue;
+      target.trials.push(normalizeTrial(target, structuredClone(trial)));
+      trialIds.add(trial.id);
+    }
+  }
+  return { version: 1, config: structuredClone(local.config), sessions };
+}
 
 export type SkillState = "baseline" | "off" | "on";
 export type SkillStrength = { score: number; safety: number; tempo: number; cost: number };

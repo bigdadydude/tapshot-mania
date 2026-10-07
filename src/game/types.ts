@@ -1,6 +1,7 @@
 import type { DevHud } from "./dev";
 import type { BallId } from "./balls";
 import type { RogueHud } from "./rogue";
+import type { SceneId } from "./scenes";
 
 export type Phase = "title" | "playing" | "settle" | "hub" | "over";
 
@@ -60,6 +61,10 @@ export type Ball = {
   hitBoard: boolean;
   /** Maze Ball respawn protection flicker. */
   blink?: boolean;
+  /** Traffic respawn immunity, independent of each ball's own ability. */
+  trafficSafe?: boolean;
+  /** Emergency near-miss counter for the canvas combo HUD. */
+  trafficNearMiss?: number;
 };
 
 export type Hoop = {
@@ -149,6 +154,8 @@ export type HudState = {
   score: number;
   best: number;
   combo: number;
+  /** Current cumulative emergency near-miss base-score bonus. */
+  trafficNearMiss: number;
   rank: string;
   muted: boolean;
   hint: boolean;
@@ -161,8 +168,7 @@ export type HudState = {
   dev: DevHud;
   ballId: BallId;
   playMode: PlayMode;
-  /** Active ScenePack id (street / prison). */
-  sceneId: "street" | "prison";
+  sceneId: SceneId;
   prison: PrisonHud | null;
   rogue: RogueHud | null;
 };

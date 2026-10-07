@@ -99,6 +99,29 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
   const [history, setHistory] = useState<BalanceSession[]>(() => loadBalanceStore().sessions);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [calibrateNote, setCalibrateNote] = useState<string | null>(null);
+  const importInput = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  const [importNote, setImportNote] = useState<string | null>(null);
+  const importFile = async (file: File) => {
+    setImporting(true);
+    setImportNote(null);
+    try {
+      if (file.size > 20 * 1024 * 1024) throw new Error("文件过大，请选择 20 MB 以内的 JSON");
+      const data: unknown = JSON.parse((await file.text()).replace(/^\uFEFF/, ""));
+      onCmd({ t: "balanceImport", data, onResult: (result) => {
+        if ("error" in result) setImportNote(`导入失败：${result.error}`);
+        else {
+          setHistory(loadBalanceStore().sessions);
+          setImportNote(`导入完成：新增 ${result.addedSessions} 个会话 / ${result.addedTrials} 局；共 ${result.sessions} 个会话 / ${result.trials} 局。重复记录已跳过，本地配置不变。`);
+        }
+      } });
+    } catch (error) {
+      setImportNote(`导入失败：${error instanceof Error ? error.message : "文件无法读取"}`);
+    } finally {
+      setImporting(false);
+      if (importInput.current) importInput.current.value = "";
+    }
+  };
   const selectedBall = (balls.some((ball) => ball.id === dev.ballId) ? dev.ballId : candidate) as BallId;
   const isClassic = selectedBall === "plain";
   const pickBall = (id: BallId) => {
@@ -479,6 +502,12 @@ function BalanceTab({ dev, onCmd }: { dev: DevHud; onCmd: (cmd: DevCmd) => void 
         <p className="mb-3 text-xs text-muted">选好测试球后点「开始测试」。经典球计入 B，特技球测 R0/R1。</p>
       )}
 
+      <Row title="导入手机测试记录">
+        <button type="button" disabled={importing} onClick={() => importInput.current?.click()} className="h-11 rounded-md border border-border bg-bg-subtle px-3 text-sm font-medium text-fg disabled:opacity-50">{importing ? "正在导入…" : "导入 JSON"}</button>
+        <input ref={importInput} type="file" accept=".json,application/json" aria-label="导入平衡测试 JSON" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); }} />
+      </Row>
+      <p className="mb-3 text-xs text-muted">仅合并会话与局记录，按 ID 去重；保留已有数据和本地配置。</p>
+      {importNote ? <p role="status" className="mb-3 break-words text-xs text-fg">{importNote}</p> : null}
       <Row title="导出">
         <Chip label="导出选中 JSON" onClick={() => exportSelected("json")} />
         <Chip label="导出选中 CSV" onClick={() => exportSelected("csv")} />

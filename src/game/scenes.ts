@@ -1,10 +1,25 @@
-export type SceneId = "street" | "prison";
+export type SceneId = "street" | "prison" | "overpass";
+export type TrafficTextures = {
+  /** Transparent side views facing right; null uses the built-in drawing. */
+  sedan: string | null;
+  suv: string | null;
+  truck: string | null;
+  taxi?: string | null;
+  van?: string | null;
+  bus?: string | null;
+  semi?: string | null;
+  /** Optional graffiti/decal, clipped to the container side panel. */
+  containerGraffiti?: string | null;
+  /** Full-width bridge fascia; its top edge is the vehicle wheel baseline. */
+  bridge: string | null;
+};
 export type GrafKey = "start" | "score500" | "ignite" | "blaze" | "combo50";
 
 export type ScenePack = {
   id: SceneId;
   index: number;
   name: string;
+  traffic?: { textures: TrafficTextures };
   /** When set, this scene always boots with that stage modifier. */
   defaultModifier?: "none" | "ghost-rings" | "grave-hands" | "yard-lights";
   wall: { src: string; fallback: string };
@@ -195,9 +210,19 @@ const PRISON: ScenePack = {
   sfx: STREET_SFX,
 };
 
-export const SCENES: ScenePack[] = [STREET, PRISON];
+const OVERPASS: ScenePack = {
+  ...STREET,
+  id: "overpass",
+  index: 3,
+  name: "都市",
+  traffic: {
+    textures: { sedan: null, suv: null, truck: null, bridge: null },
+  },
+};
 
-const BY_ID: Record<SceneId, ScenePack> = { street: STREET, prison: PRISON };
+export const SCENES: ScenePack[] = [STREET, PRISON, OVERPASS];
+
+const BY_ID: Record<SceneId, ScenePack> = { street: STREET, prison: PRISON, overpass: OVERPASS };
 
 let current: SceneId = "street";
 

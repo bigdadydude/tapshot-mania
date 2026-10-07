@@ -20,10 +20,12 @@ import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { hackerPadLayout, hitHackerPad, type HackerDir } from "./hacker-pad";
 import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
-import { automaticStrength, loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
+import { parseBalanceImport, mergeBalanceStores, automaticStrength, loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
 import { DEFAULT_MAZE, DEFAULT_PHYS, clampMaze, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevMaze, type DevPhys, type DevSceneId } from "./dev";
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
+import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
+import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
 import {
@@ -55,7 +57,7 @@ import {
   type RogueRun,
 } from "./rogue";
 
-export const GAME_REV = 293;
+export const GAME_REV = 294;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -169,7 +171,7 @@ export function createGame(
   if (!rawCtx) throw new Error("Canvas 2D unavailable");
   const ctx = rawCtx;
   const save = loadSave();
-  setScene(save.scene === "prison" ? "prison" : "street");
+  setScene(save.scene);
   reloadSceneArt();
   primeArt();
   primeSearchlightLayout();
@@ -178,6 +180,8 @@ export function createGame(
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   let world: World = layout(390, 844);
+  let traffic = createTraffic();
+  const trafficEnabled = () => getSceneId() === "overpass" && !(devOn && devScene === "void");
   let phase: Phase = "title";
   let booted = artProgress().ready;
   let lastLoadN = booted ? 100 : -1;
@@ -1196,6 +1200,7 @@ export function createGame(
       score: displayScore,
       best: modeBest(),
       combo: comboCounting ? streak : 0,
+      trafficNearMiss: trafficEnabled() ? traffic.nearMiss : 0,
       rank: rankFor(displayScore),
       muted: mix.master <= 0.001,
       hint: hint && phase === "playing",
@@ -1538,6 +1543,8 @@ export function createGame(
   function applyScenePack(id: SceneId) {
     if (getSceneId() === id) return;
     setScene(id);
+    traffic = createTraffic();
+    ball.trafficSafe = false;
     clearSceneLayers();
     reloadSceneArt();
     persist();
@@ -2633,6 +2640,22 @@ export function createGame(
     world = layout(cssW, cssH);
     const sx = prev.w > 1 ? world.w / prev.w : 1;
     const sy = prev.h > 1 ? world.h / prev.h : 1;
+    for (const vehicle of traffic.vehicles) {
+      vehicle.x *= sx;
+      vehicle.prevX *= sx;
+      vehicle.speed *= sx;
+      if (vehicle.burnLaunch) {
+        vehicle.burnLaunch.vx *= sx;
+        vehicle.burnLaunch.vy *= sy;
+      }
+      if (vehicle.absorbed) {
+        vehicle.absorbed.x *= sx;
+        vehicle.absorbed.y *= sy;
+        vehicle.absorbed.targetX *= sx;
+        vehicle.absorbed.targetY *= sy;
+      }
+    }
+    for (const warning of traffic.warnings) warning.speed *= sx;
     ball.x *= sx;
     ball.y *= sy;
     ball.r = activeBallR();
@@ -2703,6 +2726,8 @@ export function createGame(
   }
 
   function beginPlay() {
+    traffic = createTraffic();
+    ball.trafficSafe = false;
     resetBalanceTrialCounters();
     phase = "playing";
     paused = false;
@@ -3103,6 +3128,8 @@ export function createGame(
   }
 
   function startRogueStageCourt() {
+    traffic = createTraffic();
+    ball.trafficSafe = false;
     madeCount = 0;
     score = 0;
     mazeBaseBonus = 0;
@@ -3428,6 +3455,7 @@ export function createGame(
     if ((buzzer || timeUp) && !heroClutch) return;
     if (tapLock > 0) return;
     if (ballHidden() && !onApproachSide() && !stageMod.allowHiddenTap?.()) return;
+    traffic.launched = false;
     // Mid-air re-tap on an unfinished attempt: boost only �?do not break combo.
     if (shotOpen && !shotMade && !shotMissed) {
       hint = false;
@@ -3731,6 +3759,8 @@ export function createGame(
   }
 
   function goTitle() {
+    traffic = createTraffic();
+    ball.trafficSafe = false;
     phase = "title";
     paused = false;
     rewindHistory = [];
@@ -3876,7 +3906,9 @@ export function createGame(
         if (balanceLocked()) return;
         if (!devOn) enterSandbox();
         devScene = cmd.id;
-        if (cmd.id === "street" || cmd.id === "prison") {
+        traffic = createTraffic();
+        ball.trafficSafe = false;
+        if (cmd.id !== "void") {
           applyScenePack(cmd.id);
           resetGraf();
         }
@@ -4233,6 +4265,29 @@ export function createGame(
         emitHud();
         return;
       }
+      case "balanceImport": {
+        try {
+          const incoming = parseBalanceImport(cmd.data);
+          // Include persisted records and the live session before merging; never replace local config.
+          let current = mergeBalanceStores(balanceStore, loadBalanceStore());
+          if (balanceSession) {
+            current = mergeBalanceStores(current, { version: 1, config: current.config, sessions: [balanceSession] });
+          }
+          const beforeTrials = current.sessions.reduce((total, session) => total + session.trials.length, 0);
+          const merged = mergeBalanceStores(current, incoming);
+          const trials = merged.sessions.reduce((total, session) => total + session.trials.length, 0);
+          // Unlike routine saves, import must surface quota/storage errors before reporting success.
+          localStorage.setItem("tq-balance-test-v1", JSON.stringify(merged));
+          const addedSessions = merged.sessions.length - current.sessions.length;
+          balanceStore = merged;
+          if (balanceSession) balanceSession = balanceStore.sessions.find((session) => session.id === balanceSession!.id) ?? balanceSession;
+          emitHud();
+          cmd.onResult({ addedSessions, addedTrials: trials - beforeTrials, sessions: merged.sessions.length, trials });
+        } catch (error) {
+          cmd.onResult({ error: error instanceof Error ? error.message : "导入失败，原数据未改变" });
+        }
+        return;
+      }
       case "balanceClear": balanceSession = null; emitHud(); return;
       case "balanceConfig": {
         const c=balanceStore.config; if(typeof cmd.k==="number") c.k=Math.max(0,Math.min(1,cmd.k)); if(typeof cmd.r0Tolerance==="number") c.r0Tolerance=Math.max(0,Math.min(1,cmd.r0Tolerance)); if(typeof cmd.r1Min==="number") c.r1Min=Math.max(0,Math.min(2,cmd.r1Min)); if(typeof cmd.r1Max==="number") c.r1Max=Math.max(0,Math.min(2,cmd.r1Max)); if(cmd.ballId&&cmd.strengthKey&&typeof cmd.n==="number"){const s=c.strength[cmd.ballId]||{...DEFAULT_STRENGTH}; s[cmd.strengthKey]=Math.max(-3,Math.min(3,Math.round(cmd.n))); c.strength[cmd.ballId]=s;} saveBalanceStore(balanceStore); emitHud(); return;
@@ -4417,6 +4472,12 @@ export function createGame(
       hitstop -= dt;
       return;
     }
+    if (trafficEnabled() && madeCount > 0) {
+      stepTraffic(traffic, world, dt);
+      if (holeOn) beginTrafficAbsorption(traffic, holeX, holeY);
+    }
+    ball.trafficSafe = trafficEnabled() && traffic.safeLeft > 0;
+    ball.trafficNearMiss = trafficEnabled() ? traffic.nearMiss : 0;
     if (tapLock > 0) tapLock -= dt;
     if (scoredLock > 0) scoredLock -= dt;
     if (rimHitLock > 0) rimHitLock -= dt;
@@ -4634,6 +4695,7 @@ export function createGame(
           shotOpen = true;
         }
         updateHackerRimSlide();
+        if (trafficEnabled() && hackerDir) updateTrafficHackerSlide(traffic, world, ball, { ...hackerDirectionVector(hackerDir), speed: hackerSpeed });
       } else if (holeOn) {
         const dx = holeX - ball.x;
         const dy = holeY - ball.y;
@@ -4746,9 +4808,73 @@ export function createGame(
         const move = buzzer ? 0.6 : 1;
         ball.x += ball.vx * dt * move;
         ball.y += ball.vy * dt * move;
-        wrapHackerBounds();
       }
-      if (isMaze() && ball.y - ball.r < 0) {
+      if (trafficEnabled() && phase === "playing") {
+        if (holeOn) beginTrafficAbsorption(traffic, holeX, holeY);
+        const nearMissBefore = traffic.nearMiss;
+        const desired = hacking && hackerDir ? hackerDirectionVector(hackerDir) : null;
+        if (collideTraffic(traffic, world, ball, prevBallX, prevBallY, {
+          dt,
+          tunneling: quantumTunnelLeft > 0,
+          hacker: desired ? { ...desired, speed: hackerSpeed } : undefined,
+          lightning: isBolt(),
+          discharge: isBolt() && boltCharge > 90 && !ball.scored,
+          ignite: heatN() >= STAGE_IGNITE && heatN() < STAGE_BLAZE,
+          blaze: heatN() >= STAGE_BLAZE,
+          frost: isFrost() ? { chance: frostChance(), first: FROST_DUR_FIRST, refresh: FROST_DUR_REFRESH } : undefined,
+        })) {
+          vectorFlight = false;
+          vectorPointerId = null;
+          shotAirborne = true;
+          if (!hacking && traffic.roofSpeed <= 0) {
+            if (gfx.impact) camShake = Math.max(camShake, 0.14);
+            audio.board(0.7);
+          }
+        }
+        if (traffic.igniteUpgrade) {
+          combo = Math.max(combo, STAGE_BLAZE);
+          callouts.push({ text: "烈焰", x: ball.x, y: ball.y - ball.r * 2, life: 0.8, max: 0.8, kind: "base" });
+          emitHud();
+        }
+        if (traffic.lightningHit) {
+          score += 1;
+          boltCharge = Math.max(0, boltCharge - 1);
+          if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
+          noteBalanceSkillEffect({ trigger: true, directScore: 1 });
+          noteBest();
+          callouts.push({ text: "+1", x: ball.x, y: ball.y - ball.r * 2, life: 0.6, max: 0.6, kind: "base" });
+          emitHud();
+        }
+        if (traffic.burnScore > 0) {
+          score += traffic.burnScore;
+          if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
+          noteBest();
+          audio.burn();
+          if (gfx.flash) burnFlash = 0.16;
+          if (gfx.impact) camShake = Math.max(camShake, 0.12);
+          callouts.push({ text: `+${traffic.burnScore}`, x: ball.x, y: ball.y - ball.r * 2, life: 0.8, max: 0.8, kind: "base" });
+          emitHud();
+        }
+        if (traffic.frostGain > 0) {
+          frostBonus += traffic.frostGain;
+          callouts.push({ text: "基础 +1", x: ball.x, y: ball.y - ball.r * 2, life: 0.8, max: 0.8, kind: "base" });
+        }
+        if (isBolt() && traffic.roofSpeed > 2.2) {
+          boltFloorGrip = true;
+          boltFloorSpeed = Math.max(boltFloorSpeed, traffic.roofSpeed);
+        }
+        stepTrafficNearMiss(traffic, world, ball, quantumTunnelLeft > 0);
+        ball.trafficNearMiss = traffic.nearMiss;
+        if (nearMissBefore !== traffic.nearMiss) {
+          if (traffic.nearMiss > nearMissBefore) callouts.push({ text: `擦车而过 ×${traffic.nearMiss}`, x: ball.x, y: ball.y - ball.r * 2, life: 0.8, max: 0.8, kind: "base" });
+          emitHud();
+        }
+        if (trafficOutOfBounds(traffic, world, ball)) grantTrafficSafe(traffic, ball);
+        else if (traffic.launched && ball.vy >= 0 && ball.y + ball.r >= world.floorY - 1) traffic.launched = false;
+      }
+      // Resolve traffic escape before hacker wrapping; otherwise side wrapping hides it.
+      if (hacking) wrapHackerBounds();
+      if (isMaze() && ball.y - ball.r < 0 && !(trafficEnabled() && traffic.launched)) {
         // The top of the court is a solid wall for the rolling-board mode.
         // Keep the normal impact speed and reflect it with maze restitution.
         const impact = -ball.vy;
@@ -4802,6 +4928,7 @@ export function createGame(
           if (!other.noBoard && !stageMod.skipBoard(other)) collideBoard(other);
           if (!other.noBoard && !stageMod.skipBrace(other)) collideBrace(other);
         }
+        if (ball.vx !== vx0 || ball.vy !== vy0) traffic.launched = false;
         if (
           isVector() &&
           (Math.abs(ball.vx - vectorVx) > 0.5 || Math.abs(ball.vy - vectorVy) > 0.5)
@@ -5820,6 +5947,7 @@ export function createGame(
     }
     let gain = bunshinGhost ? 1 : ninjaGhost ? 0 : basePart + streakPart;
     if (!bunshinGhost && !ninjaGhost) {
+      if (trafficEnabled()) gain += traffic.nearMiss;
       if (isFrost()) gain += frostBonus;
       if (depth) gain += 30;
       else if (needle) gain += 20;
@@ -6458,9 +6586,16 @@ export function createGame(
             boltTrail,
             barLabel,
             scoreFlash,
-            (c) => stageMod.drawWorldBack?.(c, world, time),
+            (c) => {
+              const pack = getScene().traffic;
+              if (trafficEnabled() && pack) drawTrafficWorld(c, traffic, world, pack.textures, time);
+              stageMod.drawWorldBack?.(c, world, time);
+            },
             phase === "playing" && isHacker() && hackerAwaken,
-            (c) => stageMod.drawWorld?.(c, world, time),
+            (c) => {
+              stageMod.drawWorld?.(c, world, time);
+              if (trafficEnabled()) drawTrafficAlerts(c, traffic, world, ball);
+            },
             phase === "playing" && isHacker() && hackerAwaken ? { dir: hackerDir } : null,
             // The pad is only a touch-control indicator. Gyro steering stays invisible
             // so releasing a dragged stick always springs the knob back to center.
@@ -6616,9 +6751,9 @@ export function createGame(
       emitHud();
     },
     setScene(id) {
-      if (id !== "street" && id !== "prison") return;
+      if (id !== "street" && id !== "prison" && id !== "overpass") return;
       applyScenePack(id);
-      if (devOn && (devScene === "street" || devScene === "prison")) {
+      if (devOn && devScene !== "void") {
         devScene = id;
       }
       bootStageModifier({ announce: phase === "playing" });
@@ -6676,6 +6811,13 @@ export function createGame(
     snapshot() {
       return {
         phase,
+        sceneId: getSceneId(),
+        traffic: trafficEnabled() ? {
+          vehicles: traffic.vehicles.map(v => ({ ...v })),
+          warnings: traffic.warnings.map(v => ({ ...v })),
+          safeLeft: traffic.safeLeft, launched: traffic.launched,
+          hits: traffic.hits, respawns: traffic.respawns, clock: traffic.clock,
+        } : null,
         score,
         combo,
         timer,

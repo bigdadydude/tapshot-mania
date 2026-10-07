@@ -1,11 +1,11 @@
-import type { GrafKey } from "./scenes";
+import type { GrafKey, SceneId } from "./scenes";
 import type { BallId } from "./balls";
 import type { PlayMode } from "./types";
 import type { ModifierId } from "./modifiers";
 import { MODIFIER_LABELS } from "./modifiers";
 import type { AutoStrength, BalanceConfig, BalanceRow, BalanceSession } from "./balance-test";
 
-export type DevSceneId = "void" | "street" | "prison";
+export type DevSceneId = "void" | SceneId;
 
 export type DevMaze = {
   sensitivity: number;
@@ -146,6 +146,7 @@ export type DevCmd =
   | { t: "balanceSkill"; on: boolean }
   | { t: "balanceRetry" }
   | { t: "balanceClear" }
+  | { t: "balanceImport"; data: unknown; onResult: (result: { addedSessions: number; addedTrials: number; sessions: number; trials: number } | { error: string }) => void }
   | { t: "balanceConfig"; k?: number; r0Tolerance?: number; r1Min?: number; r1Max?: number; ballId?: BallId; strengthKey?: "score" | "safety" | "tempo" | "cost"; n?: number }
   | { t: "gfx"; key: "ballShade" | "ballShadow" | "particles" | "graffitiFx" | "impact" | "flash" | "buzzerSpot"; on: boolean };
 
@@ -164,6 +165,7 @@ export const DEV_SCENES: { id: DevSceneId; label: string }[] = [
   { id: "void", label: "空空间" },
   { id: "street", label: "街头" },
   { id: "prison", label: "监狱" },
+  { id: "overpass", label: "都市" },
 ];
 
 export const DEV_STAGES: { n: number; label: string }[] = [
