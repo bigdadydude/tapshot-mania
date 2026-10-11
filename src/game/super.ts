@@ -95,8 +95,7 @@ function waveRadius(angle:number,time:number,base:number,amp:number){
 }
 function strokeShieldLine(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,time:number,wave:number){
   ctx.save();
-  ctx.shadowColor='#3ee07a';ctx.shadowBlur=5;
-  ctx.strokeStyle='#7dffb0';ctx.lineWidth=2.2;ctx.lineJoin='round';ctx.globalAlpha=0.95;
+  ctx.shadowBlur=0;ctx.strokeStyle='#7dffb0';ctx.lineWidth=2.2;ctx.lineJoin='round';ctx.globalAlpha=0.95;
   ctx.beginPath();
   if(wave<=0.02){ctx.arc(x,y,radius,0,Math.PI*2);}
   else{
@@ -109,7 +108,6 @@ function strokeShieldLine(ctx:CanvasRenderingContext2D,x:number,y:number,radius:
     ctx.closePath();
   }
   ctx.stroke();
-  ctx.shadowBlur=0;ctx.strokeStyle='#e8ffe8';ctx.lineWidth=1;ctx.globalAlpha=0.75;ctx.stroke();
   ctx.restore();
 }
 function strokeShieldRings(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,time:number){
@@ -174,7 +172,7 @@ export function drawSuperGas(ctx:CanvasRenderingContext2D,s:SuperState,b:Body){
   const moving=s.dash.left>1e-8;
   fillGasCloud(ctx,b.x,b.y,b.r*0.86,b.r*(moving?2.2:1.9),s.clock,moving?1:Math.max(0.4,s.dash.hang/SUPER.hangTime));
 }
-/** Tight glowing shield line, expanding rings, and a click ripple. */
+/** Tight shield line, fading rings, and a click ripple. No blur. */
 export function drawSuperAura(ctx:CanvasRenderingContext2D,s:SuperState,b:Body){
   ctx.save();
   if(s.shield){
