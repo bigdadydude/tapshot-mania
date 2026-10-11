@@ -10,7 +10,11 @@ export function createSuper() {
 }
 export type SuperState=ReturnType<typeof createSuper>;
 export function superSegments(s:SuperState){return Math.floor((s.energy+1e-8)/20);}
-function spend(s:SuperState,n:number){s.energy=Math.max(0,s.energy-n);if(s.energy<=0)s.shield=false;}
+function releaseShield(s:SuperState){
+  if(!s.shield)return;
+  s.shield=false;s.pending=null;s.queue=[];s.refund=false;s.wave=0;
+}
+function spend(s:SuperState,n:number){s.energy=Math.max(0,s.energy-n);if(s.energy<=0)releaseShield(s);}
 export function superToggle(s:SuperState){s.shield=!s.shield && s.energy>0;s.pending=null;s.queue=[];s.refund=false;s.lastAction=s.clock;s.wave=0;}
 export function superPulseShield(s:SuperState){if(s.shield)s.wave=1;}
 function parry(s:SuperState){s.energy=Math.min(120,s.energy+20);s.invincible=3;s.pending=null;s.queue=[];s.dash=null;s.impact=null;s.refund=false;s.flash=0.4;}
@@ -57,7 +61,7 @@ function trailGhost(s:SuperState,b:Body){
 }
 export function stepSuper(s:SuperState,b:Body,dt:number){
   s.clock+=dt;s.invincible=Math.max(0,s.invincible-dt);s.flash=Math.max(0,s.flash-dt);s.wave=Math.max(0,s.wave-dt/0.28);
-  if(s.shield)spend(s,dt*0.5);
+  if(s.energy<=0)releaseShield(s);else if(s.shield)spend(s,dt*0.5);
   if(s.impact && s.clock-s.impact.at>SUPER.parryWindow)s.impact=null;
   let kept=0;
   for(const ghost of s.ghosts){ghost.life-=dt;if(ghost.life>0)s.ghosts[kept++]=ghost;}

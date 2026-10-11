@@ -68,6 +68,13 @@ test('shield blocks swipes and impacts, charges 4 per event and drains 0.5 per s
  assert.equal(superImpact(s,b),true);assert.equal(s.energy,96);superScore(s,40);assert.equal(s.energy,92);stepSuper(s,b,2);assert.equal(s.energy,91);
  s.energy=0.1;stepSuper(s,b,0.3);assert.equal(s.energy,0);assert.equal(s.shield,false);
 });
+test('emptying the shield bar returns to swipe mode',()=>{
+ const s=createSuper(),b=body();s.energy=4;superToggle(s);superPulseShield(s);
+ assert.equal(superImpact(s,b),true);assert.equal(s.energy,0);assert.equal(s.shield,false);assert.equal(s.wave,0);
+ s.energy=20;assert.equal(superSwipe(s,b,40,0),'dash');
+ const drip=createSuper();drip.energy=0.2;superToggle(drip);stepSuper(drip,body(),0.5);
+ assert.equal(drip.energy,0);assert.equal(drip.shield,false);
+});
 test('partial shield segment gives no goal bonus or extra score-event charge',()=>{
  const s=createSuper();s.energy=19;superToggle(s);assert.equal(superBaseBonus(s),0);superScore(s,20);assert.equal(s.energy,19);
 });
