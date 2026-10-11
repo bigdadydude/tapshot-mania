@@ -894,6 +894,14 @@ export function createGame(
   let rocket = createRocket();
   let vector = createVector();
   let superBall = createSuper();
+  /** Pre-jump snapshot for the current super press; cleared on release or after swipeCancel. */
+  let superTapUndo: null | {
+    at: number;
+    x: number; y: number; vx: number; vy: number; omega: number; squash: number;
+    scored: boolean;
+    shotOpen: boolean; shotMade: boolean; shotMissed: boolean; shotAirborne: boolean;
+    combo: number; streak: number;
+  } = null;
   /** Seconds remaining in Quantum Ball phase-through state. */
   let quantumTunnelLeft = 0;
   let quantumCheckedTier = 0;
@@ -3456,8 +3464,21 @@ export function createGame(
   }
   function cancelVectorInput() {
     releaseVectorAnchor(); cancelVectorPress(vector); releaseRocket(rocket,ball);
-    superBall.pointer=null;superBall.pending=null;superBall.queue=[];
+    superBall.pointer=null;superBall.pending=null;superBall.queue=[];superTapUndo=null;
     if(superBall.dash){ball.vx=superBall.dash.vx;ball.vy=superBall.dash.vy;superBall.dash=null;}
+  }
+
+  function restoreSuperTapUndo() {
+    const u = superTapUndo;
+    if (!u) return false;
+    ball.x = u.x; ball.y = u.y; ball.vx = u.vx; ball.vy = u.vy;
+    ball.omega = u.omega; ball.squash = u.squash; ball.scored = u.scored;
+    shotOpen = u.shotOpen; shotMade = u.shotMade; shotMissed = u.shotMissed; shotAirborne = u.shotAirborne;
+    combo = u.combo; streak = u.streak;
+    tapLock = 0;
+    superTapUndo = null;
+    emitHud();
+    return true;
   }
 
   /** Rim / board / brace: same parry window as cars. Shield stays cars-and-bullets only. */
@@ -3730,10 +3751,22 @@ export function createGame(
       if(p.x>=bar.x-10 && p.x<=bar.x+bar.w+10 && p.y>=bar.y-10 && p.y<=bar.y+bar.h+10){
         if(superBall.dash){ball.vx=superBall.dash.vx;ball.vy=superBall.dash.vy;superBall.dash=null;}
         superToggle(superBall);
+        superTapUndo=null;
         superBall.pointer={id:e.pointerId,x:p.x,y:p.y,used:true};
         try{canvas.setPointerCapture(e.pointerId);}catch{}
         return;
       }
+      // Jump immediately (same as other balls). A swipe inside swipeCancel rewinds this jump, so dash never hop-then-glide.
+      const undo={
+        at:superBall.clock,
+        x:ball.x,y:ball.y,vx:ball.vx,vy:ball.vy,omega:ball.omega,squash:ball.squash,
+        scored:ball.scored,shotOpen,shotMade,shotMissed,shotAirborne,combo,streak,
+      };
+      noteBalanceClick();
+      tapJump(e.pointerId);
+      // tapJump → cancelVectorInput clears gesture state; re-arm after the jump commits.
+      superTapUndo=undo;
+      superPulseShield(superBall);
       superBall.pointer={id:e.pointerId,x:p.x,y:p.y,used:false};
       try{canvas.setPointerCapture(e.pointerId);}catch{}
       return;
@@ -3827,6 +3860,8 @@ export function createGame(
       if(!start.used && Math.hypot(p.x-start.x,p.y-start.y)>=SUPER.swipeSlop){
         start.used=true;
         if(!paused && phase==="playing" && !buzzer && !timeUp && !stageMod.holdsBall?.()){
+          if(superTapUndo && superBall.clock-superTapUndo.at<=SUPER.swipeCancel) restoreSuperTapUndo();
+          else superTapUndo=null;
           const result=superSwipe(superBall,ball,p.x-start.x,p.y-start.y);
           if(result==='dash'){prepareVectorShot();}
           if(result==='parry'){traffic.launched=false;modifierHost().tag('完美抵消');}
@@ -3853,10 +3888,8 @@ export function createGame(
 
   function onUp(e: PointerEvent) {
     if(isSuper() && superBall.pointer?.id===e.pointerId){
-      const pointer=superBall.pointer;superBall.pointer=null;
-      if(e.type==='pointerup' && !pointer.used && !paused && phase==='playing') {
-        superBall.lastAction=superBall.clock;superBall.refund=false;superPulseShield(superBall);noteBalanceClick();tapJump(e.pointerId);
-      }
+      superBall.pointer=null;
+      superTapUndo=null;
       return;
     }
     if(rocket.pointer===e.pointerId){releaseRocket(rocket,ball);return;}
@@ -4657,7 +4690,7 @@ export function createGame(
     stepVector(dt);
     if(isSuper() && phase==='playing') {
       stepSuper(superBall,ball,dt);
-      if(buzzer || timeUp || stageMod.holdsBall?.()){superBall.pending=null;superBall.queue=[];superBall.dash=null;superBall.pointer=null;}
+      if(buzzer || timeUp || stageMod.holdsBall?.()){superBall.pending=null;superBall.queue=[];superBall.dash=null;superBall.pointer=null;superTapUndo=null;}
     }
     if(isRocket() && (buzzer || timeUp || stageMod.holdsBall?.())) releaseRocket(rocket,ball);
     stepGraf(dt);

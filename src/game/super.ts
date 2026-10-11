@@ -1,8 +1,8 @@
-export const SUPER = { capacity:120, segment:20, chainWindow:0.2, parryWindow:0.12, dashTime:0.5, hangTime:0.2, dashDiameters:5, swipeSlop:8 };
+export const SUPER = { capacity:120, segment:20, chainWindow:0.2, parryWindow:0.12, dashTime:0.5, hangTime:0.2, dashDiameters:5, swipeSlop:8, swipeCancel:0.16 };
 type Body={x:number;y:number;vx:number;vy:number;r:number};
 type DashAim={dx:number;dy:number};
 export function createSuper() {
-  return {energy:0,shield:false,invincible:0,clock:0,lastSwipe:-Infinity,lastAction:-Infinity,chain:0,refund:false,
+  return {energy:0,shield:false,clock:0,lastSwipe:-Infinity,lastAction:-Infinity,chain:0,refund:false,
     pointer:null as null|{id:number;x:number;y:number;used:boolean},
     pending:null as null|DashAim,queue:[] as DashAim[],
     dash:null as null|{dx:number;dy:number;left:number;hang:number;vx:number;vy:number},
@@ -18,7 +18,7 @@ function releaseShield(s:SuperState){
 function spend(s:SuperState,n:number){s.energy=Math.max(0,s.energy-n);if(s.energy<=0)releaseShield(s);}
 export function superToggle(s:SuperState){s.shield=!s.shield && s.energy>0;s.pending=null;s.queue=[];s.refund=false;s.lastAction=s.clock;s.wave=0;}
 export function superPulseShield(s:SuperState){if(s.shield)s.wave=1;}
-function parry(s:SuperState){s.energy=Math.min(120,s.energy+20);s.invincible=3;s.pending=null;s.queue=[];s.dash=null;s.impact=null;s.refund=false;s.flash=0.4;}
+function parry(s:SuperState){s.energy=Math.min(120,s.energy+20);s.pending=null;s.queue=[];s.dash=null;s.impact=null;s.refund=false;s.flash=0.4;}
 function beginDash(s:SuperState,b:Body,aim:DashAim){
   s.dash={dx:aim.dx,dy:aim.dy,left:SUPER.dashTime,hang:0,vx:b.vx,vy:b.vy};
 }
@@ -42,7 +42,6 @@ export function superSwipe(s:SuperState,b:Body,dx:number,dy:number) {
 }
 /** True means the impact is consumed before it can overwrite velocity. */
 export function superImpact(s:SuperState,b:Body,opts?:{shield?:boolean}) {
-  if(s.invincible>0)return true;
   if(opts?.shield!==false && s.shield && s.energy>0){spend(s,4);s.flash=0.18;return true;}
   if(s.dash){b.vx=s.dash.vx;b.vy=s.dash.vy;}
   // Only a post-hit swipe within parryWindow cancels. Reset chain so recovery costs one segment.
@@ -66,7 +65,7 @@ function trailGhost(s:SuperState,b:Body){
   if(s.ghosts.length>5) s.ghosts.shift();
 }
 export function stepSuper(s:SuperState,b:Body,dt:number){
-  s.clock+=dt;s.invincible=Math.max(0,s.invincible-dt);s.flash=Math.max(0,s.flash-dt);s.wave=Math.max(0,s.wave-dt/0.28);
+  s.clock+=dt;s.flash=Math.max(0,s.flash-dt);s.wave=Math.max(0,s.wave-dt/0.28);
   if(s.energy<=0)releaseShield(s);else if(s.shield)spend(s,dt*0.5);
   if(s.impact && s.clock-s.impact.at>SUPER.parryWindow)s.impact=null;
   let kept=0;
@@ -104,9 +103,9 @@ function waveRadius(angle:number,time:number,base:number,amp:number){
     +Math.sin(angle*8+time*3.1)*amp*0.28
     +Math.sin(angle*2.4-time*0.9)*amp*0.22;
 }
-function strokeShieldLine(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,time:number,wave:number){
+function strokeAuraLine(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,time:number,wave:number,color:string){
   ctx.save();
-  ctx.shadowBlur=0;ctx.strokeStyle='#7dffb0';ctx.lineWidth=2.2;ctx.lineJoin='round';ctx.globalAlpha=0.95;
+  ctx.shadowBlur=0;ctx.strokeStyle=color;ctx.lineWidth=2.2;ctx.lineJoin='round';ctx.globalAlpha=0.95;
   ctx.beginPath();
   if(wave<=0.02){ctx.arc(x,y,radius,0,Math.PI*2);}
   else{
@@ -183,16 +182,15 @@ export function drawSuperGas(ctx:CanvasRenderingContext2D,s:SuperState,b:Body){
   const moving=s.dash.left>1e-8;
   fillGasCloud(ctx,b.x,b.y,b.r*0.86,b.r*(moving?2.2:1.9),s.clock,moving?1:Math.max(0.4,s.dash.hang/SUPER.hangTime));
 }
-/** Tight shield line, fading rings, and a click ripple. No blur. */
+/** Shield expands and fades; brief cyan flash marks a perfect cancel. */
 export function drawSuperAura(ctx:CanvasRenderingContext2D,s:SuperState,b:Body){
   ctx.save();
   if(s.shield){
     strokeShieldRings(ctx,b.x,b.y,b.r,s.clock);
-    strokeShieldLine(ctx,b.x,b.y,b.r+2.2,s.clock,s.wave);
+    strokeAuraLine(ctx,b.x,b.y,b.r+2.2,s.clock,s.wave,'#7dffb0');
   }
-  if(s.invincible>0 || s.flash>0){
-    ctx.strokeStyle=s.invincible>0?'#fff':'#57dcf2';ctx.lineWidth=s.flash>0?4:2;
-    ctx.globalAlpha=s.invincible>0?0.6+0.4*Math.sin(s.clock*28)**2:0.8;
+  if(s.flash>0){
+    ctx.strokeStyle='#57dcf2';ctx.lineWidth=s.shield?2:4;ctx.globalAlpha=0.8;
     ctx.beginPath();ctx.arc(b.x,b.y,b.r+7,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;
   }
   ctx.restore();

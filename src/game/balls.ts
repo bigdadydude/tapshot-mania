@@ -60,8 +60,8 @@ export type BallKit = {
 export const BALLS: BallKit[] = [
   {
     id: "super", name: "超能球", heat: false, super: true,
-    skill: "进球得分充能，每20分一段，最多6段。滑动八向立刻减速冲刺五个球直径，抵达顶端停滞0.2秒再下落；连续冲刺消耗1/2/3段，停手0.2秒后进球返10能量。打板、打铁、撞车或中弹后0.12秒内滑动可抵消冲击、返1段并无敌3秒。点击能量条切换护盾：抵御车与子弹，每球基础加满段数×2；每次抵御或加分耗4能量，每秒耗0.5，护盾进球不充能，能量耗尽自动回到滑动",
-    src: "/game/balls/plain.webp?v=5", fallback: "/game/balls/plain.png?v=5",
+    skill: "进球得分充能，每20分一段，最多6段。滑动八向立刻减速冲刺五个球直径，抵达顶端停滞0.2秒再下落；连续冲刺消耗1/2/3段，停手0.2秒后进球返10能量。打板、打铁、撞车或中弹后0.12秒内滑动可抵消冲击并返1段。点击能量条切换护盾：抵御车与子弹，每球基础加满段数×2；每次抵御或加分耗4能量，每秒耗0.5，护盾进球不充能，能量耗尽自动回到滑动",
+    src: "/game/balls/super.png?v=1", fallback: "/game/balls/super.png?v=1",
     wrap: "ground", score: "normal", phys: {jumpUp:0.95,jumpFwd:0.95},
   },
   {

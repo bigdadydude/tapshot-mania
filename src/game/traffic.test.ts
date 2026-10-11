@@ -19,12 +19,12 @@ test('super shield blocks cars; reactive parry clears launch after a post-hit sw
   state.hitLock=0;state.clock+=0.2;
   collideTraffic(state,world,ball,ball.x,ball.y,options);assert.equal(s.energy,56);
 
-  superToggle(s);s.energy=60;s.invincible=0;state.launched=false;state.hitLock=0;
+  superToggle(s);s.energy=60;state.launched=false;state.hitLock=0;
   assert.equal(collideTraffic(state,world,ball,ball.x,ball.y,options),true);assert.equal(state.launched,true);
   assert.equal(superSwipe(s,ball,40,0),'parry');state.launched=false;
-  assert.equal(s.energy,60);assert.equal(s.invincible,3);assert.equal(ball.vx,0);assert.equal(ball.vy,0);
+  assert.equal(s.energy,60);assert.equal(ball.vx,0);assert.equal(ball.vy,0);
 
-  s.invincible=0;s.impact=null;state.launched=false;state.hitLock=0;
+  s.impact=null;state.launched=false;state.hitLock=0;
   assert.equal(collideTraffic(state,world,ball,ball.x,ball.y,options),true);assert.equal(state.launched,true);
 });
 

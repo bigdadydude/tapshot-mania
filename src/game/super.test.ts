@@ -43,13 +43,13 @@ test('settled swipe earns a single 10-point refund on the next goal',()=>{
 });
 test('swipe starts dash immediately and only a post-hit swipe within 0.12s parries',()=>{
  const s=createSuper(),b=body();s.energy=40;superSwipe(s,b,40,0);assert.ok(s.dash);
- assert.equal(superImpact(s,b),false);assert.ok(s.impact);assert.equal(s.dash,null);assert.equal(s.invincible,0);assert.equal(s.energy,20);
- assert.equal(superSwipe(s,b,-40,0),'parry');assert.equal(s.energy,20);assert.equal(s.invincible,3);assert.equal(b.x,200);
- assert.equal(superImpact(s,b),true);stepSuper(s,b,3.01);assert.equal(superImpact(s,b),false);
+ assert.equal(superImpact(s,b),false);assert.ok(s.impact);assert.equal(s.dash,null);assert.equal(s.energy,20);
+ assert.equal(superSwipe(s,b,-40,0),'parry');assert.equal(s.energy,20);assert.equal(b.x,200);assert.ok(s.flash>0);
+ assert.equal(superImpact(s,b),false);assert.ok(s.impact);
 });
 test('parry window includes the exact 0.12s boundary',()=>{
  const s=createSuper(),b=body();s.energy=20;superImpact(s,b);stepSuper(s,b,0.12);
- assert.equal(superSwipe(s,b,40,0),'parry');assert.equal(s.invincible,3);
+ assert.equal(superSwipe(s,b,40,0),'parry');assert.ok(s.flash>0);
 });
 test('solid hits can record a parry window without spending the car shield',()=>{
  const s=createSuper(),b=body();s.energy=100;superToggle(s);
