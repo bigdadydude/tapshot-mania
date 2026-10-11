@@ -27,10 +27,11 @@ export function superSwipe(s:SuperState,b:Body,dx:number,dy:number) {
   return 'dash';
 }
 /** True means the impact is consumed before it can overwrite velocity. */
-export function superImpact(s:SuperState,b:Body) {
+export function superImpact(s:SuperState,b:Body,opts?:{shield?:boolean}) {
   if(s.invincible>0)return true;
-  if(s.shield && s.energy>0){spend(s,4);s.flash=0.18;return true;}
-  if(s.pending && s.clock-s.lastSwipe<=SUPER.parryWindow){
+  if(opts?.shield!==false && s.shield && s.energy>0){spend(s,4);s.flash=0.18;return true;}
+  // A swipe in the last 0.12s still cancels, even after the dash has committed.
+  if((s.pending || s.dash) && s.clock-s.lastSwipe<=SUPER.parryWindow){
     if(s.dash){b.vx=s.dash.vx;b.vy=s.dash.vy;}parry(s);return true;
   }
   if(s.dash){b.vx=s.dash.vx;b.vy=s.dash.vy;}

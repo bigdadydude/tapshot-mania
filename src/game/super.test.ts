@@ -41,12 +41,19 @@ test('settled swipe earns a single 10-point refund on the next goal',()=>{
  const s=createSuper(),b=body();s.energy=20;superSwipe(s,b,40,0);stepSuper(s,b,0.2);superScore(s,4);assert.equal(s.energy,14);superScore(s,4);assert.equal(s.energy,18);
  const early=createSuper();early.energy=20;superSwipe(early,b,40,0);stepSuper(early,b,0.1);superScore(early,4);assert.equal(early.energy,4);
 });
-test('uncommitted swipe still parries; a committed dash treats the hit as a hit',()=>{
+test('a swipe still parries after the dash commits; a late dash is a normal hit',()=>{
  const armed=createSuper(),still=body();armed.energy=40;superSwipe(armed,still,40,0);
  assert.equal(armed.dash,null);assert.equal(superImpact(armed,still),true);assert.equal(armed.energy,40);assert.equal(armed.invincible,3);assert.equal(still.x,200);
  assert.equal(superImpact(armed,still),true);stepSuper(armed,still,3.01);assert.equal(superImpact(armed,still),false);
- const s=createSuper(),b=body();s.energy=40;superSwipe(s,b,40,0);stepSuper(s,b,1/60);
- assert.ok(s.dash);assert.equal(superImpact(s,b),false);assert.equal(s.invincible,0);assert.equal(s.energy,20);assert.equal(s.dash,null);
+ const fresh=createSuper(),live=body();fresh.energy=40;superSwipe(fresh,live,40,0);stepSuper(fresh,live,1/60);
+ assert.ok(fresh.dash);assert.equal(superImpact(fresh,live),true);assert.equal(fresh.invincible,3);assert.equal(fresh.energy,40);
+ const late=createSuper(),b=body();late.energy=40;superSwipe(late,b,40,0);stepSuper(late,b,0.13);
+ assert.ok(late.dash);assert.equal(superImpact(late,b),false);assert.equal(late.invincible,0);assert.equal(late.energy,20);assert.equal(late.dash,null);
+});
+test('solid hits can record a parry window without spending the car shield',()=>{
+ const s=createSuper(),b=body();s.energy=100;superToggle(s);
+ assert.equal(superImpact(s,b,{shield:false}),false);assert.equal(s.energy,100);assert.ok(s.impact);
+ assert.equal(superImpact(s,b),true);assert.equal(s.energy,96);
 });
 test('a swipe with no segment flashes and spends nothing',()=>{
  const s=createSuper(),b=body();assert.equal(superSwipe(s,b,40,0),'empty');assert.equal(s.energy,0);assert.ok(s.flash>0);assert.equal(s.pending,null);assert.equal(s.dash,null);

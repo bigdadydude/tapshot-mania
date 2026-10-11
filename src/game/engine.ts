@@ -3460,6 +3460,11 @@ export function createGame(
     if(superBall.dash){ball.vx=superBall.dash.vx;ball.vy=superBall.dash.vy;superBall.dash=null;}
   }
 
+  /** Rim / board / brace: same parry window as cars. Shield stays cars-and-bullets only. */
+  function superCancelsSolid() {
+    return isSuper() && superImpact(superBall, ball, { shield: false });
+  }
+
   function prepareVectorShot() {
     traffic.launched = false;
     ball.scored = false;
@@ -5434,6 +5439,7 @@ export function createGame(
       }
       return;
     }
+    if (superCancelsSolid()) return;
     const rest = isMaze() ? mazeRestitution(-vn, bounceRest("rim")) : bounceRest("rim");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
@@ -5536,6 +5542,7 @@ export function createGame(
       ball.hitBoard = true;
       return;
     }
+    if (superCancelsSolid()) return;
     const rest = isMaze() ? mazeRestitution(-vn, bounceRest("board")) : bounceRest("board");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
@@ -5689,6 +5696,7 @@ export function createGame(
     ball.y += ny * (overlap + 0.35);
     const vn = ball.vx * nx + ball.vy * ny;
     if (vn >= 0) return;
+    if (superCancelsSolid()) return;
     const rest = isMaze() ? mazeRestitution(-vn, bounceRest("board")) : bounceRest("board");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
