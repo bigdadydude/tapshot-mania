@@ -1,10 +1,10 @@
-export const SUPER = { capacity:120, segment:20, chainWindow:0.2, parryWindow:0.12, dashTime:0.09, dashDiameters:4, swipeSlop:8 };
+export const SUPER = { capacity:120, segment:20, chainWindow:0.2, parryWindow:0.12, dashTime:0.5, hangTime:0.3, dashDiameters:5, swipeSlop:8 };
 type Body={x:number;y:number;vx:number;vy:number;r:number};
 export function createSuper() {
   return {energy:0,shield:false,invincible:0,clock:0,lastSwipe:-Infinity,lastAction:-Infinity,chain:0,refund:false,
     pointer:null as null|{id:number;x:number;y:number;used:boolean},
     pending:null as null|{dx:number;dy:number;wait:number},queue:[] as {dx:number;dy:number;wait:number}[],
-    dash:null as null|{dx:number;dy:number;left:number;vx:number;vy:number},
+    dash:null as null|{dx:number;dy:number;left:number;hang:number;vx:number;vy:number},
     impact:null as null|{at:number;x:number;y:number;vx:number;vy:number},flash:0};
 }
 export type SuperState=ReturnType<typeof createSuper>;
@@ -47,14 +47,19 @@ export function stepSuper(s:SuperState,b:Body,dt:number){
   if(s.shield)spend(s,dt*0.5);
   if(s.impact && s.clock-s.impact.at>SUPER.parryWindow)s.impact=null;
   for(const queued of s.queue)queued.wait-=dt;
-  if(s.pending){s.pending.wait-=dt;if(s.pending.wait<=1e-8 && !s.dash){s.dash={dx:s.pending.dx,dy:s.pending.dy,left:SUPER.dashTime,vx:b.vx,vy:b.vy};s.pending=s.queue.shift()??null;}}
+  if(s.pending){s.pending.wait-=dt;if(s.pending.wait<=1e-8 && !s.dash){s.dash={dx:s.pending.dx,dy:s.pending.dy,left:SUPER.dashTime,hang:0,vx:b.vx,vy:b.vy};s.pending=s.queue.shift()??null;}}
 }
 /** Uses regular swept collision/score processing rather than teleporting through objects. */
 export function superDashVelocity(s:SuperState,b:Body,dt:number){
   const d=s.dash;if(!d)return false;
-  if(d.left<=1e-8){b.vx=d.vx;b.vy=d.vy;s.dash=null;return false;}
-  const speed=b.r*2*SUPER.dashDiameters/SUPER.dashTime*Math.min(1,d.left/dt);
-  b.vx=d.dx*speed;b.vy=d.dy*speed;d.left=Math.max(0,d.left-dt);return true;
+  if(d.left>1e-8){
+    const speed=b.r*2*SUPER.dashDiameters/SUPER.dashTime*Math.min(1,d.left/dt);
+    b.vx=d.dx*speed;b.vy=d.dy*speed;d.left=Math.max(0,d.left-dt);
+    if(d.left<=1e-8)d.hang=SUPER.hangTime;
+    return true;
+  }
+  if(d.hang>1e-8){b.vx=0;b.vy=0;d.hang=Math.max(0,d.hang-dt);return true;}
+  b.vx=0;b.vy=0;s.dash=null;return false;
 }
 export function superLayout(w:number){return {x:16,y:76,w:Math.min(168,w*0.43),h:28};}
 export function drawSuper(ctx:CanvasRenderingContext2D,w:number,s:SuperState,b:Body){
@@ -65,7 +70,8 @@ export function drawSuper(ctx:CanvasRenderingContext2D,w:number,s:SuperState,b:B
     ctx.globalAlpha=s.invincible>0?0.6+0.4*Math.sin(s.clock*28)**2:0.8;
     ctx.beginPath();ctx.arc(b.x,b.y,b.r+7,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;
   }
-  if(s.dash){ctx.strokeStyle='#6deafa';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-s.dash.dx*b.r*2,b.y-s.dash.dy*b.r*2);ctx.stroke();}
+  if(s.dash && s.dash.left>1e-8){ctx.strokeStyle='#6deafa';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-s.dash.dx*b.r*2,b.y-s.dash.dy*b.r*2);ctx.stroke();}
+  if(s.dash && s.dash.left<=1e-8){ctx.strokeStyle='#f7f7f3';ctx.lineWidth=3;ctx.beginPath();ctx.arc(b.x,b.y,b.r+9,0,Math.PI*2);ctx.stroke();}
   for(let i=0;i<6;i++){
     const x=p.x+i*(seg+gap);ctx.save();ctx.beginPath();ctx.moveTo(x+6,p.y);ctx.lineTo(x+seg,p.y);ctx.lineTo(x+seg-6,p.y+p.h);ctx.lineTo(x,p.y+p.h);ctx.closePath();
     ctx.fillStyle='#f7f7f3';ctx.fill();ctx.save();ctx.clip();ctx.fillStyle=s.shield?'#70adff':'#61e6c2';
