@@ -1,5 +1,5 @@
 import { createRocket, rocketLayout, releaseRocket, stepRocket, refillRocket, drawRocket } from "./rocket";
-import { SUPER, createSuper, superSwipe, superImpact, superToggle, superPulseShield, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper, drawSuperGhosts, drawSuperGas, drawSuperAura } from "./super";
+import { SUPER, createSuper, superSwipe, superImpact, superToggle, superPulseShield, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper, drawSuperGhosts, drawSuperGas, drawSuperAura, superIsFrozen } from "./super";
 import { VECTOR, createVector, vectorLayout, vectorRecover, vectorMake, vectorRelease, vectorHold, cancelVectorPress, drawVector, vectorPulse, vectorChargeScale, vectorFinishBurst, stepVectorLeak, vectorLeakBounce } from "./vector";
 import { createAudio } from "./audio";
 import { primeArt, artProgress, reloadSceneArt } from "./art";
@@ -1553,7 +1553,10 @@ export function createGame(
       isHackerAwaken: () => hackerAwaken,
       isMaze: () => isMaze(),
       onProjectileImpact: (vx: number, vy: number) => {
-        if(isSuper()) return superImpact(superBall,ball);
+        if(isSuper()) {
+          const len=Math.hypot(vx,vy)||1;
+          return superImpact(superBall,ball,{nx:vx/len,ny:vy/len});
+        }
         if (!isVector()) return false;
         // Restore pre-charge momentum first, so canceling the hold cannot erase the hit.
         cancelVectorInput();
@@ -3481,9 +3484,10 @@ export function createGame(
     return true;
   }
 
-  /** Rim / board / brace: same parry window as cars. Shield stays cars-and-bullets only. */
-  function superCancelsSolid() {
-    return isSuper() && superImpact(superBall, ball, { shield: false });
+  /** Rim / board / brace: same parry window as cars. Shield stays cars-and-bullets only. Scoring never arms cancel. */
+  function superCancelsSolid(nx: number, ny: number) {
+    if (!isSuper() || ball.scored) return false;
+    return superImpact(superBall, ball, { shield: false, nx, ny });
   }
 
   function prepareVectorShot() {
@@ -3601,6 +3605,7 @@ export function createGame(
     if (phase !== "playing") return;
     if (paused) return;
     if (vector.burst > 0) return;
+    if (isSuper() && superIsFrozen(superBall)) return;
     if (stageMod.holdsBall?.()) return;
     const heroClutch =
       isRogueMode() && rogueRun && hasHeroMoment(rogueRun) && (buzzer || timeUp);
@@ -3757,13 +3762,14 @@ export function createGame(
         return;
       }
       // Jump immediately (same as other balls). A swipe inside swipeCancel rewinds this jump, so dash never hop-then-glide.
+      // Perfect-cancel swipes skip the rewind and freeze in place instead.
       const undo={
         at:superBall.clock,
         x:ball.x,y:ball.y,vx:ball.vx,vy:ball.vy,omega:ball.omega,squash:ball.squash,
         scored:ball.scored,shotOpen,shotMade,shotMissed,shotAirborne,combo,streak,
       };
       noteBalanceClick();
-      tapJump(e.pointerId);
+      if(!superIsFrozen(superBall)) tapJump(e.pointerId);
       // tapJump → cancelVectorInput clears gesture state; re-arm after the jump commits.
       superTapUndo=undo;
       superPulseShield(superBall);
@@ -3860,11 +3866,19 @@ export function createGame(
       if(!start.used && Math.hypot(p.x-start.x,p.y-start.y)>=SUPER.swipeSlop){
         start.used=true;
         if(!paused && phase==="playing" && !buzzer && !timeUp && !stageMod.holdsBall?.()){
-          if(superTapUndo && superBall.clock-superTapUndo.at<=SUPER.swipeCancel) restoreSuperTapUndo();
+          const canParry=!!(superBall.impact && superBall.clock-superBall.impact.at<=SUPER.parryWindow);
+          // Dash swipes may rewind the optimistic jump; perfect cancel keeps the current spot and freezes.
+          if(!canParry && superTapUndo && superBall.clock-superTapUndo.at<=SUPER.swipeCancel) restoreSuperTapUndo();
           else superTapUndo=null;
           const result=superSwipe(superBall,ball,p.x-start.x,p.y-start.y);
           if(result==='dash'){prepareVectorShot();}
-          if(result==='parry'){traffic.launched=false;modifierHost().tag('完美抵消');}
+          if(result==='parry'){
+            traffic.launched=false;
+            ball.vx=0;ball.vy=0;ball.omega=0;
+            ball.hitRim=false;ball.hitBoard=false;hitBoardTop=false;
+            superTapUndo=null;
+            modifierHost().tag('完美抵消');
+          }
           if(result==='empty')modifierHost().tag('能量不足');
         }
       }
@@ -4916,6 +4930,8 @@ export function createGame(
       (phase === "playing" || phase === "over" || phase === "title" || phase === "hub" || phase === "settle") &&
       !stageMod.holdsBall?.();
     if (live) {
+      const superFreezePin = isSuper() && superIsFrozen(superBall) ? { x: ball.x, y: ball.y } : null;
+      if (superFreezePin) { ball.vx = 0; ball.vy = 0; ball.omega = 0; }
       const hacking = phase === "playing" && isHacker() && hackerAwaken && hackerDir !== null;
       const gScale = buzzer ? 0.42 : 1;
       // High-bounce kits skip fallBoost �?otherwise each landing gains height.
@@ -5060,7 +5076,9 @@ export function createGame(
         const desired = hacking && hackerDir ? hackerDirectionVector(hackerDir) : null;
         if (collideTraffic(traffic, world, ball, prevBallX, prevBallY, {
           dt,
-          blockImpact: isSuper() ? (fresh) => !fresh && superBall.shield || superImpact(superBall,ball) : undefined,
+          blockImpact: isSuper()
+            ? (fresh, nx, ny) => (!fresh && superBall.shield) || superImpact(superBall, ball, { nx, ny })
+            : undefined,
           tunneling: quantumTunnelLeft > 0,
           hacker: desired ? { ...desired, speed: hackerSpeed } : undefined,
           lightning: isBolt(),
@@ -5203,6 +5221,13 @@ export function createGame(
         const landed = ball.y + ball.r >= world.floorY && ball.vy > 40;
         collideFloor();
         if (landed) vectorCollision(incomingVelocity.vx,incomingVelocity.vy);
+      }
+      if (superFreezePin) {
+        ball.x = superFreezePin.x;
+        ball.y = superFreezePin.y;
+        ball.vx = 0;
+        ball.vy = 0;
+        ball.omega = 0;
       }
       stepBoltBoardTop(dt);
       stepBoltCharge(dt);
@@ -5475,7 +5500,9 @@ export function createGame(
       }
       return;
     }
-    if (superCancelsSolid()) return;
+    const throughHole = Math.abs(ball.x - h.x) < h.inner * 0.55 && ball.vy > 28;
+    // Going through the hoop is a make path — do not arm perfect cancel on that graze.
+    if (!throughHole && superCancelsSolid(nx, ny)) return;
     const rest = isMaze() ? mazeRestitution(-vn, bounceRest("rim")) : bounceRest("rim");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
@@ -5495,7 +5522,6 @@ export function createGame(
         ball.vy += toward * 95;
       }
     }
-    const throughHole = Math.abs(ball.x - h.x) < h.inner * 0.55 && ball.vy > 28;
     const impact = -vn;
     if (h.active && rimHitLock <= 0) {
       rimHits += 1;
@@ -5578,7 +5604,7 @@ export function createGame(
       ball.hitBoard = true;
       return;
     }
-    if (superCancelsSolid()) return;
+    if (superCancelsSolid(nx, ny)) return;
     const rest = isMaze() ? mazeRestitution(-vn, bounceRest("board")) : bounceRest("board");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
@@ -5732,7 +5758,7 @@ export function createGame(
     ball.y += ny * (overlap + 0.35);
     const vn = ball.vx * nx + ball.vy * ny;
     if (vn >= 0) return;
-    if (superCancelsSolid()) return;
+    if (superCancelsSolid(nx, ny)) return;
     const rest = isMaze() ? mazeRestitution(-vn, bounceRest("board")) : bounceRest("board");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
@@ -6037,6 +6063,8 @@ export function createGame(
     const scoredHoop = opts?.at ?? hoop;
     if (!ghost) {
       ball.scored = true;
+      // Makes cannot perfect-cancel — clear before the same-frame swipe can fire.
+      if (isSuper()) superBall.impact = null;
       scoreGateHoop = scoredHoop as Hoop;
       scoredLock = 0.22;
       // Keep threading in the direction of the make (upward anti makes were getting yanked back).

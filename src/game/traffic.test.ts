@@ -11,7 +11,7 @@ const car = (kind: VehicleKind, dir: -1 | 1, lane: "bridge" | "ground" = "ground
 test('super shield blocks cars; reactive parry clears launch after a post-hit swipe; sustained contact is not charged repeatedly',()=>{
   const state=createTraffic(),v=car('sedan',1),s=createSuper();state.vehicles=[v];s.energy=60;
   const bounds=vehicleBounds(v,world),ball=ballAt(v.x+bounds.w/2+10,bounds.bottom-20);
-  const options={blockImpact:(fresh:boolean)=>(!fresh && s.shield)||superImpact(s,ball)};
+  const options={blockImpact:(fresh:boolean,nx:number,ny:number)=>(!fresh && s.shield)||superImpact(s,ball,{nx,ny})};
 
   superToggle(s);
   assert.equal(collideTraffic(state,world,ball,ball.x,ball.y,options),false);
@@ -19,12 +19,14 @@ test('super shield blocks cars; reactive parry clears launch after a post-hit sw
   state.hitLock=0;state.clock+=0.2;
   collideTraffic(state,world,ball,ball.x,ball.y,options);assert.equal(s.energy,56);
 
-  superToggle(s);s.energy=60;state.launched=false;state.hitLock=0;
-  assert.equal(collideTraffic(state,world,ball,ball.x,ball.y,options),true);assert.equal(state.launched,true);
+  superToggle(s);s.energy=60;s.impact=null;state.launched=false;state.hitLock=0;
+  assert.equal(collideTraffic(state,world,ball,ball.x,ball.y,options),true);assert.equal(state.launched,true);assert.ok(s.impact);
   assert.equal(superSwipe(s,ball,40,0),'parry');state.launched=false;
-  assert.equal(s.energy,60);assert.equal(ball.vx,0);assert.equal(ball.vy,0);
+  assert.equal(s.energy,60);assert.equal(ball.vx,0);assert.equal(ball.vy,0);assert.ok(s.freezeLeft>0);
 
-  s.impact=null;state.launched=false;state.hitLock=0;
+  // Freeze holds the post-resolve pose (outside the hull); place the ball back for the next hit.
+  s.impact=null;s.freezeLeft=0;state.launched=false;state.hitLock=0;state.clock+=0.3;
+  ball.x=v.x+bounds.w/2+10;ball.y=bounds.bottom-20;ball.vx=0;ball.vy=0;
   assert.equal(collideTraffic(state,world,ball,ball.x,ball.y,options),true);assert.equal(state.launched,true);
 });
 

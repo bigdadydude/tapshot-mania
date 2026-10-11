@@ -48,7 +48,7 @@ export type TrafficState = {
 };
 
 export type TrafficSkills = {
-  blockImpact?: (fresh: boolean) => boolean;
+  blockImpact?: (fresh: boolean, nx: number, ny: number) => boolean;
   tunneling?: boolean;
   hacker?: { x: number; y: number; speed: number };
   lightning?: boolean;
@@ -348,7 +348,7 @@ export function collideTraffic(state: TrafficState, world: World, ball: Ball, pr
     if ((skills.random ?? Math.random)() < skills.frost.chance) v.frozenLeft = frozen ? skills.frost.refresh : skills.frost.first;
   }
   if (responseLocked) return false;
-  if(skills.blockImpact?.(fresh)) { state.hitLock=0.18;state.launched=false;return false; }
+  if(skills.blockImpact?.(fresh, nx, ny)) { state.hitLock=0.18;state.launched=false;return false; }
   const vehicleVX = v.dir * v.speed * ((v.frozenLeft ?? 0) > 0 ? 0.2 : 1);
   const normalSpeed = (ball.vx - vehicleVX) * nx + ball.vy * ny;
   // Skill contacts use a small detection skin but resolve to the true surface,

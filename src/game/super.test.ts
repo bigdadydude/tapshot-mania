@@ -41,28 +41,39 @@ test('settled swipe earns a single 10-point refund on the next goal',()=>{
  const s=createSuper(),b=body();s.energy=20;superSwipe(s,b,40,0);stepSuper(s,b,0.2);superScore(s,4);assert.equal(s.energy,14);superScore(s,4);assert.equal(s.energy,18);
  const early=createSuper();early.energy=20;superSwipe(early,b,40,0);stepSuper(early,b,0.1);superScore(early,4);assert.equal(early.energy,4);
 });
-test('swipe starts dash immediately and only a post-hit swipe within 0.12s parries',()=>{
- const s=createSuper(),b=body();s.energy=40;superSwipe(s,b,40,0);assert.ok(s.dash);
- assert.equal(superImpact(s,b),false);assert.ok(s.impact);assert.equal(s.dash,null);assert.equal(s.energy,20);
- assert.equal(superSwipe(s,b,-40,0),'parry');assert.equal(s.energy,20);assert.equal(b.x,200);assert.ok(s.flash>0);
- assert.equal(superImpact(s,b),false);assert.ok(s.impact);
+test('normal impacts still bounce; a cancel freezes in place and clears velocity',()=>{
+ const s=createSuper(),b=body();s.energy=40;b.vy=200;
+ assert.equal(superImpact(s,b),false);assert.ok(s.impact);assert.equal(s.energy,40);assert.equal(b.vy,200);
+ b.x=220;b.y=280;b.vy=-180;b.vx=90;
+ assert.equal(superSwipe(s,b,-40,0),'parry');assert.equal(s.energy,40);assert.equal(b.x,220);assert.equal(b.y,280);
+ assert.equal(b.vx,0);assert.equal(b.vy,0);assert.ok(s.freezeLeft>0);assert.ok(s.flash>0);
+ stepSuper(s,b,0.04);assert.equal(b.vx,0);assert.equal(b.vy,0);assert.ok(s.freezeLeft>0);
+ stepSuper(s,b,0.05);assert.ok(s.freezeLeft<1e-8);
 });
-test('parry window includes the exact 0.12s boundary',()=>{
- const s=createSuper(),b=body();s.energy=20;superImpact(s,b);stepSuper(s,b,0.12);
- assert.equal(superSwipe(s,b,40,0),'parry');assert.ok(s.flash>0);
+test('parry window includes the exact 0.07s boundary',()=>{
+ const s=createSuper(),b=body();s.energy=20;superImpact(s,b);stepSuper(s,b,0.07);
+ assert.equal(superSwipe(s,b,40,0),'parry');assert.ok(s.freezeLeft>0);
 });
 test('solid hits can record a parry window without spending the car shield',()=>{
  const s=createSuper(),b=body();s.energy=100;superToggle(s);
  assert.equal(superImpact(s,b,{shield:false}),false);assert.equal(s.energy,100);assert.ok(s.impact);
  assert.equal(superImpact(s,b),true);assert.equal(s.energy,96);
 });
-test('a swipe with no segment flashes and spends nothing',()=>{
- const s=createSuper(),b=body();assert.equal(superSwipe(s,b,40,0),'empty');assert.equal(s.energy,0);assert.ok(s.flash>0);assert.equal(s.pending,null);assert.equal(s.dash,null);
+test('a swipe with no segment spends nothing and draws no empty ring',()=>{
+ const s=createSuper(),b=body();assert.equal(superSwipe(s,b,40,0),'empty');assert.equal(s.energy,0);assert.equal(s.flash,0);assert.equal(s.pending,null);assert.equal(s.dash,null);
 });
-test('swipe after impact restores pre-hit position/velocity; expired impacts cannot parry',()=>{
- const s=createSuper(),b=body();s.energy=20;assert.equal(superImpact(s,b),false);b.vx=2000;b.x=240;stepSuper(s,b,0.08);
- assert.equal(superSwipe(s,b,-40,0),'parry');assert.equal(b.x,200);assert.equal(b.vx,0);assert.equal(s.energy,20);
- const expired=createSuper();expired.energy=20;superImpact(expired,b);stepSuper(expired,b,0.13);assert.equal(superSwipe(expired,b,40,0),'dash');assert.ok(expired.dash);
+test('perfect cancel works at zero energy and still refunds one segment',()=>{
+ const s=createSuper(),b=body();assert.equal(superImpact(s,b),false);
+ assert.equal(superSwipe(s,b,40,0),'parry');assert.equal(s.energy,20);assert.equal(b.vx,0);assert.equal(b.vy,0);assert.ok(s.freezeLeft>0);
+});
+test('scoring clears the parry window so a make cannot perfect-cancel',()=>{
+ const s=createSuper(),b=body();s.energy=40;assert.equal(superImpact(s,b),false);assert.ok(s.impact);
+ superScore(s,4);assert.equal(s.impact,null);assert.equal(superSwipe(s,b,40,0),'dash');
+});
+test('expired impacts cannot parry; freeze blocks further swipes',()=>{
+ const s=createSuper(),b=body();s.energy=20;assert.equal(superImpact(s,b),false);b.x=240;stepSuper(s,b,0.05);
+ assert.equal(superSwipe(s,b,-40,0),'parry');assert.equal(b.x,240);assert.equal(superSwipe(s,b,40,0),'blocked');
+ const expired=createSuper();expired.energy=20;superImpact(expired,b);stepSuper(expired,b,0.08);assert.equal(superSwipe(expired,b,40,0),'dash');assert.ok(expired.dash);
 });
 test('shield blocks swipes and impacts, charges 4 per event and drains 0.5 per second',()=>{
  const s=createSuper(),b=body();s.energy=100;superToggle(s);assert.equal(superBaseBonus(s),10);assert.equal(superSwipe(s,b,40,0),'blocked');
