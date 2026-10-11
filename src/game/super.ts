@@ -1,4 +1,4 @@
-export const SUPER = { capacity:120, segment:20, chainWindow:0.2, parryWindow:0.12, dashTime:0.09 };
+export const SUPER = { capacity:120, segment:20, chainWindow:0.2, parryWindow:0.12, dashTime:0.09, dashDiameters:4, swipeSlop:8 };
 type Body={x:number;y:number;vx:number;vy:number;r:number};
 export function createSuper() {
   return {energy:0,shield:false,invincible:0,clock:0,lastSwipe:-Infinity,lastAction:-Infinity,chain:0,refund:false,
@@ -16,11 +16,12 @@ export function superSwipe(s:SuperState,b:Body,dx:number,dy:number) {
   s.lastAction=s.clock;
   if(s.shield || Math.hypot(dx,dy)<1)return 'blocked';
   const chain=s.clock-s.lastSwipe<=0.2+1e-8?Math.min(3,s.chain+1):1;
-  if(s.energy<chain*20)return 'empty';
+  if(s.energy<chain*20){s.flash=Math.max(s.flash,0.2);return 'empty';}
   spend(s,chain*20);s.chain=chain;s.lastSwipe=s.clock;s.refund=true;
   if(s.impact && s.clock-s.impact.at<=SUPER.parryWindow){Object.assign(b,{x:s.impact.x,y:s.impact.y,vx:s.impact.vx,vy:s.impact.vy});parry(s);return 'parry';}
   const angle=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*Math.PI/4;
-  const pending={dx:Math.cos(angle),dy:Math.sin(angle),wait:SUPER.parryWindow};
+  // Next step commits. parryWindow still forgives a swipe after a hit; it no longer holds the dash.
+  const pending={dx:Math.cos(angle),dy:Math.sin(angle),wait:0};
   if(s.pending)s.queue.push(pending);else s.pending=pending;
   return 'dash';
 }
@@ -52,7 +53,7 @@ export function stepSuper(s:SuperState,b:Body,dt:number){
 export function superDashVelocity(s:SuperState,b:Body,dt:number){
   const d=s.dash;if(!d)return false;
   if(d.left<=1e-8){b.vx=d.vx;b.vy=d.vy;s.dash=null;return false;}
-  const speed=b.r*4/SUPER.dashTime*Math.min(1,d.left/dt);
+  const speed=b.r*2*SUPER.dashDiameters/SUPER.dashTime*Math.min(1,d.left/dt);
   b.vx=d.dx*speed;b.vy=d.dy*speed;d.left=Math.max(0,d.left-dt);return true;
 }
 export function superLayout(w:number){return {x:16,y:76,w:Math.min(168,w*0.43),h:28};}

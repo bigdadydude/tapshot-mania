@@ -1,5 +1,5 @@
 import { createRocket, rocketLayout, releaseRocket, stepRocket, refillRocket, drawRocket } from "./rocket";
-import { createSuper, superSwipe, superImpact, superToggle, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper } from "./super";
+import { SUPER, createSuper, superSwipe, superImpact, superToggle, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper } from "./super";
 import { VECTOR, createVector, vectorLayout, vectorRecover, vectorMake, vectorRelease, vectorHold, cancelVectorPress, drawVector, vectorPulse, vectorChargeScale, vectorFinishBurst, stepVectorLeak, vectorLeakBounce } from "./vector";
 import { createAudio } from "./audio";
 import { primeArt, artProgress, reloadSceneArt } from "./art";
@@ -3816,12 +3816,13 @@ export function createGame(
   function onMove(e: PointerEvent) {
     if(isSuper() && superBall.pointer?.id===e.pointerId){
       const start=superBall.pointer,p=pointerWorld(e);superBall.lastAction=superBall.clock;
-      if(!start.used && Math.hypot(p.x-start.x,p.y-start.y)>=18){
+      if(!start.used && Math.hypot(p.x-start.x,p.y-start.y)>=SUPER.swipeSlop){
         start.used=true;
         if(!paused && phase==="playing" && !buzzer && !timeUp && !stageMod.holdsBall?.()){
           const result=superSwipe(superBall,ball,p.x-start.x,p.y-start.y);
           if(result==='dash'){prepareVectorShot();}
           if(result==='parry'){traffic.launched=false;modifierHost().tag('完美抵消');}
+          if(result==='empty')modifierHost().tag('能量不足');
         }
       }
       e.preventDefault();return;
