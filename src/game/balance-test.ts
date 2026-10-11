@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { getBall, playableBalls, type BallId } from "./balls.ts";
 
-const ballSchema = z.enum(["plain", "lava", "frost", "champ", "anti", "glass", "prison", "rubber", "ninja", "bolt", "rain", "vector", "maze", "quantum", "time"]);
+const ballSchema = z.enum(["plain", "rocket", "lava", "frost", "champ", "anti", "glass", "prison", "rubber", "ninja", "bolt", "rain", "vector", "maze", "quantum", "time"]);
 const finite = z.number().finite();
 const count = finite.nonnegative();
 const identifier = z.string().trim().min(1).max(256);

@@ -1,0 +1,32 @@
+{
+  "sky": {
+    "file": "sky.png",
+    "width": 1560,
+    "height": 2584
+  },
+  "buildings": {
+    "file": "buildings.png",
+    "width": 1560,
+    "height": 2584
+  },
+  "windows": {
+    "file": "windows.png",
+    "width": 1560,
+    "height": 2584
+  },
+  "road": {
+    "file": "road.png",
+    "width": 1560,
+    "height": 794
+  },
+  "bridge": {
+    "file": "bridge.png",
+    "width": 1560,
+    "height": 116
+  },
+  "pillar": {
+    "file": "pillar.png",
+    "width": 144,
+    "height": 1150
+  }
+}

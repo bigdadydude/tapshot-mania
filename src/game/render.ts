@@ -313,7 +313,9 @@ export function drawScene(
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
 	if (backdrop === "void") drawVoid(ctx, world);
-	else if (backdrop === "overpass") drawCity(ctx, world, time);
+	else if (backdrop === "overpass") drawCity(ctx, world, time, () => {
+		if (gfx.clouds !== "off") drawSkyClouds(ctx, world, cloudT, 0, world.floorY * 0.4, cloudSx, cloudSy);
+	});
 	else if (backdrop === "street") {
 		// Graffiti sits above the day-cycle tint; wall/court get the wash first.
 		drawWall(ctx, world, cloudT, cloudSx, cloudSy, null, gfx.clouds !== "off");

@@ -754,7 +754,9 @@ export function createYardLights(): StageModifier {
     const nx = b.vx / len;
     const ny = b.vy / len;
     const power = KNOCK * (b.elite ? 1.28 : 1);
-    if (host.isMaze?.()) {
+    if (host.onProjectileImpact?.(nx * power * 1.12, ny * power * 1.12)) {
+      // Kit-specific storage, skill interruption and rebound are resolved by the host.
+    } else if (host.isMaze?.()) {
       // In maze mode a round adds momentum in its travel direction, like a rolling-ball hit.
       ball.vx += nx * power * 0.42;
       ball.vy += ny * power * 0.42;

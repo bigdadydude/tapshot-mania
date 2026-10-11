@@ -48,9 +48,12 @@ export type TrafficState = {
 };
 
 export type TrafficSkills = {
+  blockImpact?: (fresh: boolean) => boolean;
   tunneling?: boolean;
   hacker?: { x: number; y: number; speed: number };
   lightning?: boolean;
+  /** Ground-matched rolling drag, applied to velocity relative to the roof. */
+  roofFriction?: number;
   discharge?: boolean;
   ignite?: boolean;
   blaze?: boolean;
@@ -345,6 +348,7 @@ export function collideTraffic(state: TrafficState, world: World, ball: Ball, pr
     if ((skills.random ?? Math.random)() < skills.frost.chance) v.frozenLeft = frozen ? skills.frost.refresh : skills.frost.first;
   }
   if (responseLocked) return false;
+  if(skills.blockImpact?.(fresh)) { state.hitLock=0.18;state.launched=false;return false; }
   const vehicleVX = v.dir * v.speed * ((v.frozenLeft ?? 0) > 0 ? 0.2 : 1);
   const normalSpeed = (ball.vx - vehicleVX) * nx + ball.vy * ny;
   // Skill contacts use a small detection skin but resolve to the true surface,
@@ -382,7 +386,7 @@ export function collideTraffic(state: TrafficState, world: World, ball: Ball, pr
     state.launched = false;
     const relative = ball.vx - vehicleVX;
     state.roofSpeed = Math.abs(relative);
-    ball.vx -= relative * Math.min(1, 2.8 * (skills.dt ?? 1 / 60));
+    ball.vx -= relative * Math.min(0.85, (skills.roofFriction ?? 0.28) * (skills.dt ?? 1 / 60));
     ball.vy = 0;
     ball.omega = (ball.vx - vehicleVX) / Math.max(8, ball.r);
     return true;

@@ -1,5 +1,6 @@
 import type { World } from "./types";
 import { nightAmount } from "./daylight";
+import { cityImage, cityWindowLight, drawCityTexture } from "./city-art";
 
 function mix(a: number[], b: number[], p: number) {
   return `rgb(${a.map((v, i) => Math.round(v + (b[i]! - v) * p)).join(",")})`;
@@ -7,7 +8,7 @@ function mix(a: number[], b: number[], p: number) {
 function noise(n: number) { const v = Math.sin(n * 127.1 + 31.7) * 43758.5453; return v - Math.floor(v); }
 
 /** Quiet, layered skyline; all road depth edges share one vanishing point. */
-export function drawCity(ctx: CanvasRenderingContext2D, world: World, time: number) {
+export function drawCity(ctx: CanvasRenderingContext2D, world: World, time: number, drawClouds?: () => void) {
   const { w, h, floorY } = world, u = w / 390, night = nightAmount(time);
   ctx.save();
   const sky = ctx.createLinearGradient(0, 0, 0, floorY);
@@ -16,7 +17,21 @@ export function drawCity(ctx: CanvasRenderingContext2D, world: World, time: numb
   ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = `rgba(210,218,221,${night * 0.35})`;
   for (let i = 0; i < 24; i++) ctx.fillRect(noise(i) * w, noise(i + 50) * floorY * 0.25, u, u);
+  const skyArt = cityImage("sky");
+  if (skyArt) drawCityTexture(ctx, skyArt, 0, 0, w, floorY, night);
+  ctx.save(); ctx.globalAlpha = 1 - night * 0.65;
+  drawClouds?.();
+  ctx.restore();
 
+  const buildings = cityImage("buildings");
+  if (buildings) {
+    drawCityTexture(ctx, buildings, 0, 0, w, floorY, night);
+    const windows = cityImage("windows");
+    if (windows) {
+      ctx.save(); ctx.globalAlpha = night * 0.38;
+      ctx.drawImage(cityWindowLight(windows), 0, 0, w, floorY); ctx.restore();
+    }
+  } else {
   for (let layer = 0; layer < 3; layer++) {
     const count = layer === 0 ? 12 : 7;
     for (let i = -1; i < count; i++) {
@@ -56,7 +71,13 @@ export function drawCity(ctx: CanvasRenderingContext2D, world: World, time: numb
       }
     }
   }
+  }
   const depth = h - floorY, vpX = w * 0.5, vpY = floorY * 0.55;
+  const roadArt = cityImage("road");
+  if (roadArt) {
+    drawCityTexture(ctx, roadArt, 0, floorY, w, depth, night);
+    ctx.restore(); return;
+  }
   ctx.fillStyle = mix([94, 104, 108], [36, 44, 54], night);
   ctx.fillRect(0, floorY, w, depth);
   const road = ctx.createLinearGradient(0, floorY, 0, h);

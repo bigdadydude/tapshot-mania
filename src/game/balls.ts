@@ -2,6 +2,8 @@ import type { DevPhys } from "./dev";
 
 export type BallId =
   | "plain"
+  | "super"
+  | "rocket"
   | "lava"
   | "frost"
   | "champ"
@@ -34,6 +36,8 @@ export type BallKit = {
   maze?: boolean;
   /** Vector ball: 45° ascent followed by a vertical drop until an impact. */
   vector?: boolean;
+  rocket?: boolean;
+  super?: boolean;
   /** Hacker ball: first clock empty awakens code-rain cruise. */
   codeRain?: boolean;
   /** Quantum ball: high-combo chance to phase through the basket rig. */
@@ -55,6 +59,12 @@ export type BallKit = {
 
 export const BALLS: BallKit[] = [
   {
+    id: "super", name: "超能球", heat: false, super: true,
+    skill: "进球得分充能，每20分一段，最多6段。滑动八向冲刺两个球直径，连续冲刺消耗1/2/3段；停手0.2秒后进球返10能量。受击瞬间滑动抵消冲击、返1段并无敌3秒。点击能量条切换护盾：抵御车与子弹，每球基础加满段数×2；每次抵御或加分耗4能量，每秒耗0.5，护盾进球不充能",
+    src: "/game/balls/plain.webp?v=5", fallback: "/game/balls/plain.png?v=5",
+    wrap: "ground", score: "normal", phys: {jumpUp:0.95,jumpFwd:0.95},
+  },
+  {
     id: "plain",
     name: "经典球",
     skill: "别人都靠技能，而我…就很…",
@@ -67,6 +77,14 @@ export const BALLS: BallKit[] = [
       jumpUp: 0.95,
       jumpFwd: 0.95,
     },
+  },
+  {
+    id: "rocket", name: "火箭球", heat: false, rocket: true,
+    playable: false,
+    skill: "按住底部红点起飞，左右拖动控制推力；松手复位下落。飞行消耗燃料，停留在地面或平台上恢复燃料",
+    src: "/game/balls/plain.webp?v=5", fallback: "/game/balls/plain.png?v=5",
+    wrap: "ground", score: "normal", rScale: 1,
+    phys: { jumpUp: 0.95, jumpFwd: 0.95, ball: 0.35 },
   },
   {
     id: "bolt",
@@ -117,6 +135,7 @@ export const BALLS: BallKit[] = [
   },
   {
     id: "maze",
+    playable: false,
     name: "迷宫球",
     skill: "拖动地面摇杆改变重力方向；中立时停力，保留惯性",
     heat: false,
@@ -154,7 +173,7 @@ export const BALLS: BallKit[] = [
   {
     id: "vector",
     name: "矢量球",
-    skill: "点击后沿45°斜上方飞行，最高点垂直下落；撞击后恢复普通物理",
+    skill: "首球后自动储能，上限1500；短按消耗250，按球与篮筐的位置调整方向；长按1秒全部爆发（至少40），消耗为释放的5倍，大招后10秒无法储能。超过1000指针摇晃，随游戏时间增加泄漏风险：3秒流失100–500能量，期间无法储能，能量转成随机回弹",
     heat: false,
     vector: true,
     wrap: "ground",
@@ -276,12 +295,15 @@ export function playableBalls(): BallKit[] {
 }
 
 export function parseBall(v: unknown): BallId {
+  if(v === "inflatable") return DEFAULT_BALL;
   const id =
     v === "lava" ||
     v === "frost" ||
     v === "champ" ||
     v === "anti" ||
     v === "plain" ||
+    v === "super" ||
+    v === "rocket" ||
     v === "glass" ||
     v === "prison" ||
     v === "rubber" ||
@@ -298,7 +320,7 @@ export function parseBall(v: unknown): BallId {
 }
 
 export function getBall(id: BallId): BallKit {
-  return BALLS.find((b) => b.id === id) ?? BALLS[0]!;
+  return BALLS.find((b) => b.id === id) ?? BALLS.find((b) => b.id === DEFAULT_BALL)!;
 }
 
 /** Playable ball radius for a kit (classic world.ballR × rScale). */
@@ -326,6 +348,8 @@ export type EffectiveBall = {
   glass: boolean;
   codeRain: boolean;
   vector: boolean;
+  rocket: boolean;
+  super: boolean;
   maze: boolean;
   quantum: boolean;
   time: boolean;
@@ -351,6 +375,7 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | BallId[] | nul
   const glass = primary.score === "glass" || fuses.some((fuse) => fuse.score === "glass");
   const codeRain = any("codeRain");
   const vector = any("vector");
+  const rocket = any("rocket");
   const maze = any("maze");
   const quantum = any("quantum");
   const time = any("time");
@@ -359,7 +384,7 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | BallId[] | nul
   return {
     id: primaryId,
     fuseId: fuses[0]?.id ?? null,
-    name, skill, heat, frost, champ, anti, bolt, chain, ninja, glass, codeRain, vector, maze, quantum, time,
+    name, skill, heat, frost, champ, anti, bolt, chain, ninja, glass, codeRain, vector, rocket, maze, quantum, time, super:any("super"),
     wrap: primary.wrap,
     rScale: (primary.rScale ?? 1) * fuses.reduce((scale, fuse) => scale * (fuse.rScale ?? 1), 1),
     phys: primary.phys,

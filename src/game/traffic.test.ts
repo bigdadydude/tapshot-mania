@@ -2,10 +2,29 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { TRAFFIC_ABSORB_SECONDS, TRAFFIC_BURN_SECONDS, beginTrafficAbsorption, bridgeY, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficClearance, trafficOutOfBounds, trafficSpeed, vehicleBounds, vehicleSize, type Vehicle, type VehicleKind } from "./traffic.ts";
 import type { Ball, World } from "./types.ts";
+import {createSuper,superToggle,superImpact,superSwipe} from './super.ts';
 
 const world: World = { w: 390, h: 844, floorY: 844 * 0.765, ballR: 19.5, hoopInner: 28, tube: 4, cssW: 390, cssH: 844, ox: 0, oy: 0 };
 const ballAt = (x: number, y: number): Ball => ({ x, y, vx: 0, vy: 0, r: 19.5, spin: 0, omega: 0, squash: 1, scored: false, hitBoard: false, hitRim: false });
 const car = (kind: VehicleKind, dir: -1 | 1, lane: "bridge" | "ground" = "ground"): Vehicle => ({ id: 1, kind, dir, lane, x: 190, prevX: 190 - dir * 5, speed: 300, tint: 0 });
+
+test('super shield and timed swipe intercept car impacts before launch; sustained contact is not charged repeatedly',()=>{
+ for(const mode of ['shield','parry','normal']){
+  const state=createTraffic(),v=car('sedan',1),s=createSuper();state.vehicles=[v];s.energy=60;
+  const bounds=vehicleBounds(v,world),ball=ballAt(v.x+bounds.w/2+10,bounds.bottom-20);
+  if(mode==='shield')superToggle(s);
+  if(mode==='parry')superSwipe(s,ball,40,0);
+  const options={blockImpact:(fresh:boolean)=>(!fresh && s.shield)||superImpact(s,ball)};
+  const hit=collideTraffic(state,world,ball,ball.x,ball.y,options);
+  assert.equal(hit,mode==='normal');assert.equal(state.launched,mode==='normal');
+  if(mode!=='normal'){assert.equal(ball.vx,0);assert.equal(ball.vy,0);}
+  if(mode==='parry'){assert.equal(s.energy,60);assert.equal(s.invincible,3);}
+  if(mode==='shield'){
+   assert.equal(s.energy,56);state.hitLock=0;state.clock+=0.2;
+   collideTraffic(state,world,ball,ball.x,ball.y,options);assert.equal(s.energy,56);
+  }
+ }
+});
 
 test("passing a car awards only after leaving the one-diameter range and only once", () => {
   const state = createTraffic(), v = car("truck", 1);
@@ -227,7 +246,7 @@ test("lightning roof friction uses vehicle-relative speed and maintains continuo
   ball.vx = 0; ball.vy = 120;
   assert.ok(collideTraffic(state, world, ball, ball.x, ball.y - 5, { lightning: true, dt: 1 / 60 }));
   assert.equal(state.roofSpeed, 300);
-  assert.ok(ball.vx > 0 && ball.vx < 300);
+  assert.ok(Math.abs(ball.vx - 300 * 0.28 / 60) < 1e-9, "roof drag matches ground rolling drag");
   assert.equal(ball.vy, 0);
   assert.equal(state.launched, false);
   assert.ok(collideTraffic(state, world, ball, ball.x, ball.y, { lightning: true, dt: 1 / 60 }));

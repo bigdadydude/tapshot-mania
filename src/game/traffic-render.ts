@@ -1,6 +1,7 @@
 import type { Ball, World } from "./types";
 import type { TrafficTextures } from "./scenes";
 import { nightAmount } from "./daylight";
+import { cityImage, drawCityTexture } from "./city-art";
 import { TRAFFIC_ABSORB_SECONDS, TRAFFIC_BURN_CHAR, TRAFFIC_BURN_SECONDS, bridgeY, vehicleBounds, type TrafficState, type Vehicle } from "./traffic";
 
 const textures = new Map<string, HTMLImageElement>();
@@ -305,11 +306,16 @@ function drawAbsorbed(ctx: CanvasRenderingContext2D, v: Vehicle, world: World, a
 /** Entire bridge is background art: no colliders, including its supports. */
 export function drawTrafficWorld(ctx: CanvasRenderingContext2D, state: TrafficState, world: World, art: TrafficTextures, time = state.clock) {
   const y = bridgeY(world), unit = world.w / 390, depth = 29 * unit;
+  const night = nightAmount(time), pillar = cityImage("pillar");
   ctx.save();
   ctx.fillStyle = "rgba(26,39,43,0.2)";
   ctx.fillRect(0, y + depth, world.w, 11 * unit);
   for (const u of [0.18, 0.82]) {
     const x = world.w * u;
+    if (pillar) {
+      drawCityTexture(ctx, pillar, x - 18 * unit, y + depth, 36 * unit, world.floorY - y - depth, night);
+      continue;
+    }
     ctx.fillStyle = "#838f8c";
     ctx.fillRect(x - 9 * unit, y + depth, 18 * unit, world.floorY - y - depth);
     ctx.fillStyle = "#a8af9e";
@@ -317,8 +323,8 @@ export function drawTrafficWorld(ctx: CanvasRenderingContext2D, state: TrafficSt
     ctx.fillStyle = "#5e716e";
     ctx.fillRect(x - 18 * unit, y + depth - 2, 36 * unit, 11 * unit);
   }
-  const img = texture(art.bridge);
-  if (img) ctx.drawImage(img, 0, y, world.w, depth);
+  const img = cityImage("bridge") ?? texture(art.bridge);
+  if (img) drawCityTexture(ctx, img, 0, y, world.w, depth, night);
   else {
     ctx.fillStyle = "#3c4c51"; ctx.fillRect(0, y, world.w, depth);
     ctx.fillStyle = "#b8bba7"; ctx.fillRect(0, y + 4 * unit, world.w, 15 * unit);
@@ -327,9 +333,8 @@ export function drawTrafficWorld(ctx: CanvasRenderingContext2D, state: TrafficSt
     ctx.fillStyle = "#6a7974";
     for (let x = 16 * unit; x < world.w; x += 39 * unit) ctx.fillRect(x, y + 7 * unit, 3 * unit, 9 * unit);
   }
-  const night = nightAmount(time);
   ctx.fillStyle = `rgba(12,24,47,${night * 0.4})`;
-  ctx.fillRect(0, y, world.w, depth);
+  if (!img) ctx.fillRect(0, y, world.w, depth);
   for (const v of state.vehicles) {
     if (v.absorbed) { drawAbsorbed(ctx, v, world, art); continue; }
     if (v.burnt !== undefined) {

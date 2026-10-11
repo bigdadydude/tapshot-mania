@@ -1,3 +1,6 @@
+import { createRocket, rocketLayout, releaseRocket, stepRocket, refillRocket, drawRocket } from "./rocket";
+import { createSuper, superSwipe, superImpact, superToggle, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper } from "./super";
+import { VECTOR, createVector, vectorLayout, vectorRecover, vectorMake, vectorRelease, vectorHold, cancelVectorPress, drawVector, vectorPulse, vectorChargeScale, vectorFinishBurst, stepVectorLeak, vectorLeakBounce } from "./vector";
 import { createAudio } from "./audio";
 import { primeArt, artProgress, reloadSceneArt } from "./art";
 import { canvasDpr } from "./perf";
@@ -57,7 +60,7 @@ import {
   type RogueRun,
 } from "./rogue";
 
-export const GAME_REV = 294;
+export const GAME_REV = 295;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -345,7 +348,9 @@ export function createGame(
 
   function isHacker() { return skillsEnabled() && kit().codeRain; }
 
+  function isRocket() { return skillsEnabled() && kit().rocket; }
   function isVector() { return skillsEnabled() && kit().vector; }
+  function isSuper() { return skillsEnabled() && kit().super; }
 
   function isMaze() { return skillsEnabled() && kit().maze; }
 
@@ -885,10 +890,10 @@ export function createGame(
   let hackerDir: HackerDir | null = null;
   let hackerRimSlide: { dir: HackerDir; hoop: Hoop; turn: -1 | 1 } | null = null;
   let hackerAwaken = false;
-  /** Active from a Vector Ball tap until its first solid collision. */
-  let vectorFlight = false;
-  /** Vector ball climbs only while the initiating pointer stays held. */
-  let vectorPointerId: number | null = null;
+  /** Energy, gesture ownership and flight state of the Vector Ball. */
+  let rocket = createRocket();
+  let vector = createVector();
+  let superBall = createSuper();
   /** Seconds remaining in Quantum Ball phase-through state. */
   let quantumTunnelLeft = 0;
   let quantumCheckedTier = 0;
@@ -909,6 +914,7 @@ export function createGame(
   const REWIND_SAMPLE_SECONDS = 1 / 30;
   type RewindSnapshot = {
     ball: Ball;
+    traffic: ReturnType<typeof createTraffic>;
     hoop: Hoop;
     other: Hoop | null;
     particles: Particle[];
@@ -958,7 +964,7 @@ export function createGame(
   const TIME_REWIND_MAX_SECONDS = 5;
   const TIME_ENERGY_DRAIN = TIME_ENERGY_MAX / TIME_REWIND_MAX_SECONDS;
   const HACKER_SPEED_BASE = 300;
-  const VECTOR_SPEED_SCALE = 0.8;
+
   let hackerSpeed = HACKER_SPEED_BASE;
 
   function captureRewindSnapshot(dt: number) {
@@ -968,6 +974,7 @@ export function createGame(
     rewindSampleLeft = REWIND_SAMPLE_SECONDS;
     rewindHistory.push({
       ball: structuredClone(ball),
+      traffic: structuredClone(traffic),
       hoop: structuredClone(hoop),
       other: other ? structuredClone(other) : null,
       particles: structuredClone(particles),
@@ -993,6 +1000,7 @@ export function createGame(
 
   function restoreRewindSnapshot(snapshot: RewindSnapshot) {
     ball = structuredClone(snapshot.ball);
+    traffic = structuredClone(snapshot.traffic);
     hoop = structuredClone(snapshot.hoop);
     other = snapshot.other ? structuredClone(snapshot.other) : null;
     particles = structuredClone(snapshot.particles);
@@ -1041,7 +1049,7 @@ export function createGame(
     rewindStepLeft = 0;
     pointerHeld = false;
     mazePointerId = null;
-    vectorPointerId = null;
+    cancelVectorPress(vector);
     emitHud();
   }
 
@@ -1536,6 +1544,16 @@ export function createGame(
       },
       isHackerAwaken: () => hackerAwaken,
       isMaze: () => isMaze(),
+      onProjectileImpact: (vx: number, vy: number) => {
+        if(isSuper()) return superImpact(superBall,ball);
+        if (!isVector()) return false;
+        // Restore pre-charge momentum first, so canceling the hold cannot erase the hit.
+        cancelVectorInput();
+        const incoming = { vx: ball.vx, vy: ball.vy };
+        ball.vx += vx; ball.vy += vy;
+        vectorCollision(incoming.vx, incoming.vy);
+        return true;
+      },
       getMazeHoles: () => mazeHoles,
     };
   }
@@ -2257,8 +2275,8 @@ export function createGame(
       playMode = "classic";
     }
     ballId = next;
-    vectorFlight = false;
-    vectorPointerId = null;
+    vector = createVector(); superBall = createSuper();
+    rocket = createRocket();
     quantumTunnelLeft = 0;
     quantumCheckedTier = 0;
     mazeGravity = { x: 0, y: 0 };
@@ -2744,8 +2762,8 @@ export function createGame(
     hint = true;
     hackerDir = null;
     hackerAwaken = false;
-    vectorFlight = false;
-    vectorPointerId = null;
+    vector = createVector(); superBall = createSuper();
+    rocket = createRocket();
     quantumTunnelLeft = 0;
     quantumCheckedTier = 0;
     mazeGravity = { x: 0, y: 0 };
@@ -2911,8 +2929,8 @@ export function createGame(
     buzzerTimer = 0;
     hackerDir = null;
     hackerAwaken = false;
-    vectorFlight = false;
-    vectorPointerId = null;
+    vector = createVector(); superBall = createSuper();
+    rocket = createRocket();
     quantumTunnelLeft = 0;
     quantumCheckedTier = 0;
     mazeGravity = { x: 0, y: 0 };
@@ -3432,13 +3450,120 @@ export function createGame(
     }
   }
 
-  function launchVectorBall(pointerId: number) {
-    vectorFlight = true;
-    vectorPointerId = pointerId;
-    const vertical = jumpVy();
-    ball.vy = vertical;
-    // Match horizontal and vertical speed for a true 45° ascent toward the active hoop.
-    ball.vx = hoop.side * Math.abs(vertical);
+
+  function releaseVectorAnchor() {
+    if(vector.anchor) { ball.vx=vector.anchor.vx; ball.vy=vector.anchor.vy; vector.anchor=null; }
+  }
+  function cancelVectorInput() {
+    releaseVectorAnchor(); cancelVectorPress(vector); releaseRocket(rocket,ball);
+    superBall.pointer=null;superBall.pending=null;superBall.queue=[];
+    if(superBall.dash){ball.vx=superBall.dash.vx;ball.vy=superBall.dash.vy;superBall.dash=null;}
+  }
+
+  function prepareVectorShot() {
+    traffic.launched = false;
+    ball.scored = false;
+    scoreGateHoop = null;
+    resetShotFlags();
+    shotOpen = true; shotMade = false; shotMissed = false; shotAirborne = true;
+    hint = false;
+    noteBalanceSkillEffect({ trigger: true, rescue: true });
+    audio.whoosh(0.7);
+  }
+
+  function startVectorCorrection() {
+    prepareVectorShot();
+    vector.coast = 0;
+    vector.correction = vectorPulse(ball,hoop,world.w,boardGeom(hoop,world).visY);
+    vector.powered = true;
+    emitHud();
+  }
+
+  function vectorAim(x: number, y: number) {
+    const dx=x-ball.x, dy=y-ball.y, distance=Math.hypot(dx,dy)||1;
+    const speed=world.w*5.5;
+    ball.vx=dx/distance*speed;
+    ball.vy=dy/distance*speed;
+  }
+
+  function normalizeVectorSpeed() {
+    const speed=Math.hypot(ball.vx,ball.vy);
+    if (speed<5) { vectorAim(hoop.x,ball.r); return; }
+    const scale=world.w*5.5/speed;
+    ball.vx*=scale; ball.vy*=scale;
+    ball.omega=clamp(ball.vx/ball.r,-22,22);
+  }
+
+  function vectorCollision(vx: number, vy: number) {
+    if(isSuper()) superBall.dash=null;
+    if (!isVector()) return;
+    const absorbed=vectorRecover(vector,Math.hypot(ball.vx-vx,ball.vy-vy),Math.hypot(ball.vx,ball.vy),Math.abs(jumpVy()));
+    const remainingSpeed=Math.sqrt(1-absorbed);
+    ball.vx*=remainingSpeed; ball.vy*=remainingSpeed;
+    const rebound=vectorLeakBounce(vector,{vx,vy},ball,Math.abs(jumpVy()));
+    ball.vx=rebound.vx;ball.vy=rebound.vy;
+    // A solid object always interrupts correction: no tunnelling through cars/boards.
+    vector.correction=null;
+    if (vector.burst>0) normalizeVectorSpeed();
+  }
+
+  function vectorBounds() {
+    let hit=false, top=false;
+    const r=ball.r;
+    if(ball.x<r) { ball.x=r; ball.vx=Math.abs(ball.vx); hit=true; }
+    else if(ball.x>world.w-r) { ball.x=world.w-r; ball.vx=-Math.abs(ball.vx); hit=true; }
+    if(ball.y<r) { ball.y=r; ball.vy=Math.abs(ball.vy); hit=true; top=true; }
+    else if(ball.y>world.floorY-r) { ball.y=world.floorY-r; ball.vy=-Math.abs(ball.vy); hit=true; }
+    if(!hit) return;
+    vector.bounces++;
+    // Only redirect on walls. All paths between impacts remain straight.
+    if(top && stageMod.canScore(hoop)) vectorAim(hoop.x,hoop.y);
+    else if(vector.bounces%3===0) vectorAim(hoop.x,2*r-hoop.y);
+    normalizeVectorSpeed();
+    traffic.launched=false;
+    vector.trail.push({x:ball.x,y:ball.y});
+  }
+
+  function stepVector(dt: number) {
+    vector.storageCooldown=Math.max(0,vector.storageCooldown-dt);
+    vector.notice=Math.max(0,vector.notice-dt);
+    vector.collisionCooldown=Math.max(0,vector.collisionCooldown-dt);
+    vector.storeFlash=Math.max(0,vector.storeFlash-dt);
+    if (!isVector() || phase!=="playing") return;
+    if(buzzer || timeUp || stageMod.holdsBall?.()) cancelVectorInput();
+    if(!buzzer && !timeUp && !stageMod.holdsBall?.() && stepVectorLeak(vector,dt)) {
+      callouts.push({text:"能量泄漏",x:ball.x,y:ball.y-ball.r*2,life:1,max:1,kind:"tag"});
+    }
+    if(vectorHold(vector,dt)) {
+      prepareVectorShot();
+      vector.anchor=null;
+      ball.x=clamp(ball.x,ball.r,world.w-ball.r);
+      ball.y=clamp(ball.y,ball.r,world.floorY-ball.r);
+      prevBallX=ball.x; prevBallY=ball.y;
+      const angle=Math.random()*Math.PI*2;
+      ball.vx=Math.cos(angle)*world.w*5.5;
+      ball.vy=Math.sin(angle)*world.w*5.5;
+      callouts.push({text:"矢量风暴",x:ball.x,y:ball.y-ball.r*2,life:0.8,max:0.8,kind:"tag"});
+    }
+    if(vector.pointer!==null && !vector.consumed && vector.held>=VECTOR.chargeStart && vector.energy>=VECTOR.burstMin) {
+      if(!vector.anchor) vector.anchor={x:ball.x,y:ball.y,vx:ball.vx,vy:ball.vy};
+      ball.x=vector.anchor.x; ball.y=vector.anchor.y; ball.vx=0; ball.vy=0;
+    } else if(vector.anchor) releaseVectorAnchor();
+    if(vector.burst>0) {
+      vector.burst=Math.max(0,vector.burst-VECTOR.drain*dt);
+      vector.trail.push({x:ball.x,y:ball.y});
+      if(vector.trail.length>65) vector.trail.shift();
+    }
+    if(vectorFinishBurst(vector)) {
+      vector.coast=0.24;
+      vector.trail=[];
+      resetTrail();
+    }
+    if(vector.coast>0) {
+      vector.coast=Math.max(0,vector.coast-dt);
+      const speed=Math.hypot(ball.vx,ball.vy), limit=Math.abs(jumpVy())+(world.w*5.5-Math.abs(jumpVy()))*vector.coast/0.24;
+      if(speed>limit) { ball.vx*=limit/speed; ball.vy*=limit/speed; }
+    }
   }
 
   function tapJump(pointerId: number = -1) {
@@ -3449,12 +3574,17 @@ export function createGame(
     }
     if (phase !== "playing") return;
     if (paused) return;
+    if (vector.burst > 0) return;
     if (stageMod.holdsBall?.()) return;
     const heroClutch =
       isRogueMode() && rogueRun && hasHeroMoment(rogueRun) && (buzzer || timeUp);
     if ((buzzer || timeUp) && !heroClutch) return;
     if (tapLock > 0) return;
     if (ballHidden() && !onApproachSide() && !stageMod.allowHiddenTap?.()) return;
+    cancelVectorInput();
+    vector.correction = null;
+    vector.coast = 0;
+    if (!shotOpen || shotMade || shotMissed) vector.powered = false;
     traffic.launched = false;
     // Mid-air re-tap on an unfinished attempt: boost only �?do not break combo.
     if (shotOpen && !shotMade && !shotMissed) {
@@ -3466,8 +3596,6 @@ export function createGame(
         const speed = Math.hypot(jumpVx(), Math.abs(jumpVy()));
         ball.vx = (dx / d) * speed;
         ball.vy = (dy / d) * speed;
-      } else if (isVector()) {
-        launchVectorBall(pointerId);
       } else {
         ball.vy = jumpVy();
         ball.vx = jumpVx();
@@ -3492,8 +3620,6 @@ export function createGame(
       const speed = Math.hypot(jumpVx(), Math.abs(jumpVy()));
       ball.vx = (dx / d) * speed;
       ball.vy = (dy / d) * speed;
-    } else if (isVector()) {
-      launchVectorBall(pointerId);
     } else {
       ball.vy = jumpVy();
       ball.vx = jumpVx();
@@ -3592,6 +3718,40 @@ export function createGame(
     audio.unlock();
     if (phase === "over") return;
     e.preventDefault();
+    if(phase==="playing" && isSuper()) {
+      if(paused || buzzer || timeUp || stageMod.holdsBall?.() || superBall.pointer) return;
+      const p=pointerWorld(e),bar=superLayout(world.w);
+      superBall.lastAction=superBall.clock;
+      if(p.x>=bar.x-8 && p.x<=bar.x+bar.w+8 && p.y>=bar.y-8 && p.y<=bar.y+bar.h+20){
+        if(superBall.dash){ball.vx=superBall.dash.vx;ball.vy=superBall.dash.vy;superBall.dash=null;}
+        superToggle(superBall);return;
+      }
+      superBall.pointer={id:e.pointerId,x:p.x,y:p.y,used:false};
+      try{canvas.setPointerCapture(e.pointerId);}catch{}
+      return;
+    }
+    if(phase==="playing" && isRocket()) {
+      const p=pointerWorld(e),c=rocketLayout(world.w,world.h,world.floorY);
+      if(Math.hypot(p.x-c.x,p.y-c.y)<=c.r+8) {
+        if(!paused && !buzzer && !timeUp && !stageMod.holdsBall?.() && rocket.pointer===null) {
+          rocket.pointer=e.pointerId;rocket.steer=0;hint=false;emitHud();
+          noteBalanceSkillInput();
+          try{canvas.setPointerCapture(e.pointerId);}catch{}
+        }
+        return;
+      }
+    }
+    if (phase === "playing" && isVector()) {
+      const p = pointerWorld(e), b = vectorLayout(world.w, world.h, world.floorY);
+      if (Math.abs(p.x-b.x)<=b.r*2.15+7 && p.y>=b.y+8-b.r*2.15-7 && p.y<=b.y+34) {
+        if (!paused && !buzzer && !timeUp && !stageMod.holdsBall?.() && vector.burst <= 0 && vector.pointer === null) {
+          vector.pointer=e.pointerId; vector.held=0; vector.consumed=false;
+          noteBalanceSkillInput();
+          try { canvas.setPointerCapture(e.pointerId); } catch { /* detached canvas */ }
+        }
+        return;
+      }
+    }
     pointerHeld = true;
     if (phase === "playing" && !paused && isTime() && !timeRewindBlocked()) {
       const point = pointerWorld(e);
@@ -3654,6 +3814,28 @@ export function createGame(
   }
 
   function onMove(e: PointerEvent) {
+    if(isSuper() && superBall.pointer?.id===e.pointerId){
+      const start=superBall.pointer,p=pointerWorld(e);superBall.lastAction=superBall.clock;
+      if(!start.used && Math.hypot(p.x-start.x,p.y-start.y)>=18){
+        start.used=true;
+        if(!paused && phase==="playing" && !buzzer && !timeUp && !stageMod.holdsBall?.()){
+          const result=superSwipe(superBall,ball,p.x-start.x,p.y-start.y);
+          if(result==='dash'){prepareVectorShot();}
+          if(result==='parry'){traffic.launched=false;modifierHost().tag('完美抵消');}
+        }
+      }
+      e.preventDefault();return;
+    }
+    if(rocket.pointer===e.pointerId) {
+      if(paused || phase!=="playing"){releaseRocket(rocket,ball);return;}
+      const p=pointerWorld(e),c=rocketLayout(world.w,world.h,world.floorY);
+      rocket.steer=clamp((p.x-c.x)/c.half,-1,1);e.preventDefault();return;
+    }
+    if (vector.pointer === e.pointerId) {
+      const p = pointerWorld(e), b = vectorLayout(world.w, world.h, world.floorY);
+      if (Math.abs(p.x-b.x)>b.r*2.15+20 || p.y<b.y+8-b.r*2.15-20 || p.y>b.y+47) cancelVectorInput();
+      return;
+    }
     if (mazePointerId !== e.pointerId || !isMaze() || phase !== "playing" || paused) return;
     const point = pointerWorld(e);
     const gravity = mazeGravityFromPoint(point.x, point.y, mazePadLayout(world));
@@ -3661,7 +3843,21 @@ export function createGame(
   }
 
   function onUp(e: PointerEvent) {
+    if(isSuper() && superBall.pointer?.id===e.pointerId){
+      const pointer=superBall.pointer;superBall.pointer=null;
+      if(e.type==='pointerup' && !pointer.used && !paused && phase==='playing') {
+        superBall.lastAction=superBall.clock;superBall.refund=false;noteBalanceClick();tapJump(e.pointerId);
+      }
+      return;
+    }
+    if(rocket.pointer===e.pointerId){releaseRocket(rocket,ball);return;}
     if (e.button !== undefined && e.button !== 0) return;
+    if (vector.pointer === e.pointerId) {
+      releaseVectorAnchor();
+      if (e.type === "pointercancel" || e.type === "lostpointercapture" || paused || phase !== "playing" || buzzer || timeUp || stageMod.holdsBall?.()) cancelVectorInput();
+      else if (vectorRelease(vector) === "correct") startVectorCorrection();
+      return;
+    }
     if (timeRewindPointer === e.pointerId) {
       timeRewindPointer = null;
       rewindActive = false;
@@ -3679,14 +3875,6 @@ export function createGame(
       mazeGravity = { x: 0, y: 0 };
       mazeTiltBase = null;
       mazeMotionBase = null;
-    }
-    if (isVector() && vectorPointerId === e.pointerId && vectorFlight) {
-      vectorPointerId = null;
-      vectorFlight = false;
-      // Releasing immediately cancels the climb and starts a vertical fall.
-      ball.vx = 0;
-      ball.vy = Math.max(55, Math.abs(ball.vy) * 0.2);
-      ball.omega = 0;
     }
     pointerHeld = false;
     boltHoldArm = 0;
@@ -3737,6 +3925,7 @@ export function createGame(
   function pausePlay() {
     if (phase !== "playing" || paused) return;
     paused = true;
+    cancelVectorInput();
     emitHud();
   }
 
@@ -3777,8 +3966,8 @@ export function createGame(
     madeCount = 0;
     hackerDir = null;
     hackerAwaken = false;
-    vectorFlight = false;
-    vectorPointerId = null;
+    vector = createVector(); superBall = createSuper();
+    rocket = createRocket();
     quantumTunnelLeft = 0;
     quantumCheckedTier = 0;
     mazeGravity = { x: 0, y: 0 };
@@ -4456,6 +4645,12 @@ export function createGame(
       stepRewind(dt);
       return;
     }
+    stepVector(dt);
+    if(isSuper() && phase==='playing') {
+      stepSuper(superBall,ball,dt);
+      if(buzzer || timeUp || stageMod.holdsBall?.()){superBall.pending=null;superBall.queue=[];superBall.dash=null;superBall.pointer=null;}
+    }
+    if(isRocket() && (buzzer || timeUp || stageMod.holdsBall?.())) releaseRocket(rocket,ball);
     stepGraf(dt);
     if (quantumTunnelLeft > 0) {
       quantumTunnelLeft = Math.max(0, quantumTunnelLeft - dt);
@@ -4521,7 +4716,7 @@ export function createGame(
           holeOn ||
           champMode ||
           rewindActive ||
-          vectorFlight ||
+          (vector.burst > 0 || vector.correction !== null) ||
           hoop.frostLeft > 0 ||
           Boolean(other && other.frostLeft > 0);
         if (skillBusy) balanceSkillActiveSeconds += drain;
@@ -4670,7 +4865,7 @@ export function createGame(
     boltFloorSpeed = 0;
     boltBoardGrip = false;
     boltFastFill = false;
-    const boltLock = boltOverheated || stepBoltStorm(dt);
+    const boltLock = boltOverheated || stepBoltStorm(dt) || vector.anchor !== null;
 
     if (!boltLock) {
     prevBallX = ball.x;
@@ -4688,7 +4883,20 @@ export function createGame(
         return ball.vy > 20 ? 1.28 : 1;
       })();
       const buoy = pMul("buoy");
-      if (hacking) {
+      if(isRocket() && phase==="playing") stepRocket(rocket,ball,gravity(),dt);
+      const superDriven = isSuper() && superDashVelocity(superBall,ball,dt);
+      const vectorDriven = vector.burst > 0 || vector.correction !== null || superDriven;
+      if (vectorDriven) {
+        if (vector.burst > 0) normalizeVectorSpeed();
+        else if (vector.correction) {
+          if(vector.correction.left<=0) { vector.correction=null; ball.vx=0; ball.vy=0; }
+          else {
+            const fraction=Math.min(1,vector.correction.left/dt);
+            ball.vx=vector.correction.vx*fraction; ball.vy=vector.correction.vy*fraction;
+            vector.correction.left=Math.max(0,vector.correction.left-dt);
+          }
+        }
+      } else if (hacking) {
         if (scoredLock <= 0 && ball.scored) {
           ball.scored = false;
           resetShotFlags();
@@ -4743,7 +4951,7 @@ export function createGame(
       } else {
         ball.vy += gravity() * dt * (gScale * fallBoost - buoy);
       }
-      if (!hacking) {
+      if (!hacking && !vectorDriven) {
       const air = pMul("air");
       const roll = pMul("roll");
       if (isMaze()) {
@@ -4792,39 +5000,35 @@ export function createGame(
         ball.omega *= 1 - Math.min(0.85, spinDrag * air * dt);
       }
       ball.vy *= 1 - Math.min(0.85, 0.025 * air * dt);
-      if (vectorFlight && vectorPointerId !== null) {
-        // Pointer hold duration determines travel distance: keep rising at 45?
-        // until the player releases, or a solid impact resolves the flight.
-        const climb = Math.abs(jumpVy()) * VECTOR_SPEED_SCALE;
-        ball.vx = hoop.side * climb;
-        ball.vy = -climb;
-      }
       ball.omega = clamp(ball.omega, -22, 22);
       const move = buzzer ? 0.6 : 1;
       ball.x += ball.vx * dt * move;
       ball.y += ball.vy * dt * move;
       }
-      if (hacking) {
+      if (hacking || vectorDriven) {
         const move = buzzer ? 0.6 : 1;
         ball.x += ball.vx * dt * move;
         ball.y += ball.vy * dt * move;
       }
+      const rocketFreeY=ball.y,rocketFreeVy=ball.vy;
       if (trafficEnabled() && phase === "playing") {
+        const vectorIncoming = {vx:ball.vx,vy:ball.vy};
         if (holeOn) beginTrafficAbsorption(traffic, holeX, holeY);
         const nearMissBefore = traffic.nearMiss;
         const desired = hacking && hackerDir ? hackerDirectionVector(hackerDir) : null;
         if (collideTraffic(traffic, world, ball, prevBallX, prevBallY, {
           dt,
+          blockImpact: isSuper() ? (fresh) => !fresh && superBall.shield || superImpact(superBall,ball) : undefined,
           tunneling: quantumTunnelLeft > 0,
           hacker: desired ? { ...desired, speed: hackerSpeed } : undefined,
           lightning: isBolt(),
+          roofFriction: 0.28 * pMul("roll"),
           discharge: isBolt() && boltCharge > 90 && !ball.scored,
           ignite: heatN() >= STAGE_IGNITE && heatN() < STAGE_BLAZE,
           blaze: heatN() >= STAGE_BLAZE,
           frost: isFrost() ? { chance: frostChance(), first: FROST_DUR_FIRST, refresh: FROST_DUR_REFRESH } : undefined,
         })) {
-          vectorFlight = false;
-          vectorPointerId = null;
+          vectorCollision(vectorIncoming.vx,vectorIncoming.vy);
           shotAirborne = true;
           if (!hacking && traffic.roofSpeed <= 0) {
             if (gfx.impact) camShake = Math.max(camShake, 0.14);
@@ -4869,7 +5073,7 @@ export function createGame(
           if (traffic.nearMiss > nearMissBefore) callouts.push({ text: `擦车而过 ×${traffic.nearMiss}`, x: ball.x, y: ball.y - ball.r * 2, life: 0.8, max: 0.8, kind: "base" });
           emitHud();
         }
-        if (trafficOutOfBounds(traffic, world, ball)) grantTrafficSafe(traffic, ball);
+        if (vector.burst <= 0 && trafficOutOfBounds(traffic, world, ball)) grantTrafficSafe(traffic, ball);
         else if (traffic.launched && ball.vy >= 0 && ball.y + ball.r >= world.floorY - 1) traffic.launched = false;
       }
       // Resolve traffic escape before hacker wrapping; otherwise side wrapping hides it.
@@ -4890,7 +5094,12 @@ export function createGame(
       if (phase === "playing" && !stageMod.holdsBall?.()) {
         stageMod.afterPhysics?.(dt, modifierHost());
       }
-      if (!hacking) wrapX();
+      if(isRocket()) {
+        if(ball.x<ball.r){ball.x=ball.r;ball.vx=Math.max(0,ball.vx);}
+        if(ball.x>world.w-ball.r){ball.x=world.w-ball.r;ball.vx=Math.min(0,ball.vx);}
+        if(ball.y<ball.r){ball.y=ball.r;ball.vy=Math.max(0,ball.vy);}
+      } else if (vector.burst > 0) vectorBounds();
+      else if (!hacking) wrapX();
       pushNinjaPath(dt);
       stepNinjaGhosts(dt);
       pushTrail();
@@ -4911,8 +5120,7 @@ export function createGame(
       if (phase !== "title" && !ballHidden()) {
         const vx0 = ball.vx;
         const vy0 = ball.vy;
-        const vectorVx = ball.vx;
-        const vectorVy = ball.vy;
+
         if (scoredLock <= 0 && quantumTunnelLeft <= 0) {
           if (hacking) {
             if (stageMod.canScore(hoop)) collideHackerRim(hoop);
@@ -4929,15 +5137,7 @@ export function createGame(
           if (!other.noBoard && !stageMod.skipBrace(other)) collideBrace(other);
         }
         if (ball.vx !== vx0 || ball.vy !== vy0) traffic.launched = false;
-        if (
-          isVector() &&
-          (Math.abs(ball.vx - vectorVx) > 0.5 || Math.abs(ball.vy - vectorVy) > 0.5)
-        ) {
-          // Every solid impact keeps the reflected quadrant, but leaves at a 45? angle.
-          vectorFlight = false;
-          vectorPointerId = null;
-          snapVectorBounce(vectorVx, vectorVy);
-        }
+        if (ball.vx !== vx0 || ball.vy !== vy0) vectorCollision(vx0,vy0);
         if (
           hacking &&
           !hackerRimSlide &&
@@ -4956,9 +5156,19 @@ export function createGame(
         glassPeakY = Math.min(glassPeakY, ball.y);
       }
       const caught = phase === "playing" && stageMod.touchBall?.(modifierHost()) === true;
-      if (!caught && !hacking) collideFloor();
+      if (!caught && !hacking && vector.burst <= 0) {
+        const incomingVelocity = {vx:ball.vx,vy:ball.vy};
+        const landed = ball.y + ball.r >= world.floorY && ball.vy > 40;
+        collideFloor();
+        if (landed) vectorCollision(incomingVelocity.vx,incomingVelocity.vy);
+      }
       stepBoltBoardTop(dt);
       stepBoltCharge(dt);
+      if(isRocket() && phase==="playing") {
+        const floor=Math.abs(ball.y+ball.r-world.floorY)<2;
+        const platform=rocketFreeVy>0 && ball.y<rocketFreeY-0.01 && ball.vy<=5;
+        refillRocket(rocket,(floor||platform)&&Math.abs(ball.vy)<75,dt);
+      }
       if (chain && hasChain() && !caught && !stageMod.holdsBall?.()) {
         stepChain(
           chain,
@@ -4972,7 +5182,7 @@ export function createGame(
         );
       }
     }
-    } else if (boltOverheated && phase === "playing" && !stageMod.holdsBall?.()) {
+    } else if ((boltOverheated || vector.anchor !== null) && phase === "playing" && !stageMod.holdsBall?.()) {
       // Projectiles and other post-step mechanisms still advance; the ball stays pinned below.
       stageMod.afterPhysics?.(dt, modifierHost());
     }
@@ -4990,7 +5200,7 @@ export function createGame(
 
     const ghostQuiet = hoop.noBoard && hoop.scoreable === false;
     const nearHoop = !ghostQuiet && netNearHoop(hoop, ball);
-    stepNet(hoop, ball, prevBallX, prevBallY, world, dt, time, nearHoop && netShouldCollide(hoop, ball));
+    stepNet(hoop, ball, prevBallX, prevBallY, world, dt, time, !vector.anchor && vector.burst <= 0 && nearHoop && netShouldCollide(hoop, ball));
     if (other) {
       const nearOther = netNearHoop(other, ball);
       stepNet(
@@ -5001,7 +5211,7 @@ export function createGame(
         world,
         dt,
         time,
-        nearOther && other.couple && netShouldCollide(other, ball),
+        !vector.anchor && vector.burst <= 0 && nearOther && other.couple && netShouldCollide(other, ball),
       );
       if (other.burning) {
         other.char = Math.min(1, other.char + dt / 1.05);
@@ -5117,17 +5327,6 @@ export function createGame(
     } else {
       boltBoardTopHold = 0;
     }
-  }
-  function snapVectorBounce(fallbackVx: number, fallbackVy: number) {
-    const speed = Math.max(80, Math.hypot(ball.vx, ball.vy));
-    const component = speed / Math.SQRT2;
-    // Use the resolved physical response for quadrant; fall back to the incoming vector
-    // if a flat contact has zeroed one component.
-    const sx = Math.sign(ball.vx) || Math.sign(fallbackVx) || hoop.side;
-    const sy = Math.sign(ball.vy) || Math.sign(fallbackVy) || -1;
-    ball.vx = sx * component;
-    ball.vy = sy * component;
-    ball.omega = ball.vx / Math.max(8, ball.r);
   }
 
   function collideHackerRim(h: Hoop) {
@@ -5594,11 +5793,6 @@ export function createGame(
         if (phase !== "title") audio.bounce(Math.min(1, incoming / 900));
         ball.vy = -rebound;
         if (!isMaze()) ball.vx *= 1 - Math.min(0.2, 0.03 * pMul("roll"));
-        if (isVector()) {
-          vectorFlight = false;
-          vectorPointerId = null;
-          snapVectorBounce(ball.vx || hoop.side * Math.abs(rebound), ball.vy);
-        }
         ball.squash = incoming > 220 ? 0.92 : incoming > 130 ? 0.95 : 0.97;
       } else {
         ball.vy = 0;
@@ -5615,6 +5809,7 @@ export function createGame(
       ball.scored = false;
       resetShotFlags();
     }
+    if (incoming <= 40 && isVector()) vector.powered = false;
     if (incoming <= 40 && shotAirborne) {
       markShotMissed();
       shotAirborne = false;
@@ -5833,6 +6028,7 @@ export function createGame(
       swish = true;
     }
     const bank = ghost ? false : ball.hitBoard;
+    if (!ghost && isVector()) vectorMake(vector);
     if (!ghost && isBolt()) {
       boltChargeUnlocked = true;
       boltTickAcc = 0;
@@ -5945,6 +6141,8 @@ export function createGame(
     if (isRogueMode() && rogueRun && hasChaosBase(rogueRun) && !bunshinGhost && !ninjaGhost) {
       basePart = Math.floor(Math.random() * 26) - 10;
     }
+    const superShieldScore = !ghost && isSuper() && superBall.shield;
+    if(!ghost && isSuper()) basePart+=superBaseBonus(superBall);
     let gain = bunshinGhost ? 1 : ninjaGhost ? 0 : basePart + streakPart;
     if (!bunshinGhost && !ninjaGhost) {
       if (trafficEnabled()) gain += traffic.nearMiss;
@@ -6032,6 +6230,7 @@ export function createGame(
       }
     }
     score += gain;
+    if(!ghost && isSuper()) superScore(superBall,gain,superShieldScore);
     if (!ghost && balanceSession) {
       const plainCore = bunshinGhost || ninjaGhost ? 0 : basePart + streakPart + extra + (freed ? prisonBonus : 0) + (clutch && !ninjaGhost ? 5 : 0);
       balancePlainGainAcc += plainCore;
@@ -6044,7 +6243,7 @@ export function createGame(
           holeOn ||
           champMode ||
           (isTime() && rewindActive) ||
-          vectorFlight ||
+          (vector.burst > 0 || vector.correction !== null) ||
           skillSlice > 0;
         if (skillActive) {
           noteBalanceSkillEffect({
@@ -6484,7 +6683,9 @@ export function createGame(
         const MAX_STEPS = 3;
         let steps = 0;
         while (acc >= STEP && steps < MAX_STEPS) {
-          physics(STEP);
+          const vectorFast = superBall.dash !== null || superBall.pending !== null || vector.leakLeft > 0 || vector.burst > 0 || vector.correction !== null || (vector.pointer !== null && !vector.consumed && vector.energy >= VECTOR.burstMin);
+          const slices = vectorFast ? Math.min(24, Math.max(1, Math.ceil(world.w * 5.5 * STEP / Math.max(2,ball.r*0.45)))) : 1;
+          for (let i=0;i<slices;i++) physics(STEP/slices);
           applyDevStatLocks();
           acc -= STEP;
           steps++;
@@ -6533,12 +6734,17 @@ export function createGame(
           const barLabel = yardHud?.active ? yardHud.barLabel : null;
           const k = Number.isFinite(camShake) ? Math.min(1, Math.max(0, camShake) / 0.16) : 0;
           const amp = k > 0.002 ? 4.6 * k * k : 0;
+          const chargeScale=vectorChargeScale(vector);
+          const renderedBall=vector.anchor ? {...ball,r:ball.r*chargeScale,
+            x:ball.x+Math.sin(time*110)*(1-chargeScale)*6,
+            y:ball.y+Math.cos(time*137)*(1-chargeScale)*6} : isVector() && vector.leakLeft>0 ? {...ball,
+            x:ball.x+Math.sin(vector.elapsed*113)*2.5,y:ball.y+Math.cos(vector.elapsed*91)*2.5} : ball;
           drawScene(
             ctx,
             world,
             hoop,
             other,
-            ball,
+            renderedBall,
             particles,
             callouts,
             fxCombo(),
@@ -6604,6 +6810,9 @@ export function createGame(
               : null,
             phase === "playing" && isTime() ? { energy: timeEnergy, active: rewindActive, disabled: timeRewindBlocked() } : null,
           );
+          if (phase === "playing" && isRocket()) drawRocket(ctx,world,rocket,ball,time);
+          if (phase === "playing" && isVector()) drawVector(ctx, world, vector, paused || buzzer || timeUp);
+          if (phase === "playing" && isSuper()) drawSuper(ctx,world.w,superBall,ball);
           ctx.restore();
           stageMod.drawScreen?.(ctx, world);
           }
@@ -6616,6 +6825,7 @@ export function createGame(
   }
 
   function onVis() {
+    if (document.visibilityState !== "visible") cancelVectorInput();
     if (document.visibilityState === "visible") {
       audio.unlock();
       last = performance.now();
@@ -6637,6 +6847,8 @@ export function createGame(
   canvas.addEventListener("pointermove", onMove, { passive: false });
   canvas.addEventListener("pointerup", onUp, { passive: false });
   canvas.addEventListener("pointercancel", onUp, { passive: false });
+  canvas.addEventListener("lostpointercapture", onUp);
+  window.addEventListener("blur", cancelVectorInput);
   window.addEventListener("keydown", onKey);
   window.addEventListener("resize", resize);
   document.addEventListener("visibilitychange", onVis);
@@ -6652,6 +6864,8 @@ export function createGame(
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onUp);
+      canvas.removeEventListener("lostpointercapture", onUp);
+      window.removeEventListener("blur", cancelVectorInput);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", resize);
       document.removeEventListener("visibilitychange", onVis);
@@ -6826,6 +7040,13 @@ export function createGame(
         buzzer,
         madeCount,
         hoopInner: hoop.inner,
+        timeEnergy,
+        rewindActive,
+        vector: { ...vector, renderScale:vectorChargeScale(vector), trail: undefined, button: vectorLayout(world.w,world.h,world.floorY) },
+        boltCharge,
+        boltChargeUnlocked,
+        rocket: {...rocket, control:rocketLayout(world.w,world.h,world.floorY)},
+        superBall: {...superBall,bar:superLayout(world.w)},
         ballR: ball.r,
         hold: other?.hold ?? 0,
         otherX: other?.x ?? null,
@@ -6840,7 +7061,7 @@ export function createGame(
         stage: fireStage(heatN()),
         sear: other?.sear ?? 0,
         burnFlash,
-        ball: { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy, r: ball.r, scored: ball.scored, omega: ball.omega },
+        ball: { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy, r: ball.r, scored: ball.scored, omega: ball.omega, spin: ball.spin },
         hoop: { x: hoop.x, y: hoop.y, side: hoop.side, inner: hoop.inner, moving: hoop.moving, moveKind: hoop.moveKind, moveDir: hoop.moveDir },
         netBottom: hoop.net.reduce((m, n) => Math.max(m, n.y), hoop.y),
         netMinY: hoop.net.reduce((m, n) => Math.min(m, n.y), hoop.y),
@@ -6855,7 +7076,7 @@ export function createGame(
         otherPulse: other?.netPulse ?? 0,
         otherNetBottom: other ? other.net.reduce((m, n) => Math.max(m, n.y), other.y) : null,
         otherNetMin: other ? other.net.reduce((m, n) => Math.min(m, n.y), other.y) : null,
-        world: { w: world.w, h: world.h, floorY: world.floorY },
+        world: { w: world.w, h: world.h, floorY: world.floorY, cssW: world.cssW, cssH: world.cssH, ox: world.ox, oy: world.oy },
         playMode,
         rogueStage: rogueRun?.stage ?? null,
         rogueEndless: rogueRun?.endless ?? null,

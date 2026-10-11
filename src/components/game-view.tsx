@@ -211,7 +211,7 @@ export function GameView() {
         <div className="flex h-full w-full max-w-[min(100%,calc(100dvh*9/16))] flex-col">
           <div className="flex-1" />
 
-          {hud.phase === "playing" && hud.hint && menu === "none" ? (
+          {hud.phase === "playing" && hud.hint && hud.ballId !== "vector" && menu === "none" ? (
             <p className="mx-auto mb-6 max-w-[16rem] text-center text-sm font-medium text-fg/90">
               点击屏幕，让球跳进篮筐
             </p>
