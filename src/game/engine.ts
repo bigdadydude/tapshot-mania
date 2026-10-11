@@ -1,5 +1,5 @@
 import { createRocket, rocketLayout, releaseRocket, stepRocket, refillRocket, drawRocket } from "./rocket";
-import { SUPER, createSuper, superSwipe, superImpact, superToggle, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper, drawSuperGhosts, drawSuperGas, drawSuperAura } from "./super";
+import { SUPER, createSuper, superSwipe, superImpact, superToggle, superPulseShield, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper, drawSuperGhosts, drawSuperGas, drawSuperAura } from "./super";
 import { VECTOR, createVector, vectorLayout, vectorRecover, vectorMake, vectorRelease, vectorHold, cancelVectorPress, drawVector, vectorPulse, vectorChargeScale, vectorFinishBurst, stepVectorLeak, vectorLeakBounce } from "./vector";
 import { createAudio } from "./audio";
 import { primeArt, artProgress, reloadSceneArt } from "./art";
@@ -3727,9 +3727,12 @@ export function createGame(
       if(paused || buzzer || timeUp || stageMod.holdsBall?.() || superBall.pointer) return;
       const p=pointerWorld(e),bar=superLayout(world.w);
       superBall.lastAction=superBall.clock;
-      if(p.x>=bar.x-8 && p.x<=bar.x+bar.w+8 && p.y>=bar.y-8 && p.y<=bar.y+bar.h+20){
+      if(p.x>=bar.x-14 && p.x<=bar.x+bar.w+14 && p.y>=bar.y-14 && p.y<=bar.y+bar.h+32){
         if(superBall.dash){ball.vx=superBall.dash.vx;ball.vy=superBall.dash.vy;superBall.dash=null;}
-        superToggle(superBall);return;
+        superToggle(superBall);
+        superBall.pointer={id:e.pointerId,x:p.x,y:p.y,used:true};
+        try{canvas.setPointerCapture(e.pointerId);}catch{}
+        return;
       }
       superBall.pointer={id:e.pointerId,x:p.x,y:p.y,used:false};
       try{canvas.setPointerCapture(e.pointerId);}catch{}
@@ -3852,7 +3855,7 @@ export function createGame(
     if(isSuper() && superBall.pointer?.id===e.pointerId){
       const pointer=superBall.pointer;superBall.pointer=null;
       if(e.type==='pointerup' && !pointer.used && !paused && phase==='playing') {
-        superBall.lastAction=superBall.clock;superBall.refund=false;noteBalanceClick();tapJump(e.pointerId);
+        superBall.lastAction=superBall.clock;superBall.refund=false;superPulseShield(superBall);noteBalanceClick();tapJump(e.pointerId);
       }
       return;
     }

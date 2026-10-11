@@ -6,12 +6,13 @@ export function createSuper() {
     pending:null as null|{dx:number;dy:number;wait:number},queue:[] as {dx:number;dy:number;wait:number}[],
     dash:null as null|{dx:number;dy:number;left:number;hang:number;vx:number;vy:number},
     ghosts:[] as {x:number;y:number;life:number}[],
-    impact:null as null|{at:number;x:number;y:number;vx:number;vy:number},flash:0};
+    impact:null as null|{at:number;x:number;y:number;vx:number;vy:number},flash:0,wave:0};
 }
 export type SuperState=ReturnType<typeof createSuper>;
 export function superSegments(s:SuperState){return Math.floor((s.energy+1e-8)/20);}
 function spend(s:SuperState,n:number){s.energy=Math.max(0,s.energy-n);if(s.energy<=0)s.shield=false;}
-export function superToggle(s:SuperState){s.shield=!s.shield && s.energy>0;s.pending=null;s.queue=[];s.refund=false;s.lastAction=s.clock;}
+export function superToggle(s:SuperState){s.shield=!s.shield && s.energy>0;s.pending=null;s.queue=[];s.refund=false;s.lastAction=s.clock;s.wave=0;}
+export function superPulseShield(s:SuperState){if(s.shield)s.wave=1;}
 function parry(s:SuperState){s.energy=Math.min(120,s.energy+20);s.invincible=3;s.pending=null;s.queue=[];s.dash=null;s.impact=null;s.refund=false;s.flash=0.4;}
 export function superSwipe(s:SuperState,b:Body,dx:number,dy:number) {
   s.lastAction=s.clock;
@@ -55,7 +56,7 @@ function trailGhost(s:SuperState,b:Body){
   if(s.ghosts.length>5) s.ghosts.shift();
 }
 export function stepSuper(s:SuperState,b:Body,dt:number){
-  s.clock+=dt;s.invincible=Math.max(0,s.invincible-dt);s.flash=Math.max(0,s.flash-dt);
+  s.clock+=dt;s.invincible=Math.max(0,s.invincible-dt);s.flash=Math.max(0,s.flash-dt);s.wave=Math.max(0,s.wave-dt/0.28);
   if(s.shield)spend(s,dt*0.5);
   if(s.impact && s.clock-s.impact.at>SUPER.parryWindow)s.impact=null;
   let kept=0;
@@ -89,16 +90,32 @@ function waveRadius(angle:number,time:number,base:number,amp:number){
     +Math.sin(angle*8+time*3.1)*amp*0.28
     +Math.sin(angle*2.4-time*0.9)*amp*0.22;
 }
-function strokeShield(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,time:number,amp:number){
+function strokeShieldLine(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,time:number,wave:number){
+  ctx.save();
+  ctx.shadowColor='#3ee07a';ctx.shadowBlur=12;
+  ctx.strokeStyle='#7dffb0';ctx.lineWidth=2.4;ctx.lineJoin='round';ctx.globalAlpha=0.95;
   ctx.beginPath();
-  const n=72;
-  for(let i=0;i<=n;i++){
-    const a=i/n*Math.PI*2,rr=waveRadius(a,time,radius,amp);
-    const px=x+Math.cos(a)*rr,py=y+Math.sin(a)*rr;
-    if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+  if(wave<=0.02){ctx.arc(x,y,radius,0,Math.PI*2);}
+  else{
+    const amp=radius*0.11*wave,n=64;
+    for(let i=0;i<=n;i++){
+      const a=i/n*Math.PI*2,rr=waveRadius(a,time*8,radius,amp);
+      const px=x+Math.cos(a)*rr,py=y+Math.sin(a)*rr;
+      if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+    }
+    ctx.closePath();
   }
-  ctx.closePath();
-  ctx.strokeStyle='#3ee07a';ctx.globalAlpha=0.95;ctx.lineWidth=2.2;ctx.lineJoin='round';ctx.stroke();ctx.globalAlpha=1;
+  ctx.stroke();
+  ctx.shadowBlur=0;ctx.strokeStyle='#e8ffe8';ctx.lineWidth=1;ctx.globalAlpha=0.7;ctx.stroke();
+  ctx.restore();
+}
+function strokeShieldRings(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,time:number){
+  const period=0.7,count=3;
+  for(let i=0;i<count;i++){
+    const t=((time/period)+i/count)%1,grow=t*radius*2.4,alpha=(1-t)*(1-t)*0.55;
+    ctx.beginPath();ctx.arc(x,y,radius+2+grow,0,Math.PI*2);
+    ctx.strokeStyle=`rgba(80,230,140,${alpha})`;ctx.lineWidth=1.6*(1-t*0.45);ctx.stroke();
+  }
 }
 function fillGasCloud(ctx:CanvasRenderingContext2D,x:number,y:number,inner:number,outer:number,time:number,alpha:number){
   ctx.save();
@@ -151,10 +168,13 @@ export function drawSuperGas(ctx:CanvasRenderingContext2D,s:SuperState,b:Body){
   const moving=s.dash.left>1e-8;
   fillGasCloud(ctx,b.x,b.y,b.r*0.86,b.r*(moving?2.2:1.9),s.clock,moving?1:Math.max(0.4,s.dash.hang/SUPER.hangTime));
 }
-/** One small-amp green shield line. */
+/** Tight glowing shield line, expanding rings, and a click ripple. */
 export function drawSuperAura(ctx:CanvasRenderingContext2D,s:SuperState,b:Body){
   ctx.save();
-  if(s.shield) strokeShield(ctx,b.x,b.y,b.r+8,s.clock,b.r*0.07);
+  if(s.shield){
+    strokeShieldRings(ctx,b.x,b.y,b.r,s.clock);
+    strokeShieldLine(ctx,b.x,b.y,b.r+2.2,s.clock,s.wave);
+  }
   if(s.invincible>0 || s.flash>0){
     ctx.strokeStyle=s.invincible>0?'#fff':'#57dcf2';ctx.lineWidth=s.flash>0?4:2;
     ctx.globalAlpha=s.invincible>0?0.6+0.4*Math.sin(s.clock*28)**2:0.8;

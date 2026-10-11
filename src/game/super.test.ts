@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {SUPER,createSuper,superSegments,superSwipe,superScore,superImpact,superToggle,superBaseBonus,stepSuper,superDashVelocity} from './super.ts';
+import {SUPER,createSuper,superSegments,superSwipe,superScore,superImpact,superToggle,superPulseShield,superBaseBonus,stepSuper,superDashVelocity} from './super.ts';
 const body=()=>({x:200,y:300,vx:0,vy:0,r:20});
 test('actual basket points charge six segments and cap at 120',()=>{
  const s=createSuper();superScore(s,19);assert.equal(superSegments(s),0);superScore(s,1);assert.equal(superSegments(s),1);superScore(s,1000);assert.equal(s.energy,120);
@@ -70,4 +70,10 @@ test('shield blocks swipes and impacts, charges 4 per event and drains 0.5 per s
 });
 test('partial shield segment gives no goal bonus or extra score-event charge',()=>{
  const s=createSuper();s.energy=19;superToggle(s);assert.equal(superBaseBonus(s),0);superScore(s,20);assert.equal(s.energy,19);
+});
+test('a court tap ripples the shield line; toggling the bar does not',()=>{
+ const s=createSuper();s.energy=40;superPulseShield(s);assert.equal(s.wave,0);
+ superToggle(s);superPulseShield(s);assert.equal(s.wave,1);
+ stepSuper(s,body(),0.28);assert.ok(s.wave<1e-8);
+ superPulseShield(s);superToggle(s);assert.equal(s.shield,false);assert.equal(s.wave,0);
 });
