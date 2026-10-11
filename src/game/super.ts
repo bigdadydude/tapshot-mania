@@ -110,12 +110,15 @@ function strokeShieldLine(ctx:CanvasRenderingContext2D,x:number,y:number,radius:
   ctx.restore();
 }
 function strokeShieldRings(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,time:number){
-  const period=0.7,count=3;
+  const period=1.55,count=7;
+  ctx.save();
+  ctx.shadowColor='rgba(90,255,150,0.85)';ctx.shadowBlur=8;
   for(let i=0;i<count;i++){
-    const t=((time/period)+i/count)%1,grow=t*radius*2.4,alpha=(1-t)*(1-t)*0.55;
+    const t=((time/period)+i/count)%1,grow=t*radius*0.82,alpha=(1-t*t)*0.88;
     ctx.beginPath();ctx.arc(x,y,radius+2+grow,0,Math.PI*2);
-    ctx.strokeStyle=`rgba(80,230,140,${alpha})`;ctx.lineWidth=1.6*(1-t*0.45);ctx.stroke();
+    ctx.strokeStyle=`rgba(120,255,180,${alpha})`;ctx.lineWidth=2.1*(1-t*0.35);ctx.stroke();
   }
+  ctx.restore();
 }
 function fillGasCloud(ctx:CanvasRenderingContext2D,x:number,y:number,inner:number,outer:number,time:number,alpha:number){
   ctx.save();
