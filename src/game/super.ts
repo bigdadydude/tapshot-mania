@@ -111,13 +111,13 @@ function strokeShieldLine(ctx:CanvasRenderingContext2D,x:number,y:number,radius:
   ctx.restore();
 }
 function strokeShieldRings(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,time:number){
-  const period=1.55,count=7,core=radius+2.2;
+  const period=1.55,count=3,core=radius+2.2;
   ctx.save();
   ctx.shadowBlur=0;
   for(let i=0;i<count;i++){
     const t=((time/period)+i/count)%1,grow=t*radius*0.5,alpha=0.95*(1-t);
     ctx.beginPath();ctx.arc(x,y,core+grow,0,Math.PI*2);
-    ctx.strokeStyle=`rgba(125,255,176,${alpha})`;ctx.lineWidth=1.35;ctx.stroke();
+    ctx.strokeStyle=`rgba(125,255,176,${alpha})`;ctx.lineWidth=2.2;ctx.stroke();
   }
   ctx.restore();
 }
