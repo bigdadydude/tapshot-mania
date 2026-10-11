@@ -1,5 +1,5 @@
 import { createRocket, rocketLayout, releaseRocket, stepRocket, refillRocket, drawRocket } from "./rocket";
-import { SUPER, createSuper, superSwipe, superImpact, superToggle, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper } from "./super";
+import { SUPER, createSuper, superSwipe, superImpact, superToggle, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper, drawSuperGhosts, drawSuperAura } from "./super";
 import { VECTOR, createVector, vectorLayout, vectorRecover, vectorMake, vectorRelease, vectorHold, cancelVectorPress, drawVector, vectorPulse, vectorChargeScale, vectorFinishBurst, stepVectorLeak, vectorLeakBounce } from "./vector";
 import { createAudio } from "./audio";
 import { primeArt, artProgress, reloadSceneArt } from "./art";
@@ -6797,11 +6797,18 @@ export function createGame(
               const pack = getScene().traffic;
               if (trafficEnabled() && pack) drawTrafficWorld(c, traffic, world, pack.textures, time);
               stageMod.drawWorldBack?.(c, world, time);
+              if (isSuper()) drawSuperGhosts(c, superBall, ball.r, (x, y, radius, alpha) => {
+                c.save();
+                c.globalAlpha = alpha;
+                paintBallSprite(c, x, y, radius, ball.spin, ballId, time);
+                c.restore();
+              });
             },
             phase === "playing" && isHacker() && hackerAwaken,
             (c) => {
               stageMod.drawWorld?.(c, world, time);
               if (trafficEnabled()) drawTrafficAlerts(c, traffic, world, ball);
+              if (isSuper()) drawSuperAura(c, superBall, ball);
             },
             phase === "playing" && isHacker() && hackerAwaken ? { dir: hackerDir } : null,
             // The pad is only a touch-control indicator. Gyro steering stays invisible

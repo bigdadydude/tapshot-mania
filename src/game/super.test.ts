@@ -23,6 +23,12 @@ test('all eight directions glide five diameters, hang at the end, then release',
   assert.equal(b.vx,0);assert.equal(b.vy,0);assert.equal(s.dash,null);
  }
 });
+test('the glide slows down before the hang and leaves ball ghosts',()=>{
+ const s=createSuper(),b=body();s.energy=20;superSwipe(s,b,40,0);stepSuper(s,b,1/60);
+ superDashVelocity(s,b,0.05);const early=b.vx;
+ for(let i=0;i<7;i++){b.x+=b.vx*0.05;superDashVelocity(s,b,0.05);stepSuper(s,b,0.05);}
+ assert.ok(early>400);assert.ok(b.vx>0);assert.ok(b.vx<early*0.45);assert.ok(s.ghosts.length>=3);
+});
 test('consecutive swipes cost 1/2/3, queue full dashes, reset after 0.2s',()=>{
  const s=createSuper(),b=body();s.energy=120;
  superSwipe(s,b,40,0);assert.equal(s.energy,100);stepSuper(s,b,0.05);
