@@ -1,5 +1,5 @@
 import { createRocket, rocketLayout, releaseRocket, stepRocket, refillRocket, drawRocket } from "./rocket";
-import { createSuper, superSwipe, superImpact, superToggle, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper } from "./super";
+import { SUPER, createSuper, superSwipe, superImpact, superToggle, superPulseShield, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper, drawSuperGhosts, drawSuperGas, drawSuperAura } from "./super";
 import { VECTOR, createVector, vectorLayout, vectorRecover, vectorMake, vectorRelease, vectorHold, cancelVectorPress, drawVector, vectorPulse, vectorChargeScale, vectorFinishBurst, stepVectorLeak, vectorLeakBounce } from "./vector";
 import { createAudio } from "./audio";
 import { primeArt, artProgress, reloadSceneArt } from "./art";
@@ -3460,6 +3460,11 @@ export function createGame(
     if(superBall.dash){ball.vx=superBall.dash.vx;ball.vy=superBall.dash.vy;superBall.dash=null;}
   }
 
+  /** Rim / board / brace: same parry window as cars. Shield stays cars-and-bullets only. */
+  function superCancelsSolid() {
+    return isSuper() && superImpact(superBall, ball, { shield: false });
+  }
+
   function prepareVectorShot() {
     traffic.launched = false;
     ball.scored = false;
@@ -3720,11 +3725,14 @@ export function createGame(
     e.preventDefault();
     if(phase==="playing" && isSuper()) {
       if(paused || buzzer || timeUp || stageMod.holdsBall?.() || superBall.pointer) return;
-      const p=pointerWorld(e),bar=superLayout(world.w);
+      const p=pointerWorld(e),bar=superLayout(world);
       superBall.lastAction=superBall.clock;
-      if(p.x>=bar.x-8 && p.x<=bar.x+bar.w+8 && p.y>=bar.y-8 && p.y<=bar.y+bar.h+20){
+      if(p.x>=bar.x-10 && p.x<=bar.x+bar.w+10 && p.y>=bar.y-10 && p.y<=bar.y+bar.h+10){
         if(superBall.dash){ball.vx=superBall.dash.vx;ball.vy=superBall.dash.vy;superBall.dash=null;}
-        superToggle(superBall);return;
+        superToggle(superBall);
+        superBall.pointer={id:e.pointerId,x:p.x,y:p.y,used:true};
+        try{canvas.setPointerCapture(e.pointerId);}catch{}
+        return;
       }
       superBall.pointer={id:e.pointerId,x:p.x,y:p.y,used:false};
       try{canvas.setPointerCapture(e.pointerId);}catch{}
@@ -3816,12 +3824,13 @@ export function createGame(
   function onMove(e: PointerEvent) {
     if(isSuper() && superBall.pointer?.id===e.pointerId){
       const start=superBall.pointer,p=pointerWorld(e);superBall.lastAction=superBall.clock;
-      if(!start.used && Math.hypot(p.x-start.x,p.y-start.y)>=18){
+      if(!start.used && Math.hypot(p.x-start.x,p.y-start.y)>=SUPER.swipeSlop){
         start.used=true;
         if(!paused && phase==="playing" && !buzzer && !timeUp && !stageMod.holdsBall?.()){
           const result=superSwipe(superBall,ball,p.x-start.x,p.y-start.y);
           if(result==='dash'){prepareVectorShot();}
           if(result==='parry'){traffic.launched=false;modifierHost().tag('完美抵消');}
+          if(result==='empty')modifierHost().tag('能量不足');
         }
       }
       e.preventDefault();return;
@@ -3846,7 +3855,7 @@ export function createGame(
     if(isSuper() && superBall.pointer?.id===e.pointerId){
       const pointer=superBall.pointer;superBall.pointer=null;
       if(e.type==='pointerup' && !pointer.used && !paused && phase==='playing') {
-        superBall.lastAction=superBall.clock;superBall.refund=false;noteBalanceClick();tapJump(e.pointerId);
+        superBall.lastAction=superBall.clock;superBall.refund=false;superPulseShield(superBall);noteBalanceClick();tapJump(e.pointerId);
       }
       return;
     }
@@ -5433,6 +5442,7 @@ export function createGame(
       }
       return;
     }
+    if (superCancelsSolid()) return;
     const rest = isMaze() ? mazeRestitution(-vn, bounceRest("rim")) : bounceRest("rim");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
@@ -5535,6 +5545,7 @@ export function createGame(
       ball.hitBoard = true;
       return;
     }
+    if (superCancelsSolid()) return;
     const rest = isMaze() ? mazeRestitution(-vn, bounceRest("board")) : bounceRest("board");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
@@ -5688,6 +5699,7 @@ export function createGame(
     ball.y += ny * (overlap + 0.35);
     const vn = ball.vx * nx + ball.vy * ny;
     if (vn >= 0) return;
+    if (superCancelsSolid()) return;
     const rest = isMaze() ? mazeRestitution(-vn, bounceRest("board")) : bounceRest("board");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
@@ -6796,11 +6808,21 @@ export function createGame(
               const pack = getScene().traffic;
               if (trafficEnabled() && pack) drawTrafficWorld(c, traffic, world, pack.textures, time);
               stageMod.drawWorldBack?.(c, world, time);
+              if (isSuper()) {
+                drawSuperGhosts(c, superBall, ball.r, (x, y, radius, alpha) => {
+                  c.save();
+                  c.globalAlpha = alpha;
+                  paintBallSprite(c, x, y, radius, ball.spin, ballId, time);
+                  c.restore();
+                });
+                drawSuperGas(c, superBall, ball);
+              }
             },
             phase === "playing" && isHacker() && hackerAwaken,
             (c) => {
               stageMod.drawWorld?.(c, world, time);
               if (trafficEnabled()) drawTrafficAlerts(c, traffic, world, ball);
+              if (isSuper()) drawSuperAura(c, superBall, ball);
             },
             phase === "playing" && isHacker() && hackerAwaken ? { dir: hackerDir } : null,
             // The pad is only a touch-control indicator. Gyro steering stays invisible
@@ -6812,7 +6834,7 @@ export function createGame(
           );
           if (phase === "playing" && isRocket()) drawRocket(ctx,world,rocket,ball,time);
           if (phase === "playing" && isVector()) drawVector(ctx, world, vector, paused || buzzer || timeUp);
-          if (phase === "playing" && isSuper()) drawSuper(ctx,world.w,superBall,ball);
+          if (phase === "playing" && isSuper()) drawSuper(ctx,world,superBall);
           ctx.restore();
           stageMod.drawScreen?.(ctx, world);
           }
@@ -7046,7 +7068,7 @@ export function createGame(
         boltCharge,
         boltChargeUnlocked,
         rocket: {...rocket, control:rocketLayout(world.w,world.h,world.floorY)},
-        superBall: {...superBall,bar:superLayout(world.w)},
+        superBall: {...superBall,bar:superLayout(world)},
         ballR: ball.r,
         hold: other?.hold ?? 0,
         otherX: other?.x ?? null,
