@@ -81,17 +81,57 @@ export function superDashVelocity(s:SuperState,b:Body,dt:number){
   b.vx=0;b.vy=0;s.dash=null;return false;
 }
 export function superLayout(w:number){return {x:16,y:76,w:Math.min(168,w*0.43),h:28};}
-function strokeWave(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,time:number,waves:number,amp:number,color:string,width:number,alpha:number){
+function waveRadius(angle:number,time:number,base:number,amp:number){
+  return base
+    +Math.sin(angle*3+time*2.3)*amp
+    +Math.sin(angle*5-time*1.7)*amp*0.55
+    +Math.sin(angle*8+time*3.1)*amp*0.28
+    +Math.sin(angle*2.4-time*0.9)*amp*0.22;
+}
+function strokeShield(ctx:CanvasRenderingContext2D,x:number,y:number,radius:number,time:number,amp:number){
   ctx.beginPath();
-  const n=64;
+  const n=72;
   for(let i=0;i<=n;i++){
-    const a=i/n*Math.PI*2;
-    const rr=radius+Math.sin(a*waves+time)*amp+Math.sin(a*(waves*0.5)-time*0.7)*amp*0.35;
+    const a=i/n*Math.PI*2,rr=waveRadius(a,time,radius,amp);
     const px=x+Math.cos(a)*rr,py=y+Math.sin(a)*rr;
     if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
   }
   ctx.closePath();
-  ctx.strokeStyle=color;ctx.globalAlpha=alpha;ctx.lineWidth=width;ctx.stroke();ctx.globalAlpha=1;
+  ctx.strokeStyle='#3ee07a';ctx.globalAlpha=0.95;ctx.lineWidth=2.2;ctx.lineJoin='round';ctx.stroke();ctx.globalAlpha=1;
+}
+function fillGasCloud(ctx:CanvasRenderingContext2D,x:number,y:number,inner:number,outer:number,time:number,alpha:number){
+  ctx.save();
+  ctx.beginPath();
+  const n=56;
+  for(let i=0;i<=n;i++){
+    const a=i/n*Math.PI*2;
+    const lobe=0.55+0.45*((Math.sin(a*3+time*1.4)+1)*0.5)*((Math.sin(a*5-time*1.1)+1)*0.5);
+    const rr=inner+(outer-inner)*(0.72+0.28*lobe)+Math.sin(a*7+time*2.6)*inner*0.08;
+    const px=x+Math.cos(a)*rr,py=y+Math.sin(a)*rr;
+    if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+  }
+  ctx.closePath();
+  ctx.clip();
+  const gas=ctx.createRadialGradient(x,y,inner*0.55,x,y,outer);
+  gas.addColorStop(0,`rgba(255,255,255,${0.96*alpha})`);
+  gas.addColorStop(0.32,`rgba(255,255,255,${0.88*alpha})`);
+  gas.addColorStop(0.52,`rgba(214,180,255,${0.7*alpha})`);
+  gas.addColorStop(0.74,`rgba(124,52,198,${0.55*alpha})`);
+  gas.addColorStop(0.9,`rgba(78,22,138,${0.2*alpha})`);
+  gas.addColorStop(1,'rgba(60,12,110,0)');
+  ctx.fillStyle=gas;ctx.fillRect(x-outer,y-outer,outer*2,outer*2);
+  for(let i=0;i<5;i++){
+    const a=time*0.9+i*1.26;
+    const reach=inner+(outer-inner)*(0.55+0.28*Math.sin(time*1.6+i));
+    const px=x+Math.cos(a)*reach,py=y+Math.sin(a)*reach;
+    const puff=inner*(0.55+0.18*Math.sin(time*2.2+i*1.7));
+    const g=ctx.createRadialGradient(px,py,0,px,py,puff);
+    g.addColorStop(0,`rgba(255,255,255,${0.18*alpha})`);
+    g.addColorStop(0.45,`rgba(150,88,220,${0.3*alpha})`);
+    g.addColorStop(1,'rgba(80,24,140,0)');
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(px,py,puff,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
 }
 /** Fading copies of the ball, drawn behind it. */
 export function drawSuperGhosts(ctx:CanvasRenderingContext2D,s:SuperState,radius:number,paint:(x:number,y:number,r:number,alpha:number)=>void){
@@ -104,34 +144,16 @@ export function drawSuperGhosts(ctx:CanvasRenderingContext2D,s:SuperState,radius
   }
   ctx.restore();
 }
-/** Purple gas while dashing, and a green waveform while the shield is up. */
+/** Soft Gastly-like gas while dashing. Drawn behind the ball. */
+export function drawSuperGas(ctx:CanvasRenderingContext2D,s:SuperState,b:Body){
+  if(!s.dash)return;
+  const moving=s.dash.left>1e-8;
+  fillGasCloud(ctx,b.x,b.y,b.r*0.86,b.r*(moving?2.2:1.9),s.clock,moving?1:Math.max(0.4,s.dash.hang/SUPER.hangTime));
+}
+/** One small-amp green shield line. */
 export function drawSuperAura(ctx:CanvasRenderingContext2D,s:SuperState,b:Body){
   ctx.save();
-  if(s.dash){
-    const moving=s.dash.left>1e-8;
-    const alpha=moving?1:Math.max(0.35,s.dash.hang/SUPER.hangTime);
-    const rad=b.r*(moving?1.55:1.35);
-    const gas=ctx.createRadialGradient(b.x,b.y,b.r*0.55,b.x,b.y,rad);
-    gas.addColorStop(0,"rgba(186,120,255,0)");
-    gas.addColorStop(0.62,`rgba(168,96,255,${0.42*alpha})`);
-    gas.addColorStop(0.82,`rgba(120,48,210,${0.22*alpha})`);
-    gas.addColorStop(1,"rgba(90,20,170,0)");
-    ctx.fillStyle=gas;ctx.beginPath();ctx.arc(b.x,b.y,rad,0,Math.PI*2);ctx.fill();
-    for(let i=0;i<3;i++){
-      const a=s.clock*2.4+i*Math.PI*2/3;
-      const puff=b.r*(1.15+0.08*Math.sin(s.clock*6+i));
-      const px=b.x+Math.cos(a)*b.r*0.35,py=b.y+Math.sin(a)*b.r*0.35;
-      const g=ctx.createRadialGradient(px,py,0,px,py,puff*0.55);
-      g.addColorStop(0,`rgba(214,186,255,${0.28*alpha})`);
-      g.addColorStop(1,"rgba(140,70,230,0)");
-      ctx.fillStyle=g;ctx.beginPath();ctx.arc(px,py,puff*0.55,0,Math.PI*2);ctx.fill();
-    }
-    strokeWave(ctx,b.x,b.y,b.r+6,s.clock*7,5,b.r*0.07,"#d7b6ff",3,0.55*alpha);
-  }
-  if(s.shield){
-    strokeWave(ctx,b.x,b.y,b.r+11,s.clock*11,7,b.r*0.28,"#3ee07a",2.8,0.95);
-    strokeWave(ctx,b.x,b.y,b.r+18,s.clock*7+1.2,5,b.r*0.18,"#9dffc0",1.5,0.4);
-  }
+  if(s.shield) strokeShield(ctx,b.x,b.y,b.r+8,s.clock,b.r*0.07);
   if(s.invincible>0 || s.flash>0){
     ctx.strokeStyle=s.invincible>0?'#fff':'#57dcf2';ctx.lineWidth=s.flash>0?4:2;
     ctx.globalAlpha=s.invincible>0?0.6+0.4*Math.sin(s.clock*28)**2:0.8;
