@@ -3725,9 +3725,9 @@ export function createGame(
     e.preventDefault();
     if(phase==="playing" && isSuper()) {
       if(paused || buzzer || timeUp || stageMod.holdsBall?.() || superBall.pointer) return;
-      const p=pointerWorld(e),bar=superLayout(world.w);
+      const p=pointerWorld(e),bar=superLayout(world);
       superBall.lastAction=superBall.clock;
-      if(p.x>=bar.x-14 && p.x<=bar.x+bar.w+14 && p.y>=bar.y-14 && p.y<=bar.y+bar.h+32){
+      if(p.x>=bar.x-10 && p.x<=bar.x+bar.w+10 && p.y>=bar.y-10 && p.y<=bar.y+bar.h+10){
         if(superBall.dash){ball.vx=superBall.dash.vx;ball.vy=superBall.dash.vy;superBall.dash=null;}
         superToggle(superBall);
         superBall.pointer={id:e.pointerId,x:p.x,y:p.y,used:true};
@@ -6834,7 +6834,7 @@ export function createGame(
           );
           if (phase === "playing" && isRocket()) drawRocket(ctx,world,rocket,ball,time);
           if (phase === "playing" && isVector()) drawVector(ctx, world, vector, paused || buzzer || timeUp);
-          if (phase === "playing" && isSuper()) drawSuper(ctx,world.w,superBall,ball);
+          if (phase === "playing" && isSuper()) drawSuper(ctx,world,superBall);
           ctx.restore();
           stageMod.drawScreen?.(ctx, world);
           }
@@ -7068,7 +7068,7 @@ export function createGame(
         boltCharge,
         boltChargeUnlocked,
         rocket: {...rocket, control:rocketLayout(world.w,world.h,world.floorY)},
-        superBall: {...superBall,bar:superLayout(world.w)},
+        superBall: {...superBall,bar:superLayout(world)},
         ballR: ball.r,
         hold: other?.hold ?? 0,
         otherX: other?.x ?? null,
