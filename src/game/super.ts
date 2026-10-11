@@ -1,9 +1,10 @@
 export const SUPER = { capacity:120, segment:20, chainWindow:0.2, parryWindow:0.12, dashTime:0.5, hangTime:0.2, dashDiameters:5, swipeSlop:8 };
 type Body={x:number;y:number;vx:number;vy:number;r:number};
+type DashAim={dx:number;dy:number};
 export function createSuper() {
   return {energy:0,shield:false,invincible:0,clock:0,lastSwipe:-Infinity,lastAction:-Infinity,chain:0,refund:false,
     pointer:null as null|{id:number;x:number;y:number;used:boolean},
-    pending:null as null|{dx:number;dy:number;wait:number},queue:[] as {dx:number;dy:number;wait:number}[],
+    pending:null as null|DashAim,queue:[] as DashAim[],
     dash:null as null|{dx:number;dy:number;left:number;hang:number;vx:number;vy:number},
     ghosts:[] as {x:number;y:number;life:number}[],
     impact:null as null|{at:number;x:number;y:number;vx:number;vy:number},flash:0,wave:0};
@@ -18,6 +19,14 @@ function spend(s:SuperState,n:number){s.energy=Math.max(0,s.energy-n);if(s.energ
 export function superToggle(s:SuperState){s.shield=!s.shield && s.energy>0;s.pending=null;s.queue=[];s.refund=false;s.lastAction=s.clock;s.wave=0;}
 export function superPulseShield(s:SuperState){if(s.shield)s.wave=1;}
 function parry(s:SuperState){s.energy=Math.min(120,s.energy+20);s.invincible=3;s.pending=null;s.queue=[];s.dash=null;s.impact=null;s.refund=false;s.flash=0.4;}
+function beginDash(s:SuperState,b:Body,aim:DashAim){
+  s.dash={dx:aim.dx,dy:aim.dy,left:SUPER.dashTime,hang:0,vx:b.vx,vy:b.vy};
+}
+function promoteDash(s:SuperState,b:Body){
+  if(s.dash || !s.pending)return;
+  beginDash(s,b,s.pending);
+  s.pending=s.queue.shift()??null;
+}
 export function superSwipe(s:SuperState,b:Body,dx:number,dy:number) {
   s.lastAction=s.clock;
   if(s.shield || Math.hypot(dx,dy)<1)return 'blocked';
@@ -26,21 +35,18 @@ export function superSwipe(s:SuperState,b:Body,dx:number,dy:number) {
   spend(s,chain*20);s.chain=chain;s.lastSwipe=s.clock;s.refund=true;
   if(s.impact && s.clock-s.impact.at<=SUPER.parryWindow){Object.assign(b,{x:s.impact.x,y:s.impact.y,vx:s.impact.vx,vy:s.impact.vy});parry(s);return 'parry';}
   const angle=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*Math.PI/4;
-  // Next step commits. parryWindow still forgives a swipe after a hit; it no longer holds the dash.
-  const pending={dx:Math.cos(angle),dy:Math.sin(angle),wait:0};
-  if(s.pending)s.queue.push(pending);else s.pending=pending;
+  const aim:DashAim={dx:Math.cos(angle),dy:Math.sin(angle)};
+  if(s.dash){if(s.pending)s.queue.push(aim);else s.pending=aim;}
+  else beginDash(s,b,aim);
   return 'dash';
 }
 /** True means the impact is consumed before it can overwrite velocity. */
 export function superImpact(s:SuperState,b:Body,opts?:{shield?:boolean}) {
   if(s.invincible>0)return true;
   if(opts?.shield!==false && s.shield && s.energy>0){spend(s,4);s.flash=0.18;return true;}
-  // A swipe in the last 0.12s still cancels, even after the dash has committed.
-  if((s.pending || s.dash) && s.clock-s.lastSwipe<=SUPER.parryWindow){
-    if(s.dash){b.vx=s.dash.vx;b.vy=s.dash.vy;}parry(s);return true;
-  }
   if(s.dash){b.vx=s.dash.vx;b.vy=s.dash.vy;}
-  s.impact={at:s.clock,x:b.x,y:b.y,vx:b.vx,vy:b.vy};s.dash=null;
+  // Only a post-hit swipe within parryWindow cancels. Reset chain so recovery costs one segment.
+  s.impact={at:s.clock,x:b.x,y:b.y,vx:b.vx,vy:b.vy};s.dash=null;s.chain=0;s.lastSwipe=-Infinity;
   return false;
 }
 export function superBaseBonus(s:SuperState){return s.shield?superSegments(s)*2:0;}
@@ -66,11 +72,10 @@ export function stepSuper(s:SuperState,b:Body,dt:number){
   let kept=0;
   for(const ghost of s.ghosts){ghost.life-=dt;if(ghost.life>0)s.ghosts[kept++]=ghost;}
   s.ghosts.length=kept;
-  for(const queued of s.queue)queued.wait-=dt;
-  if(s.pending){s.pending.wait-=dt;if(s.pending.wait<=1e-8 && !s.dash){s.dash={dx:s.pending.dx,dy:s.pending.dy,left:SUPER.dashTime,hang:0,vx:b.vx,vy:b.vy};s.pending=s.queue.shift()??null;}}
+  promoteDash(s,b);
 }
 /** Linear slowdown over five diameters, then a still hang. Swept collision stays on. */
-export function superDashVelocity(s:SuperState,b:Body,dt:number){
+export function superDashVelocity(s:SuperState,b:Body,dt:number):boolean{
   const d=s.dash;if(!d)return false;
   if(d.left>1e-8){
     const dist=b.r*2*SUPER.dashDiameters;
@@ -84,7 +89,9 @@ export function superDashVelocity(s:SuperState,b:Body,dt:number){
     return true;
   }
   if(d.hang>1e-8){b.vx=0;b.vy=0;d.hang=Math.max(0,d.hang-dt);return true;}
-  b.vx=0;b.vy=0;s.dash=null;return false;
+  b.vx=0;b.vy=0;s.dash=null;
+  promoteDash(s,b);
+  return s.dash?superDashVelocity(s,b,dt):false;
 }
 export function superLayout(world:{w:number;oy?:number}){
   const scoreSize=Math.floor(world.w*0.15),h=14,width=Math.min(92,world.w*0.24);

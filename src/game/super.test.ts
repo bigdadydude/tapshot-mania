@@ -9,8 +9,7 @@ test('all eight directions glide five diameters, hang at the end, then release',
  const dist=20*2*SUPER.dashDiameters;
  for(let i=0;i<8;i++){
   const s=createSuper(),b=body(),a=i*Math.PI/4;s.energy=20;superSwipe(s,b,Math.cos(a)*40,Math.sin(a)*40);
-  stepSuper(s,b,1/60);
-  assert.ok(s.dash,'dash commits on the next step');
+  assert.ok(s.dash,'dash commits immediately');
   let hung=0;
   for(let j=0;j<200;j++){
    const hanging=(s.dash?.hang??0)>1e-8;
@@ -24,15 +23,16 @@ test('all eight directions glide five diameters, hang at the end, then release',
  }
 });
 test('the glide slows down before the hang and leaves ball ghosts',()=>{
- const s=createSuper(),b=body();s.energy=20;superSwipe(s,b,40,0);stepSuper(s,b,1/60);
+ const s=createSuper(),b=body();s.energy=20;superSwipe(s,b,40,0);
+ assert.ok(s.dash);
  superDashVelocity(s,b,0.05);const early=b.vx;
  for(let i=0;i<7;i++){b.x+=b.vx*0.05;superDashVelocity(s,b,0.05);stepSuper(s,b,0.05);}
  assert.ok(early>400);assert.ok(b.vx>0);assert.ok(b.vx<early*0.45);assert.ok(s.ghosts.length>=3);
 });
 test('consecutive swipes cost 1/2/3, queue full dashes, reset after 0.2s',()=>{
  const s=createSuper(),b=body();s.energy=120;
- superSwipe(s,b,40,0);assert.equal(s.energy,100);stepSuper(s,b,0.05);
- superSwipe(s,b,40,0);assert.equal(s.energy,60);stepSuper(s,b,0.05);
+ superSwipe(s,b,40,0);assert.equal(s.energy,100);assert.ok(s.dash);
+ superSwipe(s,b,40,0);assert.equal(s.energy,60);assert.ok(s.pending);
  superSwipe(s,b,40,0);assert.equal(s.energy,0);
  for(let j=0;j<800;j++){stepSuper(s,b,0.005);superDashVelocity(s,b,0.005);b.x+=b.vx*0.005;b.y+=b.vy*0.005;}
  assert.ok(Math.abs(b.x-200-3*20*2*SUPER.dashDiameters)<1e-6);s.energy=20;assert.equal(superSwipe(s,b,40,0),'dash');assert.equal(s.energy,0);
@@ -41,14 +41,15 @@ test('settled swipe earns a single 10-point refund on the next goal',()=>{
  const s=createSuper(),b=body();s.energy=20;superSwipe(s,b,40,0);stepSuper(s,b,0.2);superScore(s,4);assert.equal(s.energy,14);superScore(s,4);assert.equal(s.energy,18);
  const early=createSuper();early.energy=20;superSwipe(early,b,40,0);stepSuper(early,b,0.1);superScore(early,4);assert.equal(early.energy,4);
 });
-test('a swipe still parries after the dash commits; a late dash is a normal hit',()=>{
- const armed=createSuper(),still=body();armed.energy=40;superSwipe(armed,still,40,0);
- assert.equal(armed.dash,null);assert.equal(superImpact(armed,still),true);assert.equal(armed.energy,40);assert.equal(armed.invincible,3);assert.equal(still.x,200);
- assert.equal(superImpact(armed,still),true);stepSuper(armed,still,3.01);assert.equal(superImpact(armed,still),false);
- const fresh=createSuper(),live=body();fresh.energy=40;superSwipe(fresh,live,40,0);stepSuper(fresh,live,1/60);
- assert.ok(fresh.dash);assert.equal(superImpact(fresh,live),true);assert.equal(fresh.invincible,3);assert.equal(fresh.energy,40);
- const late=createSuper(),b=body();late.energy=40;superSwipe(late,b,40,0);stepSuper(late,b,0.13);
- assert.ok(late.dash);assert.equal(superImpact(late,b),false);assert.equal(late.invincible,0);assert.equal(late.energy,20);assert.equal(late.dash,null);
+test('swipe starts dash immediately and only a post-hit swipe within 0.12s parries',()=>{
+ const s=createSuper(),b=body();s.energy=40;superSwipe(s,b,40,0);assert.ok(s.dash);
+ assert.equal(superImpact(s,b),false);assert.ok(s.impact);assert.equal(s.dash,null);assert.equal(s.invincible,0);assert.equal(s.energy,20);
+ assert.equal(superSwipe(s,b,-40,0),'parry');assert.equal(s.energy,20);assert.equal(s.invincible,3);assert.equal(b.x,200);
+ assert.equal(superImpact(s,b),true);stepSuper(s,b,3.01);assert.equal(superImpact(s,b),false);
+});
+test('parry window includes the exact 0.12s boundary',()=>{
+ const s=createSuper(),b=body();s.energy=20;superImpact(s,b);stepSuper(s,b,0.12);
+ assert.equal(superSwipe(s,b,40,0),'parry');assert.equal(s.invincible,3);
 });
 test('solid hits can record a parry window without spending the car shield',()=>{
  const s=createSuper(),b=body();s.energy=100;superToggle(s);
@@ -61,7 +62,7 @@ test('a swipe with no segment flashes and spends nothing',()=>{
 test('swipe after impact restores pre-hit position/velocity; expired impacts cannot parry',()=>{
  const s=createSuper(),b=body();s.energy=20;assert.equal(superImpact(s,b),false);b.vx=2000;b.x=240;stepSuper(s,b,0.08);
  assert.equal(superSwipe(s,b,-40,0),'parry');assert.equal(b.x,200);assert.equal(b.vx,0);assert.equal(s.energy,20);
- const expired=createSuper();expired.energy=20;superImpact(expired,b);stepSuper(expired,b,0.13);assert.equal(superSwipe(expired,b,40,0),'dash');
+ const expired=createSuper();expired.energy=20;superImpact(expired,b);stepSuper(expired,b,0.13);assert.equal(superSwipe(expired,b,40,0),'dash');assert.ok(expired.dash);
 });
 test('shield blocks swipes and impacts, charges 4 per event and drains 0.5 per second',()=>{
  const s=createSuper(),b=body();s.energy=100;superToggle(s);assert.equal(superBaseBonus(s),10);assert.equal(superSwipe(s,b,40,0),'blocked');

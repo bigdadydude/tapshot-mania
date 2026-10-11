@@ -8,22 +8,24 @@ const world: World = { w: 390, h: 844, floorY: 844 * 0.765, ballR: 19.5, hoopInn
 const ballAt = (x: number, y: number): Ball => ({ x, y, vx: 0, vy: 0, r: 19.5, spin: 0, omega: 0, squash: 1, scored: false, hitBoard: false, hitRim: false });
 const car = (kind: VehicleKind, dir: -1 | 1, lane: "bridge" | "ground" = "ground"): Vehicle => ({ id: 1, kind, dir, lane, x: 190, prevX: 190 - dir * 5, speed: 300, tint: 0 });
 
-test('super shield and timed swipe intercept car impacts before launch; sustained contact is not charged repeatedly',()=>{
- for(const mode of ['shield','parry','normal']){
+test('super shield blocks cars; reactive parry clears launch after a post-hit swipe; sustained contact is not charged repeatedly',()=>{
   const state=createTraffic(),v=car('sedan',1),s=createSuper();state.vehicles=[v];s.energy=60;
   const bounds=vehicleBounds(v,world),ball=ballAt(v.x+bounds.w/2+10,bounds.bottom-20);
-  if(mode==='shield')superToggle(s);
-  if(mode==='parry')superSwipe(s,ball,40,0);
   const options={blockImpact:(fresh:boolean)=>(!fresh && s.shield)||superImpact(s,ball)};
-  const hit=collideTraffic(state,world,ball,ball.x,ball.y,options);
-  assert.equal(hit,mode==='normal');assert.equal(state.launched,mode==='normal');
-  if(mode!=='normal'){assert.equal(ball.vx,0);assert.equal(ball.vy,0);}
-  if(mode==='parry'){assert.equal(s.energy,60);assert.equal(s.invincible,3);}
-  if(mode==='shield'){
-   assert.equal(s.energy,56);state.hitLock=0;state.clock+=0.2;
-   collideTraffic(state,world,ball,ball.x,ball.y,options);assert.equal(s.energy,56);
-  }
- }
+
+  superToggle(s);
+  assert.equal(collideTraffic(state,world,ball,ball.x,ball.y,options),false);
+  assert.equal(state.launched,false);assert.equal(ball.vx,0);assert.equal(ball.vy,0);assert.equal(s.energy,56);
+  state.hitLock=0;state.clock+=0.2;
+  collideTraffic(state,world,ball,ball.x,ball.y,options);assert.equal(s.energy,56);
+
+  superToggle(s);s.energy=60;s.invincible=0;state.launched=false;state.hitLock=0;
+  assert.equal(collideTraffic(state,world,ball,ball.x,ball.y,options),true);assert.equal(state.launched,true);
+  assert.equal(superSwipe(s,ball,40,0),'parry');state.launched=false;
+  assert.equal(s.energy,60);assert.equal(s.invincible,3);assert.equal(ball.vx,0);assert.equal(ball.vy,0);
+
+  s.invincible=0;s.impact=null;state.launched=false;state.hitLock=0;
+  assert.equal(collideTraffic(state,world,ball,ball.x,ball.y,options),true);assert.equal(state.launched,true);
 });
 
 test("passing a car awards only after leaving the one-diameter range and only once", () => {
