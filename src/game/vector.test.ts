@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {stepVectorLeak,vectorLeakRate,vectorLeakBounce} from './vector.ts';
-import {createVector,vectorRecover,vectorMake,vectorRelease,vectorHold,vectorPulse,vectorLayout,vectorFinishBurst,vectorGaugeEnergy,vectorChargeScale,cancelVectorPress,VECTOR} from './vector.ts';
+import {createVector,vectorRecover,vectorMake,vectorRelease,vectorHold,vectorPulse,vectorLayout,vectorFinishBurst,vectorGaugeEnergy,vectorChargeScale,cancelVectorPress,stepVectorCorrection,VECTOR} from './vector.ts';
 test('first make unlocks storage without awarding energy',()=>{
  const s=createVector();vectorRecover(s,1200,600,600,()=>1);assert.equal(s.energy,0);
  vectorMake(s);assert.equal(s.unlocked,true);assert.equal(s.energy,0);
@@ -40,7 +40,28 @@ test('insufficient long does not fall back to short',()=>{
 test('pulse below hoop targets screen center at hoop height',()=>{
  const p=vectorPulse({x:100,y:550,r:18},{x:320,y:300},390,150);
  assert.ok(Math.abs(p.vx/p.vy-95/(300-550))<1e-9);
- assert.ok(Math.abs((p.vx*p.vx+p.vy*p.vy)/(390*2.2)**2-VECTOR.correctionOutput/15)<1e-9);assert.equal(p.left,0.16);
+ assert.equal(VECTOR.pulseSpeed,0.7);
+ assert.ok(Math.abs((p.vx*p.vx+p.vy*p.vy)/(390*2.2*VECTOR.pulseSpeed)**2-VECTOR.correctionOutput/15)<1e-9);assert.equal(p.left,0.16);assert.equal(p.linger,VECTOR.pulseHold);
+});
+test('pulse holds still for 0.08s after the moving segment',()=>{
+ assert.equal(VECTOR.pulseHold,0.08);
+ const ball={vx:3,vy:-4};
+ const c={vx:200,vy:-50,left:0.05,linger:VECTOR.pulseHold};
+ assert.equal(stepVectorCorrection(ball,c,0.02),true);
+ assert.ok(Math.abs(c.left-0.03)<1e-12);assert.equal(c.linger,0.08);assert.equal(ball.vx,200);assert.equal(ball.vy,-50);
+ const remain=c.left;
+ assert.equal(stepVectorCorrection(ball,c,0.04),true);
+ assert.equal(c.left,0);assert.equal(c.linger,0.08);
+ assert.ok(Math.abs(ball.vx-200*remain/0.04)<1e-9);assert.ok(Math.abs(ball.vy-(-50*remain/0.04))<1e-9);
+ let held=0;
+ while(c.linger>0){
+  const dt=Math.min(0.02,c.linger);
+  const on=stepVectorCorrection(ball,c,dt);
+  held+=dt;
+  assert.equal(ball.vx,0);assert.equal(ball.vy,0);assert.equal(on,c.linger>0);
+ }
+ assert.ok(Math.abs(held-0.08)<1e-9);
+ assert.equal(stepVectorCorrection(ball,c,0.02),false);assert.equal(ball.vx,0);assert.equal(ball.vy,0);
 });
 test('above hoop aims two diameters above; above board takes horizontal priority',()=>{
  const p=vectorPulse({x:100,y:270,r:18},{x:320,y:300},390,150);

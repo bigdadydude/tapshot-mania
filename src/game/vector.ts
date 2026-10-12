@@ -1,11 +1,11 @@
 /** Shared rules for the Vector Ball. World units are CSS pixels. */
-export const VECTOR = { conversion: 1 / 5, correctionOutput: 50, correctionCost: 250, correctionMin: 1000, capacity: 1500, storageLock: 10, burstMin: 40, hold: 1, chargeStart: 0.12, pulse: 0.16, drain: 18, makeCost: 5 };
+export const VECTOR = { conversion: 1 / 5, correctionOutput: 50, correctionCost: 250, correctionMin: 1000, capacity: 1500, storageLock: 10, burstMin: 40, hold: 1, chargeStart: 0.12, pulse: 0.16, pulseSpeed: 0.7, pulseHold: 0.08, drain: 18, makeCost: 5 };
 export function createVector() {
   return { energy: 0, powered: false, burst: 0, injected: 0, bounces: 0, coast: 0,
     unlocked: false, stored: 0, storeFlash: 0, spent: 0, released: 0, storageCooldown: 0,
     elapsed: 0, leakLeft: 0, leakAmount: 0, leakRemaining: 0, leakKick: 0, leakCooldown: 0, leakBounceCooldown: 0,
     pointer: null as number | null, held: 0, consumed: false, notice: 0,
-    correction: null as { vx:number; vy:number; left:number } | null, collisionCooldown: 0,
+    correction: null as { vx:number; vy:number; left:number; linger:number } | null, collisionCooldown: 0,
     anchor: null as {x:number;y:number;vx:number;vy:number} | null,
     trail: [] as { x: number; y: number }[] };
 }
@@ -16,8 +16,27 @@ export function vectorPulse(ball: {x:number;y:number;r:number}, hoop: {x:number;
   const targetY=aboveBoard ? ball.y : ball.y>hoop.y ? hoop.y : Math.max(ball.r+2,hoop.y-ball.r*4);
   const dx=targetX-ball.x, dy=targetY-ball.y;
   // Keep the established 50-unit pulse strength; releasing it costs 250 storage.
-  const distance=Math.hypot(dx,dy),speed=width*2.2*Math.sqrt(VECTOR.correctionOutput/15);
-  return {vx:distance>0?dx/distance*speed:0,vy:distance>0?dy/distance*speed:0,left:Math.min(VECTOR.pulse,distance/speed)};
+  // Travel is 70% of the previous speed. The moving segment still ends at `pulse`.
+  const distance=Math.hypot(dx,dy),speed=width*2.2*Math.sqrt(VECTOR.correctionOutput/15)*VECTOR.pulseSpeed;
+  return {vx:distance>0?dx/distance*speed:0,vy:distance>0?dy/distance*speed:0,left:Math.min(VECTOR.pulse,distance/speed),linger:VECTOR.pulseHold};
+}
+/** Drive a short-press correction. False means the hold is over and physics may resume. */
+export function stepVectorCorrection(ball:{vx:number;vy:number}, correction:{vx:number;vy:number;left:number;linger:number}, dt:number) {
+  if (correction.left > 0) {
+    const fraction = dt > 0 ? Math.min(1, correction.left / dt) : 1;
+    ball.vx = correction.vx * fraction;
+    ball.vy = correction.vy * fraction;
+    correction.left = Math.max(0, correction.left - dt);
+    return true;
+  }
+  // Displacement is finished: clear velocity and stay put for the hold.
+  ball.vx = 0;
+  ball.vy = 0;
+  if (correction.linger > 0) {
+    correction.linger = Math.max(0, correction.linger - dt);
+    return correction.linger > 0;
+  }
+  return false;
 }
 export function vectorChargeProgress(s:VectorState) {
   return s.anchor ? Math.min(1,Math.max(0,(s.held-VECTOR.chargeStart)/(VECTOR.hold-VECTOR.chargeStart))) : 0;

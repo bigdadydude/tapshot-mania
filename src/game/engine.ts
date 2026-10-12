@@ -1,6 +1,6 @@
 import { createRocket, rocketLayout, releaseRocket, stepRocket, refillRocket, drawRocket } from "./rocket";
 import { SUPER, createSuper, superSwipe, superImpact, superToggle, superPulseShield, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper, drawSuperGhosts, drawSuperGas, drawSuperAura, superIsFrozen } from "./super";
-import { VECTOR, createVector, vectorLayout, vectorRecover, vectorMake, vectorRelease, vectorHold, cancelVectorPress, drawVector, vectorPulse, vectorChargeScale, vectorFinishBurst, stepVectorLeak, vectorLeakBounce } from "./vector";
+import { VECTOR, createVector, vectorLayout, vectorRecover, vectorMake, vectorRelease, vectorHold, cancelVectorPress, drawVector, vectorPulse, vectorChargeScale, vectorFinishBurst, stepVectorLeak, vectorLeakBounce, stepVectorCorrection } from "./vector";
 import { createAudio } from "./audio";
 import { primeArt, artProgress, reloadSceneArt } from "./art";
 import { canvasDpr } from "./perf";
@@ -4947,11 +4947,10 @@ export function createGame(
       if (vectorDriven) {
         if (vector.burst > 0) normalizeVectorSpeed();
         else if (vector.correction) {
-          if(vector.correction.left<=0) { vector.correction=null; ball.vx=0; ball.vy=0; }
-          else {
-            const fraction=Math.min(1,vector.correction.left/dt);
-            ball.vx=vector.correction.vx*fraction; ball.vy=vector.correction.vy*fraction;
-            vector.correction.left=Math.max(0,vector.correction.left-dt);
+          if (!stepVectorCorrection(ball, vector.correction, dt)) {
+            vector.correction = null;
+            ball.vx = 0;
+            ball.vy = 0;
           }
         }
       } else if (hacking) {
