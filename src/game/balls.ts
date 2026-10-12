@@ -176,6 +176,8 @@ export const BALLS: BallKit[] = [
     skill: "首球后自动储能，上限1500；短按消耗250，按球与篮筐的位置调整方向；长按1秒全部爆发（至少40），消耗为释放的5倍，大招后10秒无法储能。超过1000指针摇晃，随游戏时间增加泄漏风险：3秒流失100–500能量，期间无法储能，能量转成随机回弹",
     heat: false,
     vector: true,
+    src: "/game/balls/vector.png?v=1",
+    fallback: "/game/balls/vector.png?v=1",
     wrap: "ground",
     score: "normal",
     phys: {
