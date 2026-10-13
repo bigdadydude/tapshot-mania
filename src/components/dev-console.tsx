@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, Pause } from "lucide-react";
-import { DEV_FX, DEV_GRAF, DEV_MAZE, DEV_MODIFIERS, DEV_MOVES, DEV_PHYS, DEV_PLAY_MODES, DEV_SCENES, DEV_STAGES, type DevCmd, type DevMaze, type DevPhys, type DevHud } from "@/game/dev";
+import { DEV_FX, DEV_GRAF, DEV_MAZE, DEV_MODIFIERS, DEV_MOVES, DEV_PHYS, DEV_PLAY_MODES, DEV_SCENES, type DevCmd, type DevMaze, type DevPhys, type DevHud } from "@/game/dev";
 import { playableBalls, type BallId } from "@/game/balls";
 import type { Gfx } from "@/game/types";
 import type { RogueHud } from "@/game/rogue";
@@ -58,7 +58,10 @@ function NumberEdit({label,value,locked=false,onSet}:{label:string;value:number;
 function MatchTab({dev,score,combo,onCmd}:{dev:DevHud;score:number;combo:number;onCmd:(cmd:DevCmd)=>void}) { return <><NumberEdit label={ZH.score} value={score} locked={dev.scoreLocked} onSet={(n)=>onCmd({t:"score",n})}/><NumberEdit label={ZH.combo} value={combo} locked={dev.comboLocked} onSet={(n)=>onCmd({t:"combo",n})}/><Row title={ZH.cooldownTime}><Chip label={ZH.full} onClick={()=>onCmd({t:"timer01",n:1})}/><Chip label="60%" onClick={()=>onCmd({t:"timer01",n:.6})}/><Chip label="10%" onClick={()=>onCmd({t:"timer01",n:.1})}/><Chip label={ZH.freeze} on={dev.freeze} onClick={()=>onCmd({t:"freeze",on:!dev.freeze})}/><Chip label={ZH.startTimer} onClick={()=>onCmd({t:"armTimer"})}/><Chip label={ZH.timeUp} onClick={()=>onCmd({t:"timeUp"})}/><Chip label={ZH.buzzer} onClick={()=>onCmd({t:"buzzer"})}/></Row><Row title={ZH.match}><Chip label={ZH.resetBall} onClick={()=>onCmd({t:"resetBall"})}/><Chip label={ZH.restoreDefault} onClick={()=>onCmd({t:"resetMatch"})}/></Row></>; }
 function SceneTab({dev,gfx,onCmd,onSearchlights}:{dev:DevHud;gfx:Gfx;onCmd:(cmd:DevCmd)=>void;onSearchlights:()=>void}) {
   const keys: [keyof Pick<Gfx,"ballShade"|"ballShadow"|"particles"|"graffitiFx"|"impact"|"flash"|"buzzerSpot">,string][] = [["ballShade","球光影"],["ballShadow","投影"],["particles","粒子"],["graffitiFx","涂鸦"],["impact","镜头"],["flash","闪光"],["buzzerSpot","绝杀聚光"]];
+  const sceneLocked = Boolean(dev.balance.session);
   return <>
+    <Row title="当前场景">{DEV_SCENES.map((scene)=><Chip key={scene.id} label={scene.label} on={dev.scene===scene.id} onClick={()=>{ if(sceneLocked || dev.scene===scene.id) return; onCmd({t:"scene",id:scene.id}); }}/>)}</Row>
+    {sceneLocked ? <p className="-mt-1.5 mb-3 text-[10px] text-subtle">平衡测试进行中，场景已锁定</p> : null}
 
     <Row title="涂鸦">{DEV_GRAF.map((graf)=><Chip key={graf.key} label={graf.label} onClick={()=>onCmd({t:"graf",key:graf.key})}/>)}</Row>
 
