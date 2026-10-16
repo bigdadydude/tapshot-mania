@@ -318,16 +318,21 @@ export function drawScene(
 		if (gfx.clouds !== "off") drawSkyClouds(ctx, world, cloudT, 0, world.floorY * 0.4, cloudSx, cloudSy);
 	});
 	else if (backdrop === "train") {
-		// Street sky sheet. Clouds stay under the trees: some behind the mountains, some in front.
+		// Street sky sheet. Cloud size uses the street band. Trees still paint after both cloud passes.
 		drawOpenSky(ctx, world, cloudT, cloudSx, cloudSy, false, 0, world.floorY, world.floorY);
-		const cloudTop = world.floorY * (1 - 1 / 3);
+		const wallImg = artImage("wall");
+		let cloudBot = world.floorY * 0.4;
+		if (wallImg) {
+			const layout = wallLayout(world, wallImg);
+			cloudBot = Math.max(layout.skyBot, layout.oy + layout.dh * 0.32);
+		}
 		const paintClouds = gfx.clouds !== "off"
 			? (which: "back" | "front") => {
 				ctx.save();
 				ctx.beginPath();
-				ctx.rect(0, cloudTop, world.w, world.floorY - cloudTop);
+				ctx.rect(0, 0, world.w, world.floorY);
 				ctx.clip();
-				drawSkyClouds(ctx, world, cloudT, cloudTop, world.floorY, cloudSx, cloudSy, which);
+				drawSkyClouds(ctx, world, cloudT, 0, cloudBot, cloudSx, cloudSy, which);
 				ctx.restore();
 			}
 			: null;
