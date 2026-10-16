@@ -318,20 +318,20 @@ export function drawScene(
 		if (gfx.clouds !== "off") drawSkyClouds(ctx, world, cloudT, 0, world.floorY * 0.4, cloudSx, cloudSy);
 	});
 	else if (backdrop === "train") {
-		// Same sky image and cloud drift as the street wall. Objects sit on top, in train-bg.
-		ctx.save();
-		ctx.beginPath();
-		ctx.rect(0, 0, world.w, world.floorY);
-		ctx.clip();
-		const wallImg = artImage("wall");
-		let cloudBot = world.floorY * 0.4;
-		if (wallImg) {
-			const layout = wallLayout(world, wallImg);
-			cloudBot = Math.max(layout.skyBot, layout.oy + layout.dh * 0.32);
-		}
-		drawOpenSky(ctx, world, cloudT, cloudSx, cloudSy, gfx.clouds !== "off", 0, world.floorY, cloudBot);
-		ctx.restore();
-		drawTrainBackdrop(ctx, world);
+		// Street sky sheet. Clouds stay under the trees: some behind the mountains, some in front.
+		drawOpenSky(ctx, world, cloudT, cloudSx, cloudSy, false, 0, world.floorY, world.floorY);
+		const cloudTop = world.floorY * (1 - 2 / 3);
+		const paintClouds = gfx.clouds !== "off"
+			? (which: "back" | "front") => {
+				ctx.save();
+				ctx.beginPath();
+				ctx.rect(0, cloudTop, world.w, world.floorY - cloudTop);
+				ctx.clip();
+				drawSkyClouds(ctx, world, cloudT, cloudTop, world.floorY, cloudSx, cloudSy, which);
+				ctx.restore();
+			}
+			: null;
+		drawTrainBackdrop(ctx, world, paintClouds);
 	}
 	else if (backdrop === "street") {
 		// Graffiti sits above the day-cycle tint; wall/court get the wash first.
@@ -819,6 +819,8 @@ type SkyInst = {
 	x: number;
 	y01: number;
 	h01: number;
+	/** Train only: true draws the cloud in front of the mountains, still behind the trees. */
+	overRidge: boolean;
 };
 
 let skyInsts: SkyInst[] | null = null;
@@ -842,6 +844,7 @@ function rollInst(layer: number, nKind: number): Omit<SkyInst, "x"> {
 		kind: pickCloudKind(nKind),
 		y01: L.y0 + Math.random() * (L.y1 - L.y0),
 		h01: L.size0 + Math.random() * (L.size1 - L.size0),
+		overRidge: Math.random() < 0.5,
 	};
 }
 
@@ -859,6 +862,7 @@ function drawSkyClouds(
 	skyBot: number,
 	sx = 1,
 	sy = 1,
+	which: "all" | "back" | "front" = "all",
 ) {
 	const band = skyBot - skyTop;
 	if (band < 10) return;
@@ -895,6 +899,8 @@ function drawSkyClouds(
 		}
 		const drawImg = imgs[inst.kind] ?? imgs[0]!;
 		({ dw, dh } = cloudSize(drawImg, band, inst.h01));
+		const depth = inst.overRidge ? "front" : "back";
+		if (which !== "all" && which !== depth) continue;
 		if (Math.abs(sx - 1) > 0.004 || Math.abs(sy - 1) > 0.004) {
 			ctx.save();
 			ctx.translate(inst.x + dw * 0.5, skyTop + band * inst.y01);
