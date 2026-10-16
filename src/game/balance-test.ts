@@ -22,7 +22,7 @@ const trialSchema = z.object({
   timestamp: date, gameRev: count.int(), configKey: z.string(),
 });
 const sessionSchema = z.object({
-  id: identifier, baseline: ballSchema, ballId: ballSchema, scene: z.enum(["void", "street", "prison", "overpass"]),
+  id: identifier, baseline: ballSchema, ballId: ballSchema, scene: z.enum(["void", "street", "prison", "overpass", "train"]),
   playMode: z.enum(["classic", "minute", "rogue"]).default("minute"), physKey: z.string(),
   createdAt: date, gameRev: count.int(), configSnapshot: configSchema.optional(), trials: z.array(trialSchema),
 }).superRefine((session, ctx) => {

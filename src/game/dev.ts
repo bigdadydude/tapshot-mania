@@ -166,6 +166,7 @@ export const DEV_SCENES: { id: DevSceneId; label: string }[] = [
   { id: "street", label: "街头" },
   { id: "prison", label: "监狱" },
   { id: "overpass", label: "都市" },
+  { id: "train", label: "列车" },
 ];
 
 export const DEV_STAGES: { n: number; label: string }[] = [

@@ -1,5 +1,6 @@
 import { drawBlackHole } from "./black-hole-render";
 import { drawCity } from "./city-render";
+import { drawTrainBackdrop } from "./train-bg";
 import type { Ball, Callout, Gfx, Hoop, NinjaCloneDraw, Particle, PrisonHud, TrailPt, World } from "./types";
 import { DEFAULT_GFX, fireStage } from "./types";
 import { artImage, ballImage, cloudImages, graffitiImage } from "./art";
@@ -316,6 +317,27 @@ export function drawScene(
 	else if (backdrop === "overpass") drawCity(ctx, world, time, () => {
 		if (gfx.clouds !== "off") drawSkyClouds(ctx, world, cloudT, 0, world.floorY * 0.4, cloudSx, cloudSy);
 	});
+	else if (backdrop === "train") {
+		// Street sky sheet. Cloud size uses the street band. Trees still paint after both cloud passes.
+		drawOpenSky(ctx, world, cloudT, cloudSx, cloudSy, false, 0, world.floorY, world.floorY);
+		const wallImg = artImage("wall");
+		let cloudBot = world.floorY * 0.4;
+		if (wallImg) {
+			const layout = wallLayout(world, wallImg);
+			cloudBot = Math.max(layout.skyBot, layout.oy + layout.dh * 0.32);
+		}
+		const paintClouds = gfx.clouds !== "off"
+			? (which: "back" | "front") => {
+				ctx.save();
+				ctx.beginPath();
+				ctx.rect(0, 0, world.w, world.floorY);
+				ctx.clip();
+				drawSkyClouds(ctx, world, cloudT, 0, cloudBot, cloudSx, cloudSy, which);
+				ctx.restore();
+			}
+			: null;
+		drawTrainBackdrop(ctx, world, paintClouds);
+	}
 	else if (backdrop === "street") {
 		// Graffiti sits above the day-cycle tint; wall/court get the wash first.
 		drawWall(ctx, world, cloudT, cloudSx, cloudSy, null, gfx.clouds !== "off");
@@ -649,7 +671,7 @@ function layerCanvas(w: number, h: number) {
 	return c;
 }
 
-function ensureSkyLayer(world: World, layout: ReturnType<typeof wallLayout>) {
+function ensureSkyLayer(world: World, layout: { skyTop: number; skyBot: number }) {
 	const sky = artImage("sky");
 	const key = `${world.w | 0}x${layout.skyBot | 0}:${sky?.naturalWidth || 0}`;
 	if (skyLayer && skyLayerKey === key) return skyLayer;
@@ -802,6 +824,8 @@ type SkyInst = {
 	x: number;
 	y01: number;
 	h01: number;
+	/** Train only: true draws the cloud in front of the mountains, still behind the trees. */
+	overRidge: boolean;
 };
 
 let skyInsts: SkyInst[] | null = null;
@@ -825,6 +849,7 @@ function rollInst(layer: number, nKind: number): Omit<SkyInst, "x"> {
 		kind: pickCloudKind(nKind),
 		y01: L.y0 + Math.random() * (L.y1 - L.y0),
 		h01: L.size0 + Math.random() * (L.size1 - L.size0),
+		overRidge: Math.random() < 0.5,
 	};
 }
 
@@ -842,6 +867,7 @@ function drawSkyClouds(
 	skyBot: number,
 	sx = 1,
 	sy = 1,
+	which: "all" | "back" | "front" = "all",
 ) {
 	const band = skyBot - skyTop;
 	if (band < 10) return;
@@ -878,6 +904,8 @@ function drawSkyClouds(
 		}
 		const drawImg = imgs[inst.kind] ?? imgs[0]!;
 		({ dw, dh } = cloudSize(drawImg, band, inst.h01));
+		const depth = inst.overRidge ? "front" : "back";
+		if (which !== "all" && which !== depth) continue;
 		if (Math.abs(sx - 1) > 0.004 || Math.abs(sy - 1) > 0.004) {
 			ctx.save();
 			ctx.translate(inst.x + dw * 0.5, skyTop + band * inst.y01);
@@ -889,6 +917,24 @@ function drawSkyClouds(
 		}
 	}
 	ctx.restore();
+}
+
+/** Street sky sheet plus the drifting cloud sprites. Callers choose the open band. */
+function drawOpenSky(
+	ctx: CanvasRenderingContext2D,
+	world: World,
+	cloudShift: number,
+	cloudSx: number,
+	cloudSy: number,
+	drawClouds: boolean,
+	skyTop: number,
+	skyBot: number,
+	cloudBot: number,
+) {
+	const skyH = skyBot - skyTop;
+	const sky = ensureSkyLayer(world, { skyTop, skyBot });
+	if (sky && skyH > 1) ctx.drawImage(sky, 0, skyTop, world.w, skyH);
+	if (drawClouds) drawSkyClouds(ctx, world, cloudShift, skyTop, cloudBot, cloudSx, cloudSy);
 }
 
 function clipSpray(
@@ -972,17 +1018,10 @@ function drawWall(
 		ctx.clip();
 		const layout = wallLayout(world, img);
 		// Sky fills behind the full wall quad so PNG alpha (open sky + glass) shows through.
-		const behind = {
-			...layout,
-			skyTop: 0,
-			skyBot: Math.max(layout.skyBot, layout.oy + layout.dh),
-		};
-		const skyH = behind.skyBot - behind.skyTop;
-		const sky = ensureSkyLayer(world, behind);
-		if (sky && skyH > 1) ctx.drawImage(sky, 0, behind.skyTop, w, skyH);
+		const skyBot = Math.max(layout.skyBot, layout.oy + layout.dh);
 		// Drift clouds through the open sky + tower window band (opaque masonry covers the rest).
 		const cloudBot = Math.max(layout.skyBot, layout.oy + layout.dh * 0.32);
-		if (drawClouds) drawSkyClouds(ctx, world, time, layout.skyTop, cloudBot, cloudSx, cloudSy);
+		drawOpenSky(ctx, world, time, cloudSx, cloudSy, drawClouds, 0, skyBot, cloudBot);
 		const wall = ensureWallLayer(world, layout, graf?.show ?? null);
 		if (wall) ctx.drawImage(wall, 0, 0, w, floorY);
 		else {

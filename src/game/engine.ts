@@ -28,6 +28,7 @@ import { DEFAULT_MAZE, DEFAULT_PHYS, clampMaze, clampPhys, clampPhysKey, wantDev
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
+import { TRAIN_INERTIA_K, getTrainScroll, resetTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
@@ -185,6 +186,7 @@ export function createGame(
   let world: World = layout(390, 844);
   let traffic = createTraffic();
   const trafficEnabled = () => getSceneId() === "overpass" && !(devOn && devScene === "void");
+  const trainBackdropOn = () => getSceneId() === "train" && !(devOn && devScene === "void");
   let phase: Phase = "title";
   let booted = artProgress().ready;
   let lastLoadN = booted ? 100 : -1;
@@ -1417,6 +1419,17 @@ export function createGame(
     return world.h * 3.1 * pMul("grav") * (stageMod.gravMul?.() ?? 1);
   }
 
+  /** Classic vertical accel: gravity multiplier 1 and no stage gravity. */
+  function baseBallGravity() {
+    return world.h * 3.1;
+  }
+
+  /** Fictitious horizontal accel for the ball on the train. 0 off the train and in cruise. */
+  function trainPull() {
+    if (!trainBackdropOn()) return 0;
+    return trainInertiaAccel(undefined, TRAIN_INERTIA_K, trainGravScale(gravity(), baseBallGravity()));
+  }
+
   function jumpVy() {
     return -Math.sqrt(
       2 * gravity() * world.h * 0.185 * pMul("jumpUp") * (stageMod.jumpMul?.() ?? 1),
@@ -1576,6 +1589,7 @@ export function createGame(
     ball.trafficSafe = false;
     clearSceneLayers();
     reloadSceneArt();
+    if (id === "train") resetTrainScroll();
     persist();
   }
 
@@ -5009,6 +5023,10 @@ export function createGame(
         ball.vy += gravity() * dt * (gScale * fallBoost - buoy);
       }
       if (!hacking && !vectorDriven) {
+      // Train frame: hoop and carriage stay put. Accel pulls the ball left,
+      // decel pulls it right, cruise adds nothing. Pause never calls physics;
+      // rewind returns above. Other scenes leave this at zero.
+      if (trainBackdropOn()) ball.vx += trainPull() * dt;
       const air = pMul("air");
       const roll = pMul("roll");
       if (isMaze()) {
@@ -5873,7 +5891,10 @@ export function createGame(
     } else if (incoming > 0) {
       ball.vy = 0;
     }
-    if (Math.abs(ball.vx) < 2.2) ball.vx = 0;
+    // Resting deadzone. During accel and decel the per-step impulse sits near
+    // this cutoff, so leave it open and let the ball start rolling. Cruise and
+    // every other scene still rest.
+    if (Math.abs(ball.vx) < 2.2 && trainPull() === 0) ball.vx = 0;
     ball.omega = ball.vx / Math.max(8, ball.r);
     if (scoredLock <= 0) {
       ball.scored = false;
@@ -6751,6 +6772,7 @@ export function createGame(
       if (!paused) {
         const dt = Math.min(raw, 0.1);
         time += dt;
+        if (!rewindActive && trainBackdropOn()) stepTrainScroll(dt);
         acc += dt;
         const MAX_STEPS = 3;
         let steps = 0;
@@ -7047,7 +7069,7 @@ export function createGame(
       emitHud();
     },
     setScene(id) {
-      if (id !== "street" && id !== "prison" && id !== "overpass") return;
+      if (id !== "street" && id !== "prison" && id !== "overpass" && id !== "train") return;
       applyScenePack(id);
       if (devOn && devScene !== "void") {
         devScene = id;
@@ -7108,6 +7130,7 @@ export function createGame(
       return {
         phase,
         sceneId: getSceneId(),
+        train: trainBackdropOn() ? getTrainScroll() : null,
         traffic: trafficEnabled() ? {
           vehicles: traffic.vehicles.map(v => ({ ...v })),
           warnings: traffic.warnings.map(v => ({ ...v })),
