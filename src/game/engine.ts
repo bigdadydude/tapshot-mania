@@ -28,7 +28,7 @@ import { DEFAULT_MAZE, DEFAULT_PHYS, clampMaze, clampPhys, clampPhysKey, wantDev
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
-import { getTrainScroll, resetTrainScroll, stepTrainScroll } from "./train-bg";
+import { getTrainScroll, resetTrainScroll, stepTrainScroll, trainInertiaAccel } from "./train-bg";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
@@ -5012,6 +5012,10 @@ export function createGame(
         ball.vy += gravity() * dt * (gScale * fallBoost - buoy);
       }
       if (!hacking && !vectorDriven) {
+      // Train frame: hoop and carriage stay put. Accel pulls the ball left,
+      // decel pulls it right, cruise adds nothing. Pause never calls physics;
+      // rewind returns above. Other scenes leave this at zero.
+      if (trainBackdropOn()) ball.vx += trainInertiaAccel() * dt;
       const air = pMul("air");
       const roll = pMul("roll");
       if (isMaze()) {
@@ -5876,7 +5880,10 @@ export function createGame(
     } else if (incoming > 0) {
       ball.vy = 0;
     }
-    if (Math.abs(ball.vx) < 2.2) ball.vx = 0;
+    // Resting deadzone. While the train is speeding up or slowing down the
+    // fictitious force is only ~1.5 px/s per step, under this cutoff, so the
+    // ball would never start rolling. Cruise and every other scene still rest.
+    if (Math.abs(ball.vx) < 2.2 && !(trainBackdropOn() && trainInertiaAccel() !== 0)) ball.vx = 0;
     ball.omega = ball.vx / Math.max(8, ball.r);
     if (scoredLock <= 0) {
       ball.scored = false;

@@ -1,9 +1,10 @@
 import type { World } from "./types";
 
 /**
- * High-speed train roof, phase 1.
- * Owns the speed cycle and the three parallax offsets. Shot physics stay in
- * the engine. The ground is one train car in side view (fixed). The street
+ * High-speed train roof, phases 1–2.
+ * Owns the speed cycle, the three parallax offsets, and the analytic
+ * acceleration the ball's inertia uses. The engine applies that force.
+ * The ground is one train car in side view (fixed). The street
  * sky and clouds sit behind it. Far / mid / near are objects only — no band
  * fill — standing on the same horizon. Heights are fractions of the span from
  * the roof to the top of the frame: poles about 1/4, mountains about 1/2,
@@ -35,6 +36,13 @@ export const TRAIN_PARALLAX = {
   mid: 0.45,
   far: 0.15,
 } as const;
+
+/**
+ * Share of the train's acceleration felt by the ball, in the train frame.
+ * 1 matches the ramp. Accel pulls the ball left; decel pulls it right.
+ * Cruise stays 0, so a shot then matches the street.
+ */
+export const TRAIN_INERTIA_K = 0.8;
 
 export const TRAIN_PHASE_LABEL: Record<TrainPhase, string> = {
   accel: "加速",
@@ -109,6 +117,25 @@ function speedAt(phase: TrainPhase, u: number) {
   if (phase === "accel") return TRAIN_SPEED_MIN + (TRAIN_SPEED_MAX - TRAIN_SPEED_MIN) * t;
   if (phase === "decel") return TRAIN_SPEED_MAX + (TRAIN_SPEED_MIN - TRAIN_SPEED_MAX) * t;
   return TRAIN_SPEED_MAX;
+}
+
+/**
+ * Carriage acceleration implied by the linear ramp, px/s².
+ * Positive while speeding up. Cruise is 0. The carriage itself stays fixed;
+ * the ball feels the opposite of this (`trainInertiaAccel`).
+ */
+export function trainAccel(phase: TrainPhase = state.phase): number {
+  const span = TRAIN_SPEED_MAX - TRAIN_SPEED_MIN;
+  if (phase === "accel") return TRAIN_ACCEL_SEC > 0 ? span / TRAIN_ACCEL_SEC : 0;
+  if (phase === "decel") return TRAIN_DECEL_SEC > 0 ? -span / TRAIN_DECEL_SEC : 0;
+  return 0;
+}
+
+/** Horizontal acceleration added to the ball, px/s². Opposite the train. */
+export function trainInertiaAccel(phase: TrainPhase = state.phase, k = TRAIN_INERTIA_K): number {
+  const a = trainAccel(phase);
+  if (a === 0) return 0;
+  return -a * k;
 }
 
 function addScroll(distance: number) {

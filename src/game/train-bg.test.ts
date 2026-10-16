@@ -4,12 +4,15 @@ import {
   TRAIN_ACCEL_SEC,
   TRAIN_CRUISE_SEC,
   TRAIN_DECEL_SEC,
+  TRAIN_INERTIA_K,
   TRAIN_PARALLAX,
   TRAIN_SPEED_MAX,
   TRAIN_SPEED_MIN,
   getTrainScroll,
   resetTrainScroll,
   stepTrainScroll,
+  trainAccel,
+  trainInertiaAccel,
   trainScrollShift,
 } from "./train-bg.ts";
 
@@ -122,6 +125,30 @@ test("tile shift repeats exactly one tile later and moves scenery left", () => {
   const x0 = -trainScrollShift(0, tile);
   const x1 = -trainScrollShift(30, tile);
   assert.ok(x1 < x0);
+});
+
+test("train acceleration is the linear ramp, and the ball feels the opposite", () => {
+  const span = TRAIN_SPEED_MAX - TRAIN_SPEED_MIN;
+  const accel = span / TRAIN_ACCEL_SEC;
+  const decel = -span / TRAIN_DECEL_SEC;
+  assert.ok(Math.abs(trainAccel("accel") - accel) < 1e-9);
+  assert.equal(trainAccel("cruise"), 0);
+  assert.ok(Math.abs(trainAccel("decel") - decel) < 1e-9);
+  assert.ok(trainAccel("accel") > 0);
+  assert.ok(trainAccel("decel") < 0);
+
+  assert.ok(Math.abs(trainInertiaAccel("accel") - -accel * TRAIN_INERTIA_K) < 1e-9);
+  assert.equal(trainInertiaAccel("cruise"), 0);
+  assert.ok(Math.abs(trainInertiaAccel("decel") - -decel * TRAIN_INERTIA_K) < 1e-9);
+  assert.ok(trainInertiaAccel("accel") < 0);
+  assert.ok(trainInertiaAccel("decel") > 0);
+
+  resetTrainScroll();
+  assert.equal(trainAccel(), trainAccel("accel"));
+  stepTrainScroll(TRAIN_ACCEL_SEC);
+  assert.equal(trainAccel(), 0);
+  stepTrainScroll(TRAIN_CRUISE_SEC);
+  assert.ok(trainAccel() < 0);
 });
 
 test("non-positive dt does not move the train", () => {
