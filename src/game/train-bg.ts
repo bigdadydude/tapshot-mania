@@ -3,8 +3,9 @@ import type { World } from "./types";
 /**
  * High-speed train roof, phase 1.
  * Owns the speed cycle and the three parallax offsets. Shot physics stay in
- * the engine. The ground is one train car in side view (fixed). Above that
- * roof, far / mid / near scenery bands scroll backward at different rates.
+ * the engine. The ground is one train car in side view (fixed). The street
+ * sky and clouds sit behind it. Far / mid / near are objects only — no band
+ * fill — and scroll backward at different rates.
  *
  * Scenery moves left (backward) as `trainSpeed` rises. Offsets are cumulative
  * pixels; the renderer wraps each layer by its tile width so the loop is seamless
@@ -156,138 +157,76 @@ function paintTiles(
   for (let x = -shift; x < viewW; x += tileW) draw(x);
 }
 
-/** Fractions of the roof line. Each band is clipped so the three layers stay stacked. */
-const FAR_BAND = 0.4;
-const MID_BAND = 0.7;
-
-function clipBand(
+/** A single distant peak. The base is short so the sky stays visible around it. */
+function drawPeak(
   ctx: CanvasRenderingContext2D,
-  w: number,
-  top: number,
-  bot: number,
-  draw: () => void,
-) {
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, top, w, Math.max(1, bot - top));
-  ctx.clip();
-  draw();
-  ctx.restore();
-}
-
-function fillRidge(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  tileW: number,
+  cx: number,
   baseY: number,
-  amp: number,
-  freq: number,
+  halfW: number,
+  height: number,
   color: string,
 ) {
-  ctx.beginPath();
-  ctx.moveTo(x, baseY);
-  const steps = 28;
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const y = baseY - amp * (0.5 + 0.5 * Math.sin(t * Math.PI * 2 * freq));
-    ctx.lineTo(x + t * tileW, y);
-  }
-  ctx.lineTo(x + tileW, baseY + 2);
-  ctx.closePath();
   ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(cx, baseY - height);
+  ctx.lineTo(cx + halfW, baseY);
+  ctx.lineTo(cx - halfW, baseY);
+  ctx.closePath();
   ctx.fill();
 }
 
-/** Edge heights match so the next tile continues the silhouette. */
-function fillSilhouette(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  tileW: number,
-  baseY: number,
-  span: number,
-  pts: readonly (readonly [number, number])[],
-  color: string,
-) {
+function drawFarObjects(ctx: CanvasRenderingContext2D, x: number, floorY: number, tileW: number, u: number) {
+  const peaks = [
+    { fx: 0.2, base: 0.5, h: 0.22, w: 0.07, color: "#9aafc2" },
+    { fx: 0.48, base: 0.44, h: 0.13, w: 0.05, color: "#7f96aa" },
+    { fx: 0.74, base: 0.52, h: 0.16, w: 0.06, color: "#9aafc2" },
+  ] as const;
+  for (const p of peaks) {
+    drawPeak(ctx, x + tileW * p.fx, floorY * p.base, tileW * p.w, floorY * p.h, p.color);
+  }
+  const mx = x + tileW * 0.2;
+  const top = floorY * (0.5 - 0.22);
+  ctx.fillStyle = "#5d7386";
+  ctx.fillRect(mx - Math.max(1, u), top - floorY * 0.05, Math.max(2, 2 * u), floorY * 0.05);
+  ctx.fillRect(mx - 5 * u, top - floorY * 0.05, 10 * u, Math.max(2, 1.6 * u));
+}
+
+function drawTree(ctx: CanvasRenderingContext2D, tx: number, foot: number, th: number, u: number) {
+  ctx.fillStyle = "#2c4a34";
+  ctx.fillRect(tx - 1.4 * u, foot - th * 0.28, 2.8 * u, th * 0.28);
+  ctx.fillStyle = "#3d6248";
   ctx.beginPath();
-  ctx.moveTo(x, baseY);
-  for (const [t, k] of pts) ctx.lineTo(x + t * tileW, baseY - span * k);
-  ctx.lineTo(x + tileW, baseY + 2);
+  ctx.moveTo(tx, foot - th);
+  ctx.lineTo(tx + 9 * u, foot - th * 0.24);
+  ctx.lineTo(tx - 9 * u, foot - th * 0.24);
   ctx.closePath();
-  ctx.fillStyle = color;
   ctx.fill();
 }
 
-function drawFarTile(ctx: CanvasRenderingContext2D, x: number, bandTop: number, bandBot: number, tileW: number, u: number) {
-  const span = bandBot - bandTop;
-  // One tall peak per tile. A repeating sine aliased the slow layer into a fast one.
-  fillSilhouette(ctx, x, tileW, bandBot, span, [
-    [0, 0.2],
-    [0.14, 0.48],
-    [0.28, 0.86],
-    [0.4, 0.38],
-    [0.56, 0.3],
-    [0.72, 0.5],
-    [0.86, 0.24],
-    [1, 0.2],
-  ], "#a9bdd0");
-  fillSilhouette(ctx, x, tileW, bandBot, span, [
-    [0, 0.12],
-    [0.22, 0.26],
-    [0.4, 0.14],
-    [0.58, 0.46],
-    [0.74, 0.2],
-    [0.88, 0.28],
-    [1, 0.12],
-  ], "#6d8498");
-  const mx = x + tileW * 0.28;
-  const peakY = bandBot - span * 0.86;
-  ctx.fillStyle = "#3c5366";
-  ctx.fillRect(mx - Math.max(1, u), peakY - span * 0.16, Math.max(2, 2 * u), span * 0.16);
-  ctx.fillRect(mx - 6 * u, peakY - span * 0.16, 12 * u, Math.max(2, 2 * u));
-  ctx.fillStyle = "rgba(255,255,255,0.9)";
-  for (const [fx, fy, radius] of [
-    [0.16, 0.18, 36],
-    [0.48, 0.1, 22],
-    [0.7, 0.22, 40],
-  ] as const) {
-    const cx = x + tileW * fx;
-    const cy = bandTop + span * fy;
-    const rx = radius * u;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, rx, rx * 0.42, 0, 0, Math.PI * 2);
-    ctx.ellipse(cx + rx * 0.55, cy + rx * 0.06, rx * 0.62, rx * 0.32, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
+function drawMidObjects(ctx: CanvasRenderingContext2D, x: number, floorY: number, tileW: number, u: number) {
+  const trees = [
+    { fx: 0.1, h: 0.16 },
+    { fx: 0.28, h: 0.24 },
+    { fx: 0.47, h: 0.14 },
+    { fx: 0.64, h: 0.2 },
+    { fx: 0.84, h: 0.18 },
+  ] as const;
+  const foot = floorY * 0.7;
+  for (const t of trees) drawTree(ctx, x + tileW * t.fx, foot, floorY * t.h, u);
 }
 
-function drawMidTile(ctx: CanvasRenderingContext2D, x: number, bandTop: number, bandBot: number, tileW: number, u: number) {
-  const span = bandBot - bandTop;
-  fillRidge(ctx, x, tileW, bandBot, span * 0.42, 1, "#7f9a72");
-  fillRidge(ctx, x, tileW, bandBot + 1, span * 0.22, 3, "#5d7c58");
-  const trees = [0.1, 0.26, 0.44, 0.62, 0.8];
-  trees.forEach((fx, i) => {
-    const tx = x + tileW * fx;
-    const th = span * (0.46 + (i % 3) * 0.12);
-    ctx.fillStyle = "#2c4a34";
-    ctx.fillRect(tx - 1.3 * u, bandBot - th * 0.22, 2.6 * u, th * 0.22);
-    ctx.fillStyle = "#3d6248";
-    ctx.beginPath();
-    ctx.moveTo(tx, bandBot - th);
-    ctx.lineTo(tx + 8 * u, bandBot - th * 0.28);
-    ctx.lineTo(tx - 8 * u, bandBot - th * 0.28);
-    ctx.closePath();
-    ctx.fill();
-  });
-}
-
-function drawNearTile(ctx: CanvasRenderingContext2D, x: number, bandTop: number, bandBot: number, tileW: number, u: number) {
-  const span = bandBot - bandTop;
-  const blocks = [0.06, 0.28, 0.5, 0.74];
-  blocks.forEach((fx, i) => {
-    const bw = tileW * 0.16;
-    const bh = span * (0.45 + (i % 3) * 0.16);
-    const bx = x + tileW * fx;
-    const by = bandBot - bh;
+function drawNearObjects(ctx: CanvasRenderingContext2D, x: number, floorY: number, tileW: number, u: number) {
+  const blocks = [
+    { fx: 0.06, w: 0.11, h: 0.2 },
+    { fx: 0.3, w: 0.09, h: 0.28 },
+    { fx: 0.52, w: 0.13, h: 0.16 },
+    { fx: 0.76, w: 0.1, h: 0.24 },
+  ] as const;
+  blocks.forEach((b, i) => {
+    const bw = tileW * b.w;
+    const bh = floorY * b.h;
+    const bx = x + tileW * b.fx;
+    const by = floorY - bh;
     ctx.fillStyle = i % 2 === 0 ? "#8a6244" : "#6e5340";
     ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle = "#d9c7a4";
@@ -295,15 +234,20 @@ function drawNearTile(ctx: CanvasRenderingContext2D, x: number, bandTop: number,
     const rows = Math.max(2, Math.floor(bh / (12 * u)));
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
-        ctx.fillRect(bx + (6 + col * 14) * u, by + (6 + row * 12) * u, 7 * u, 6 * u);
+        const wx = bx + (5 + col * 12) * u;
+        const wy = by + (5 + row * 11) * u;
+        if (wx + 6 * u < bx + bw - 3 * u && wy + 5 * u < floorY - 3 * u) {
+          ctx.fillRect(wx, wy, 6 * u, 5 * u);
+        }
       }
     }
   });
   ctx.fillStyle = "#2a2622";
-  for (const fx of [0.18, 0.46, 0.78]) {
+  for (const fx of [0.22, 0.46, 0.7]) {
     const px = x + tileW * fx;
-    ctx.fillRect(px - 1.4 * u, bandTop + span * 0.08, 2.8 * u, bandBot - (bandTop + span * 0.08));
-    ctx.fillRect(px - 6 * u, bandTop + span * 0.08, 12 * u, 3 * u);
+    const top = floorY * 0.58;
+    ctx.fillRect(px - 1.4 * u, top, 2.8 * u, floorY - top);
+    ctx.fillRect(px - 6 * u, top, 12 * u, 3 * u);
   }
 }
 
@@ -414,44 +358,22 @@ function drawTrainCar(ctx: CanvasRenderingContext2D, world: World, scroll: Train
   }
 }
 
-/** Side view of one car, with three scrolling bands stacked above the roof. */
+/**
+ * Scenery objects over the already-drawn street sky. Nothing here fills a band:
+ * gaps stay transparent so the sky and clouds show through. The car is opaque.
+ */
 export function drawTrainBackdrop(ctx: CanvasRenderingContext2D, world: World) {
-  const { w, h, floorY } = world;
+  const { w, floorY } = world;
   const scroll = getTrainScroll();
   const tileW = Math.max(1, w);
   const u = w / 390;
-  const farBot = floorY * FAR_BAND;
-  const midBot = floorY * MID_BAND;
   ctx.save();
-
-  const sky = ctx.createLinearGradient(0, 0, 0, floorY);
-  sky.addColorStop(0, "#7eabc4");
-  sky.addColorStop(1, "#d5e2ea");
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "rgba(255, 244, 220, 0.92)";
   ctx.beginPath();
-  ctx.arc(w * 0.8, farBot * 0.28, Math.max(12, w * 0.032), 0, Math.PI * 2);
-  ctx.fill();
-
-  clipBand(ctx, w, 0, farBot, () => {
-    paintTiles(scroll.far, tileW, w, (x) => drawFarTile(ctx, x, 0, farBot, tileW, u));
-  });
-  clipBand(ctx, w, farBot, midBot, () => {
-    ctx.fillStyle = "#d7e4cf";
-    ctx.fillRect(0, farBot, w, midBot - farBot);
-    paintTiles(scroll.mid, tileW, w, (x) => drawMidTile(ctx, x, farBot, midBot, tileW, u));
-  });
-  clipBand(ctx, w, midBot, floorY, () => {
-    ctx.fillStyle = "#e7d7c4";
-    ctx.fillRect(0, midBot, w, floorY - midBot);
-    paintTiles(scroll.near, tileW, w, (x) => drawNearTile(ctx, x, midBot, floorY, tileW, u));
-  });
-
-  ctx.fillStyle = "rgba(40, 48, 56, 0.28)";
-  ctx.fillRect(0, farBot - 1, w, 2);
-  ctx.fillRect(0, midBot - 1, w, 2);
-
-  drawTrainCar(ctx, world, scroll);
+  ctx.rect(0, 0, w, floorY);
+  ctx.clip();
+  paintTiles(scroll.far, tileW, w, (x) => drawFarObjects(ctx, x, floorY, tileW, u));
+  paintTiles(scroll.mid, tileW, w, (x) => drawMidObjects(ctx, x, floorY, tileW, u));
+  paintTiles(scroll.near, tileW, w, (x) => drawNearObjects(ctx, x, floorY, tileW, u));
   ctx.restore();
+  drawTrainCar(ctx, world, scroll);
 }

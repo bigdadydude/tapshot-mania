@@ -669,7 +669,7 @@ function TitleCard({
                 : sceneId === "overpass"
                   ? "进第一球后开始来车，留意两侧预警，被车头撞出界获得5秒无敌"
                   : sceneId === "train"
-                    ? "站在这一节车厢顶上投篮，上方三层景物向后滚"
+                    ? "站在这一节车厢顶上投篮，天空和云后面三层景物向后滚"
                     : "点击弹跳，把球投进左右篮筐"}
         </p>
         <p className="mt-1 text-xs text-subtle">

@@ -317,7 +317,22 @@ export function drawScene(
 	else if (backdrop === "overpass") drawCity(ctx, world, time, () => {
 		if (gfx.clouds !== "off") drawSkyClouds(ctx, world, cloudT, 0, world.floorY * 0.4, cloudSx, cloudSy);
 	});
-	else if (backdrop === "train") drawTrainBackdrop(ctx, world);
+	else if (backdrop === "train") {
+		// Same sky image and cloud drift as the street wall. Objects sit on top, in train-bg.
+		ctx.save();
+		ctx.beginPath();
+		ctx.rect(0, 0, world.w, world.floorY);
+		ctx.clip();
+		const wallImg = artImage("wall");
+		let cloudBot = world.floorY * 0.4;
+		if (wallImg) {
+			const layout = wallLayout(world, wallImg);
+			cloudBot = Math.max(layout.skyBot, layout.oy + layout.dh * 0.32);
+		}
+		drawOpenSky(ctx, world, cloudT, cloudSx, cloudSy, gfx.clouds !== "off", 0, world.floorY, cloudBot);
+		ctx.restore();
+		drawTrainBackdrop(ctx, world);
+	}
 	else if (backdrop === "street") {
 		// Graffiti sits above the day-cycle tint; wall/court get the wash first.
 		drawWall(ctx, world, cloudT, cloudSx, cloudSy, null, gfx.clouds !== "off");
@@ -651,7 +666,7 @@ function layerCanvas(w: number, h: number) {
 	return c;
 }
 
-function ensureSkyLayer(world: World, layout: ReturnType<typeof wallLayout>) {
+function ensureSkyLayer(world: World, layout: { skyTop: number; skyBot: number }) {
 	const sky = artImage("sky");
 	const key = `${world.w | 0}x${layout.skyBot | 0}:${sky?.naturalWidth || 0}`;
 	if (skyLayer && skyLayerKey === key) return skyLayer;
@@ -893,6 +908,24 @@ function drawSkyClouds(
 	ctx.restore();
 }
 
+/** Street sky sheet plus the drifting cloud sprites. Callers choose the open band. */
+function drawOpenSky(
+	ctx: CanvasRenderingContext2D,
+	world: World,
+	cloudShift: number,
+	cloudSx: number,
+	cloudSy: number,
+	drawClouds: boolean,
+	skyTop: number,
+	skyBot: number,
+	cloudBot: number,
+) {
+	const skyH = skyBot - skyTop;
+	const sky = ensureSkyLayer(world, { skyTop, skyBot });
+	if (sky && skyH > 1) ctx.drawImage(sky, 0, skyTop, world.w, skyH);
+	if (drawClouds) drawSkyClouds(ctx, world, cloudShift, skyTop, cloudBot, cloudSx, cloudSy);
+}
+
 function clipSpray(
 	ctx: CanvasRenderingContext2D,
 	x: number,
@@ -974,17 +1007,10 @@ function drawWall(
 		ctx.clip();
 		const layout = wallLayout(world, img);
 		// Sky fills behind the full wall quad so PNG alpha (open sky + glass) shows through.
-		const behind = {
-			...layout,
-			skyTop: 0,
-			skyBot: Math.max(layout.skyBot, layout.oy + layout.dh),
-		};
-		const skyH = behind.skyBot - behind.skyTop;
-		const sky = ensureSkyLayer(world, behind);
-		if (sky && skyH > 1) ctx.drawImage(sky, 0, behind.skyTop, w, skyH);
+		const skyBot = Math.max(layout.skyBot, layout.oy + layout.dh);
 		// Drift clouds through the open sky + tower window band (opaque masonry covers the rest).
 		const cloudBot = Math.max(layout.skyBot, layout.oy + layout.dh * 0.32);
-		if (drawClouds) drawSkyClouds(ctx, world, time, layout.skyTop, cloudBot, cloudSx, cloudSy);
+		drawOpenSky(ctx, world, time, cloudSx, cloudSy, drawClouds, 0, skyBot, cloudBot);
 		const wall = ensureWallLayer(world, layout, graf?.show ?? null);
 		if (wall) ctx.drawImage(wall, 0, 0, w, floorY);
 		else {
