@@ -38,9 +38,9 @@ export const TRAIN_PARALLAX = {
 } as const;
 
 /**
- * Share of the train's acceleration felt by the ball, in the train frame.
- * 1 matches the ramp. Accel pulls the ball left; decel pulls it right.
- * Cruise stays 0, so a shot then matches the street.
+ * Overall scale of the fictitious force, before each ball's gravity ratio.
+ * 1 matches the ramp. A classic ball (gravity ratio 1) uses this number as-is.
+ * Accel pulls the ball left; decel pulls it right. Cruise stays 0.
  */
 export const TRAIN_INERTIA_K = 1.5;
 
@@ -131,11 +131,28 @@ export function trainAccel(phase: TrainPhase = state.phase): number {
   return 0;
 }
 
-/** Horizontal acceleration added to the ball, px/s². Opposite the train. */
-export function trainInertiaAccel(phase: TrainPhase = state.phase, k = TRAIN_INERTIA_K): number {
+/**
+ * This ball's vertical acceleration divided by a classic ball's.
+ * 1 leaves TRAIN_INERTIA_K unchanged. Higher gravity pulls harder sideways.
+ */
+export function trainGravScale(ballGravity: number, baseBallGravity: number): number {
+  if (!(baseBallGravity > 0) || !Number.isFinite(ballGravity)) return 1;
+  return Math.max(0, ballGravity / baseBallGravity);
+}
+
+/**
+ * Horizontal acceleration added to the ball, px/s². Opposite the train.
+ * `gravScale` is ballGravity / baseBallGravity.
+ */
+export function trainInertiaAccel(
+  phase: TrainPhase = state.phase,
+  k = TRAIN_INERTIA_K,
+  gravScale = 1,
+): number {
   const a = trainAccel(phase);
   if (a === 0) return 0;
-  return -a * k;
+  const g = Number.isFinite(gravScale) ? Math.max(0, gravScale) : 1;
+  return -a * k * g;
 }
 
 function addScroll(distance: number) {

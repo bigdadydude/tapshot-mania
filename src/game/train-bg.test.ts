@@ -12,6 +12,7 @@ import {
   resetTrainScroll,
   stepTrainScroll,
   trainAccel,
+  trainGravScale,
   trainInertiaAccel,
   trainScrollShift,
 } from "./train-bg.ts";
@@ -149,6 +150,19 @@ test("train acceleration is the linear ramp, and the ball feels the opposite", (
   assert.equal(trainAccel(), 0);
   stepTrainScroll(TRAIN_CRUISE_SEC);
   assert.ok(trainAccel() < 0);
+});
+
+test("heavier balls feel more horizontal inertia, lighter balls less", () => {
+  const classic = trainInertiaAccel("accel", TRAIN_INERTIA_K, 1);
+  const heavy = trainInertiaAccel("accel", TRAIN_INERTIA_K, trainGravScale(1.4, 1));
+  const light = trainInertiaAccel("accel", TRAIN_INERTIA_K, trainGravScale(0.9, 1));
+  assert.ok(Math.abs(heavy - classic * 1.4) < 1e-9);
+  assert.ok(Math.abs(light - classic * 0.9) < 1e-9);
+  assert.ok(Math.abs(heavy) > Math.abs(classic) && Math.abs(classic) > Math.abs(light));
+  assert.equal(trainInertiaAccel("cruise", TRAIN_INERTIA_K, 1.4), 0);
+  assert.equal(trainGravScale(0, 1), 0);
+  assert.equal(trainGravScale(2, 0), 1);
+  assert.equal(trainGravScale(Number.NaN, 1), 1);
 });
 
 test("non-positive dt does not move the train", () => {

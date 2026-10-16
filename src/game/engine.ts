@@ -28,7 +28,7 @@ import { DEFAULT_MAZE, DEFAULT_PHYS, clampMaze, clampPhys, clampPhysKey, wantDev
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
-import { getTrainScroll, resetTrainScroll, stepTrainScroll, trainInertiaAccel } from "./train-bg";
+import { TRAIN_INERTIA_K, getTrainScroll, resetTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
@@ -1417,6 +1417,17 @@ export function createGame(
 
   function gravity() {
     return world.h * 3.1 * pMul("grav") * (stageMod.gravMul?.() ?? 1);
+  }
+
+  /** Classic vertical accel: gravity multiplier 1 and no stage gravity. */
+  function baseBallGravity() {
+    return world.h * 3.1;
+  }
+
+  /** Fictitious horizontal accel for the ball on the train. 0 off the train and in cruise. */
+  function trainPull() {
+    if (!trainBackdropOn()) return 0;
+    return trainInertiaAccel(undefined, TRAIN_INERTIA_K, trainGravScale(gravity(), baseBallGravity()));
   }
 
   function jumpVy() {
@@ -5015,7 +5026,7 @@ export function createGame(
       // Train frame: hoop and carriage stay put. Accel pulls the ball left,
       // decel pulls it right, cruise adds nothing. Pause never calls physics;
       // rewind returns above. Other scenes leave this at zero.
-      if (trainBackdropOn()) ball.vx += trainInertiaAccel() * dt;
+      if (trainBackdropOn()) ball.vx += trainPull() * dt;
       const air = pMul("air");
       const roll = pMul("roll");
       if (isMaze()) {
@@ -5883,7 +5894,7 @@ export function createGame(
     // Resting deadzone. During accel and decel the per-step impulse sits near
     // this cutoff, so leave it open and let the ball start rolling. Cruise and
     // every other scene still rest.
-    if (Math.abs(ball.vx) < 2.2 && !(trainBackdropOn() && trainInertiaAccel() !== 0)) ball.vx = 0;
+    if (Math.abs(ball.vx) < 2.2 && trainPull() === 0) ball.vx = 0;
     ball.omega = ball.vx / Math.max(8, ball.r);
     if (scoredLock <= 0) {
       ball.scored = false;
