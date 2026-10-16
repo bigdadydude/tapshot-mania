@@ -5880,9 +5880,9 @@ export function createGame(
     } else if (incoming > 0) {
       ball.vy = 0;
     }
-    // Resting deadzone. While the train is speeding up or slowing down the
-    // fictitious force is only ~1.5 px/s per step, under this cutoff, so the
-    // ball would never start rolling. Cruise and every other scene still rest.
+    // Resting deadzone. During accel and decel the per-step impulse sits near
+    // this cutoff, so leave it open and let the ball start rolling. Cruise and
+    // every other scene still rest.
     if (Math.abs(ball.vx) < 2.2 && !(trainBackdropOn() && trainInertiaAccel() !== 0)) ball.vx = 0;
     ball.omega = ball.vx / Math.max(8, ball.r);
     if (scoredLock <= 0) {

@@ -42,7 +42,7 @@ export const TRAIN_PARALLAX = {
  * 1 matches the ramp. Accel pulls the ball left; decel pulls it right.
  * Cruise stays 0, so a shot then matches the street.
  */
-export const TRAIN_INERTIA_K = 0.8;
+export const TRAIN_INERTIA_K = 1.5;
 
 export const TRAIN_PHASE_LABEL: Record<TrainPhase, string> = {
   accel: "加速",
