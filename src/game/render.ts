@@ -1,5 +1,6 @@
 import { drawBlackHole } from "./black-hole-render";
 import { drawCity } from "./city-render";
+import { drawTrainBackdrop } from "./train-bg";
 import type { Ball, Callout, Gfx, Hoop, NinjaCloneDraw, Particle, PrisonHud, TrailPt, World } from "./types";
 import { DEFAULT_GFX, fireStage } from "./types";
 import { artImage, ballImage, cloudImages, graffitiImage } from "./art";
@@ -316,6 +317,7 @@ export function drawScene(
 	else if (backdrop === "overpass") drawCity(ctx, world, time, () => {
 		if (gfx.clouds !== "off") drawSkyClouds(ctx, world, cloudT, 0, world.floorY * 0.4, cloudSx, cloudSy);
 	});
+	else if (backdrop === "train") drawTrainBackdrop(ctx, world);
 	else if (backdrop === "street") {
 		// Graffiti sits above the day-cycle tint; wall/court get the wash first.
 		drawWall(ctx, world, cloudT, cloudSx, cloudSy, null, gfx.clouds !== "off");

@@ -28,6 +28,7 @@ import { DEFAULT_MAZE, DEFAULT_PHYS, clampMaze, clampPhys, clampPhysKey, wantDev
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
+import { getTrainScroll, resetTrainScroll, stepTrainScroll } from "./train-bg";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
@@ -185,6 +186,7 @@ export function createGame(
   let world: World = layout(390, 844);
   let traffic = createTraffic();
   const trafficEnabled = () => getSceneId() === "overpass" && !(devOn && devScene === "void");
+  const trainBackdropOn = () => getSceneId() === "train" && !(devOn && devScene === "void");
   let phase: Phase = "title";
   let booted = artProgress().ready;
   let lastLoadN = booted ? 100 : -1;
@@ -1576,6 +1578,7 @@ export function createGame(
     ball.trafficSafe = false;
     clearSceneLayers();
     reloadSceneArt();
+    if (id === "train") resetTrainScroll();
     persist();
   }
 
@@ -6751,6 +6754,7 @@ export function createGame(
       if (!paused) {
         const dt = Math.min(raw, 0.1);
         time += dt;
+        if (!rewindActive && trainBackdropOn()) stepTrainScroll(dt);
         acc += dt;
         const MAX_STEPS = 3;
         let steps = 0;
@@ -7047,7 +7051,7 @@ export function createGame(
       emitHud();
     },
     setScene(id) {
-      if (id !== "street" && id !== "prison" && id !== "overpass") return;
+      if (id !== "street" && id !== "prison" && id !== "overpass" && id !== "train") return;
       applyScenePack(id);
       if (devOn && devScene !== "void") {
         devScene = id;
@@ -7108,6 +7112,7 @@ export function createGame(
       return {
         phase,
         sceneId: getSceneId(),
+        train: trainBackdropOn() ? getTrainScroll() : null,
         traffic: trafficEnabled() ? {
           vehicles: traffic.vehicles.map(v => ({ ...v })),
           warnings: traffic.warnings.map(v => ({ ...v })),
