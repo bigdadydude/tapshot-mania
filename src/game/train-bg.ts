@@ -5,9 +5,9 @@ import type { World } from "./types";
  * Owns the speed cycle and the three parallax offsets. Shot physics stay in
  * the engine. The ground is one train car in side view (fixed). The street
  * sky and clouds sit behind it. Far / mid / near are objects only — no band
- * fill — standing on the same horizon. Far is tallest, then mid, then near,
- * and near is a little taller than the carriage. They scroll backward at
- * different rates.
+ * fill — standing on the same horizon. Far mountains are tallest, then the
+ * treeline, then the poles, which rise a little above the carriage. They
+ * scroll backward at different rates.
  *
  * Scenery moves left (backward) as `trainSpeed` rises. Offsets are cumulative
  * pixels; the renderer wraps each layer by its tile width so the loop is seamless
@@ -163,26 +163,31 @@ function paintTiles(
  * Silhouette heights in multiples of the carriage (roof to bottom of frame).
  * Every layer's feet sit on the roof line. Far stays above mid, mid above near.
  */
-const FAR_HEIGHT = [2.45, 2.15, 2.7] as const;
-const MID_HEIGHT = [1.7, 2.0, 1.62, 1.85, 1.75] as const;
-const NEAR_HEIGHT = [1.12, 1.32, 1.08, 1.24] as const;
-const NEAR_POLE_HEIGHT = 1.4;
+const FAR_HEIGHT = [2.45, 2.75] as const;
+const MID_HEIGHT = [1.7, 1.95, 1.65, 2.05, 1.8, 1.9] as const;
+const POLE_HEIGHT = 1.32;
 
-/** A single distant peak. Feet stay on the horizon; the sky shows between peaks. */
-function drawPeak(
+/** Blue-white triangle. The two faces meet at the peak; the base is the horizon. */
+function drawMountain(
   ctx: CanvasRenderingContext2D,
   cx: number,
   baseY: number,
   halfW: number,
   height: number,
-  color: string,
 ) {
-  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(cx, baseY - height);
+  ctx.lineTo(cx - halfW, baseY);
+  ctx.lineTo(cx, baseY);
+  ctx.closePath();
+  ctx.fillStyle = "#f4f8fc";
+  ctx.fill();
   ctx.beginPath();
   ctx.moveTo(cx, baseY - height);
   ctx.lineTo(cx + halfW, baseY);
-  ctx.lineTo(cx - halfW, baseY);
+  ctx.lineTo(cx, baseY);
   ctx.closePath();
+  ctx.fillStyle = "#6aa6d0";
   ctx.fill();
 }
 
@@ -192,35 +197,14 @@ function drawFarObjects(
   floorY: number,
   carH: number,
   tileW: number,
-  u: number,
 ) {
   const peaks = [
-    { fx: 0.18, h: FAR_HEIGHT[0], w: 0.1, color: "#9aafc2" },
-    { fx: 0.46, h: FAR_HEIGHT[1], w: 0.07, color: "#7f96aa" },
-    { fx: 0.72, h: FAR_HEIGHT[2], w: 0.09, color: "#9aafc2" },
+    { fx: 0.24, h: FAR_HEIGHT[0], w: 0.18 },
+    { fx: 0.74, h: FAR_HEIGHT[1], w: 0.16 },
   ] as const;
   for (const p of peaks) {
-    drawPeak(ctx, x + tileW * p.fx, floorY, tileW * p.w, carH * p.h, p.color);
+    drawMountain(ctx, x + tileW * p.fx, floorY, tileW * p.w, carH * p.h);
   }
-  const tall = peaks[2];
-  const mx = x + tileW * tall.fx;
-  const top = floorY - carH * tall.h;
-  ctx.fillStyle = "#5d7386";
-  ctx.fillRect(mx - Math.max(1, u), top, Math.max(2, 2 * u), carH * 0.1);
-  ctx.fillRect(mx - 5 * u, top, 10 * u, Math.max(2, 1.6 * u));
-}
-
-function drawTree(ctx: CanvasRenderingContext2D, tx: number, foot: number, th: number, u: number) {
-  const spread = Math.max(8 * u, th * 0.055);
-  ctx.fillStyle = "#2c4a34";
-  ctx.fillRect(tx - 1.6 * u, foot - th * 0.22, 3.2 * u, th * 0.22);
-  ctx.fillStyle = "#3d6248";
-  ctx.beginPath();
-  ctx.moveTo(tx, foot - th);
-  ctx.lineTo(tx + spread, foot - th * 0.2);
-  ctx.lineTo(tx - spread, foot - th * 0.2);
-  ctx.closePath();
-  ctx.fill();
 }
 
 function drawMidObjects(
@@ -229,10 +213,24 @@ function drawMidObjects(
   floorY: number,
   carH: number,
   tileW: number,
-  u: number,
 ) {
-  const trees = [0.1, 0.28, 0.47, 0.64, 0.84] as const;
-  trees.forEach((fx, i) => drawTree(ctx, x + tileW * fx, floorY, carH * MID_HEIGHT[i]!, u));
+  const n = 12;
+  const step = tileW / n;
+  const halfW = step * 1.15;
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 0; i <= n; i++) {
+      const th = carH * (pass === 0 ? MID_HEIGHT[i % MID_HEIGHT.length]! : 1.68);
+      const tx = x + (i + (pass === 0 ? 0 : 0.5)) * step;
+      if (pass === 1 && i === n) continue;
+      ctx.fillStyle = (i + pass) % 2 === 0 ? "#3d6248" : "#2f5a3c";
+      ctx.beginPath();
+      ctx.moveTo(tx, floorY - th);
+      ctx.lineTo(tx + halfW, floorY);
+      ctx.lineTo(tx - halfW, floorY);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
 }
 
 function drawNearObjects(
@@ -243,38 +241,29 @@ function drawNearObjects(
   tileW: number,
   u: number,
 ) {
-  const blocks = [
-    { fx: 0.06, w: 0.11, h: NEAR_HEIGHT[0] },
-    { fx: 0.3, w: 0.09, h: NEAR_HEIGHT[1] },
-    { fx: 0.52, w: 0.13, h: NEAR_HEIGHT[2] },
-    { fx: 0.76, w: 0.1, h: NEAR_HEIGHT[3] },
-  ] as const;
-  blocks.forEach((b, i) => {
-    const bw = tileW * b.w;
-    const bh = carH * b.h;
-    const bx = x + tileW * b.fx;
-    const by = floorY - bh;
-    ctx.fillStyle = i % 2 === 0 ? "#8a6244" : "#6e5340";
-    ctx.fillRect(bx, by, bw, bh);
-    ctx.fillStyle = "#d9c7a4";
-    const cols = 2;
-    const rows = Math.max(2, Math.floor(bh / (12 * u)));
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        const wx = bx + (5 + col * 12) * u;
-        const wy = by + (5 + row * 11) * u;
-        if (wx + 6 * u < bx + bw - 3 * u && wy + 5 * u < floorY - 3 * u) {
-          ctx.fillRect(wx, wy, 6 * u, 5 * u);
-        }
-      }
+  const height = carH * POLE_HEIGHT;
+  const armY = floorY - height;
+  const spots = [0.08, 0.36, 0.64, 0.92] as const;
+  ctx.strokeStyle = "#3a342c";
+  ctx.lineWidth = Math.max(1.25, 1.5 * u);
+  ctx.beginPath();
+  for (const drop of [0, 6 * u]) {
+    let prev = x;
+    ctx.moveTo(prev, armY + drop);
+    for (const fx of spots) {
+      const x1 = x + tileW * fx;
+      ctx.quadraticCurveTo((prev + x1) / 2, armY + drop + 7 * u, x1, armY + drop);
+      prev = x1;
     }
-  });
-  ctx.fillStyle = "#2a2622";
-  for (const fx of [0.22, 0.46, 0.7]) {
+    const end = x + tileW;
+    ctx.quadraticCurveTo((prev + end) / 2, armY + drop + 7 * u, end, armY + drop);
+  }
+  ctx.stroke();
+  ctx.fillStyle = "#2c2824";
+  for (const fx of spots) {
     const px = x + tileW * fx;
-    const top = floorY - carH * NEAR_POLE_HEIGHT;
-    ctx.fillRect(px - 1.4 * u, top, 2.8 * u, carH * NEAR_POLE_HEIGHT);
-    ctx.fillRect(px - 6 * u, top, 12 * u, 3 * u);
+    ctx.fillRect(px - 1.8 * u, armY, 3.6 * u, height);
+    ctx.fillRect(px - 12 * u, armY, 24 * u, Math.max(3, 3.2 * u));
   }
 }
 
@@ -399,8 +388,8 @@ export function drawTrainBackdrop(ctx: CanvasRenderingContext2D, world: World) {
   ctx.beginPath();
   ctx.rect(0, 0, w, floorY);
   ctx.clip();
-  paintTiles(scroll.far, tileW, w, (x) => drawFarObjects(ctx, x, floorY, carH, tileW, u));
-  paintTiles(scroll.mid, tileW, w, (x) => drawMidObjects(ctx, x, floorY, carH, tileW, u));
+  paintTiles(scroll.far, tileW, w, (x) => drawFarObjects(ctx, x, floorY, carH, tileW));
+  paintTiles(scroll.mid, tileW, w, (x) => drawMidObjects(ctx, x, floorY, carH, tileW));
   paintTiles(scroll.near, tileW, w, (x) => drawNearObjects(ctx, x, floorY, carH, tileW, u));
   ctx.restore();
   drawTrainCar(ctx, world, scroll);
