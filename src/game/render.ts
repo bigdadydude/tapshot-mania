@@ -320,7 +320,7 @@ export function drawScene(
 	else if (backdrop === "train") {
 		// Street sky sheet. Clouds stay under the trees: some behind the mountains, some in front.
 		drawOpenSky(ctx, world, cloudT, cloudSx, cloudSy, false, 0, world.floorY, world.floorY);
-		const cloudTop = world.floorY * (1 - 2 / 3);
+		const cloudTop = world.floorY * (1 - 1 / 3);
 		const paintClouds = gfx.clouds !== "off"
 			? (which: "back" | "front") => {
 				ctx.save();

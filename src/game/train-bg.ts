@@ -7,7 +7,7 @@ import type { World } from "./types";
  * sky and clouds sit behind it. Far / mid / near are objects only — no band
  * fill — standing on the same horizon. Heights are fractions of the span from
  * the roof to the top of the frame: poles about 1/4, mountains about 1/2,
- * trees about 2/3. Clouds sit behind the trees. They scroll backward at
+ * trees at most 1/3. Clouds sit behind the trees. They scroll backward at
  * different rates.
  *
  * Scenery moves left (backward) as `trainSpeed` rises. Offsets are cumulative
@@ -162,7 +162,7 @@ function paintTiles(
 
 /** Heights as a fraction of the roof-to-top span. Mountains wander around 1/2. */
 const MOUNTAIN_HEIGHT = [0.44, 0.53, 0.48, 0.57] as const;
-const TREE_HEIGHT = [0.64, 0.67, 0.62, 0.69, 0.66] as const;
+const TREE_HEIGHT = [0.3, 1 / 3, 0.28, 0.32, 0.31] as const;
 const POLE_HEIGHT = 0.25;
 
 /** Wide massif. Blue-gray at the horizon, white at the peak. Not a thin cone. */
