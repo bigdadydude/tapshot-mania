@@ -1,4 +1,4 @@
-export type SceneId = "street" | "prison" | "overpass";
+export type SceneId = "street" | "prison" | "overpass" | "train";
 export type TrafficTextures = {
   /** Transparent side views facing right; null uses the built-in drawing. */
   sedan: string | null;
@@ -220,9 +220,22 @@ const OVERPASS: ScenePack = {
   },
 };
 
-export const SCENES: ScenePack[] = [STREET, PRISON, OVERPASS];
+/** Same asset shell as street. The moving roof is drawn by train-bg.ts. */
+const TRAIN: ScenePack = {
+  ...STREET,
+  id: "train",
+  index: 4,
+  name: "列车",
+};
 
-const BY_ID: Record<SceneId, ScenePack> = { street: STREET, prison: PRISON, overpass: OVERPASS };
+export const SCENES: ScenePack[] = [STREET, PRISON, OVERPASS, TRAIN];
+
+const BY_ID: Record<SceneId, ScenePack> = {
+  street: STREET,
+  prison: PRISON,
+  overpass: OVERPASS,
+  train: TRAIN,
+};
 
 let current: SceneId = "street";
 

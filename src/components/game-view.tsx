@@ -668,14 +668,16 @@ function TitleCard({
                 ? "放风随便投，宵禁后躲开探照灯"
                 : sceneId === "overpass"
                   ? "进第一球后开始来车，留意两侧预警，被车头撞出界获得5秒无敌"
-                : "点击弹跳，把球投进左右篮筐"}
+                  : sceneId === "train"
+                    ? "站在这一节车厢顶上投篮，天空和云后面三层景物向后滚"
+                    : "点击弹跳，把球投进左右篮筐"}
         </p>
         <p className="mt-1 text-xs text-subtle">
           {playMode === "rogue" ? `最远第 ${best} 关` : `最高 ${best}`}
         </p>
       </div>
 
-      <div className="pointer-events-auto mb-2 grid w-full max-w-xs grid-cols-3 gap-1.5">
+      <div className="pointer-events-auto mb-2 grid w-full max-w-xs grid-cols-4 gap-1.5">
         {SCENE_LABELS.map((s) => {
           const on = sceneId === s.id;
           return (
