@@ -48,6 +48,7 @@ export type NetNode = {
 };
 
 export type Ball = {
+  sootLeft?: number;
   x: number;
   y: number;
   vx: number;
@@ -68,6 +69,7 @@ export type Ball = {
 };
 
 export type Hoop = {
+  sootLeft?: number;
   side: -1 | 1;
   x: number;
   y: number;

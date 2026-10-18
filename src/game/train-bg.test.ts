@@ -1,176 +1,104 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  TRAIN_ACCEL_SEC,
-  TRAIN_CRUISE_SEC,
-  TRAIN_DECEL_SEC,
-  TRAIN_INERTIA_K,
-  TRAIN_PARALLAX,
-  TRAIN_SPEED_MAX,
-  TRAIN_SPEED_MIN,
-  getTrainScroll,
-  resetTrainScroll,
-  stepTrainScroll,
-  trainAccel,
-  trainGravScale,
-  trainInertiaAccel,
-  trainScrollShift,
+  TRAIN_ACCEL_SEC, TRAIN_DECEL_SEC, TRAIN_DWELL_SEC, TRAIN_INITIAL_TRAVEL_SEC,
+  TRAIN_INERTIA_K, TRAIN_PARALLAX, TRAIN_SPEED_MAX,
+  getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll,
+  trainAccel, trainGravScale, trainInertiaAccel, trainJourney, trainStationOffsets, trainScrollShift,
 } from "./train-bg.ts";
+const close = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
+const launch = () => { resetTrainScroll(); startTrainScroll(); };
 
-const CYCLE = TRAIN_ACCEL_SEC + TRAIN_CRUISE_SEC + TRAIN_DECEL_SEC;
+test("first station waits indefinitely for a real basket; reset restores all route state", () => {
+  resetTrainScroll(); const before = getTrainScroll();
+  stepTrainScroll(360); assert.deepEqual(getTrainScroll(), before);
+  assert.equal(trainInertiaAccel(), 0);
+  startTrainScroll(); stepTrainScroll(12); resetTrainScroll();
+  assert.deepEqual(getTrainScroll(), before);
+});
 
-test("cycle starts slow, reaches cruise speed, and returns to accel", () => {
-  resetTrainScroll();
-  const start = getTrainScroll();
-  assert.equal(start.phase, "accel");
-  assert.equal(start.trainSpeed, TRAIN_SPEED_MIN);
-  assert.equal(start.near, 0);
-
-  stepTrainScroll(TRAIN_ACCEL_SEC);
-  const cruise = getTrainScroll();
-  assert.equal(cruise.phase, "cruise");
-  assert.equal(cruise.phaseT, 0);
-  assert.ok(Math.abs(cruise.trainSpeed - TRAIN_SPEED_MAX) < 1e-6);
-
-  stepTrainScroll(TRAIN_CRUISE_SEC);
+test("first trip is exactly 60 seconds, stops at its target, dwells five seconds then departs", () => {
+  launch(); const destination = getTrainScroll().nextStationAt;
+  stepTrainScroll(TRAIN_ACCEL_SEC); assert.equal(getTrainScroll().phase, "cruise");
+  close(getTrainScroll().trainSpeed, TRAIN_SPEED_MAX);
+  stepTrainScroll(TRAIN_INITIAL_TRAVEL_SEC - TRAIN_ACCEL_SEC - TRAIN_DECEL_SEC);
   assert.equal(getTrainScroll().phase, "decel");
-
   stepTrainScroll(TRAIN_DECEL_SEC);
-  const again = getTrainScroll();
-  assert.equal(again.phase, "accel");
-  assert.ok(again.phaseT < 1e-6);
-  assert.ok(Math.abs(again.trainSpeed - TRAIN_SPEED_MIN) < 1e-6);
+  const arrival = getTrainScroll();
+  assert.equal(arrival.phase, "parked"); assert.equal(arrival.stationIndex, 1);
+  close(arrival.elapsed, 60); close(arrival.near, destination); close(arrival.trainSpeed, 0);
+  close(trainInertiaAccel(), 0); assert.deepEqual(trainStationOffsets(), [0]);
+  stepTrainScroll(4.99); close(getTrainScroll().near, destination);
+  assert.equal(getTrainScroll().phase, "parked");
+  startTrainScroll(); assert.equal(getTrainScroll().phase, "parked", "basket cannot skip dwell");
+  stepTrainScroll(0.01); assert.equal(getTrainScroll().phase, "accel");
+  close(getTrainScroll().phaseT, 0); close(getTrainScroll().trainSpeed, 0);
+  close(getTrainScroll().legSeconds, 73);
 });
 
-test("accel ramps up and decel ramps down", () => {
-  resetTrainScroll();
-  let prev = TRAIN_SPEED_MIN;
-  const accelSteps = 8;
-  for (let i = 1; i <= accelSteps; i++) {
-    resetTrainScroll();
-    stepTrainScroll((TRAIN_ACCEL_SEC / accelSteps) * i);
-    const speed = getTrainScroll().trainSpeed;
-    assert.ok(speed >= prev - 1e-6);
-    prev = speed;
+test("acceleration rises from zero, peaks mid-ramp and returns to zero continuously", () => {
+  close(trainAccel("accel", 0), 0);
+  const a1 = trainAccel("accel", TRAIN_ACCEL_SEC / 4);
+  const peak = trainAccel("accel", TRAIN_ACCEL_SEC / 2);
+  assert.ok(a1 > 0 && peak > a1);
+  close(trainAccel("accel", TRAIN_ACCEL_SEC * 0.75), a1);
+  close(trainAccel("accel", TRAIN_ACCEL_SEC), 0);
+  close(trainAccel("cruise", 0), 0);
+  close(trainAccel("decel", 0), 0);
+  assert.ok(trainAccel("decel", TRAIN_DECEL_SEC / 2) < 0);
+  close(trainAccel("decel", TRAIN_DECEL_SEC), 0);
+  launch(); stepTrainScroll(TRAIN_ACCEL_SEC / 2);
+  close(getTrainScroll().trainSpeed, TRAIN_SPEED_MAX / 2);
+  assert.ok(trainInertiaAccel() < 0);
+});
+
+test("analytic acceleration matches the derivative of simulated speed", () => {
+  const t = 2.2, epsilon = 0.0001;
+  for (const offset of [0, TRAIN_INITIAL_TRAVEL_SEC - TRAIN_DECEL_SEC]) {
+    launch(); stepTrainScroll(offset + t - epsilon); const v0 = getTrainScroll().trainSpeed;
+    stepTrainScroll(epsilon); const a = trainAccel();
+    stepTrainScroll(epsilon); const v1 = getTrainScroll().trainSpeed;
+    close((v1 - v0) / (2 * epsilon), a, 1e-5);
   }
-  assert.ok(Math.abs(prev - TRAIN_SPEED_MAX) < 1e-6);
-
-  resetTrainScroll();
-  stepTrainScroll(TRAIN_ACCEL_SEC + TRAIN_CRUISE_SEC);
-  prev = TRAIN_SPEED_MAX;
-  const decelSteps = 8;
-  for (let i = 1; i <= decelSteps; i++) {
-    resetTrainScroll();
-    stepTrainScroll(TRAIN_ACCEL_SEC + TRAIN_CRUISE_SEC + (TRAIN_DECEL_SEC / decelSteps) * i);
-    const speed = getTrainScroll().trainSpeed;
-    assert.ok(speed <= prev + 1e-6);
-    prev = speed;
-  }
-  assert.equal(getTrainScroll().phase, "accel");
-  assert.ok(Math.abs(prev - TRAIN_SPEED_MIN) < 1e-6);
 });
 
-test("subdivided accel travels the same distance as one slice", () => {
-  resetTrainScroll();
-  stepTrainScroll(TRAIN_ACCEL_SEC);
-  const once = getTrainScroll().near;
-
-  resetTrainScroll();
-  const steps = 60;
-  const dt = TRAIN_ACCEL_SEC / steps;
-  let covered = 0;
-  for (let i = 0; i < steps - 1; i++) {
-    stepTrainScroll(dt);
-    covered += dt;
-  }
-  stepTrainScroll(TRAIN_ACCEL_SEC - covered);
-  const many = getTrainScroll().near;
-  const expected = ((TRAIN_SPEED_MIN + TRAIN_SPEED_MAX) / 2) * TRAIN_ACCEL_SEC;
-  assert.ok(Math.abs(once - expected) < 1e-4);
-  assert.ok(Math.abs(many - expected) < 1e-4);
-  assert.equal(getTrainScroll().phase, "cruise");
+test("frame subdivision and one large update agree across several arrivals and dwells", () => {
+  launch(); stepTrainScroll(330.5); const once = getTrainScroll();
+  launch(); for (let i = 0; i < 19830; i++) stepTrainScroll(1 / 60);
+  const many = getTrainScroll();
+  assert.equal(many.phase, once.phase); assert.equal(many.stationIndex, once.stationIndex);
+  for (const key of ["near", "mid", "far", "elapsed", "phaseT", "trainSpeed", "nextStationAt"] as const) close(many[key], once[key], 1e-5);
 });
 
-test("parallax layers scroll at 1 / 0.45 / 0.15 and move backward", () => {
-  resetTrainScroll();
-  stepTrainScroll(TRAIN_ACCEL_SEC);
-  const a = getTrainScroll();
-  stepTrainScroll(1);
-  const b = getTrainScroll();
-  const near = b.near - a.near;
-  const mid = b.mid - a.mid;
-  const far = b.far - a.far;
-  assert.ok(near > 0 && mid > 0 && far > 0);
-  assert.ok(Math.abs(near - TRAIN_SPEED_MAX * TRAIN_PARALLAX.near) < 1e-4);
-  assert.ok(Math.abs(mid / near - TRAIN_PARALLAX.mid) < 1e-6);
-  assert.ok(Math.abs(far / near - TRAIN_PARALLAX.far) < 1e-6);
-  assert.ok(near > mid && mid > far);
+test("destinations are fixed at departure, grow with active time, and appear ahead before arrival", () => {
+  assert.ok(trainJourney(120).distance > trainJourney(60).distance);
+  launch(); const first = getTrainScroll().nextStationAt;
+  stepTrainScroll(58); assert.equal(getTrainScroll().nextStationAt, first);
+  const [behind, ahead] = trainStationOffsets();
+  assert.ok(behind! < 0 && ahead! > 0 && ahead! < 100);
+  stepTrainScroll(2); assert.deepEqual(trainStationOffsets(), [0]);
+  stepTrainScroll(TRAIN_DWELL_SEC); const next = getTrainScroll();
+  assert.ok(next.legDistance > first);
+  stepTrainScroll(next.legSeconds); const second = getTrainScroll();
+  assert.equal(second.stationIndex, 2); assert.equal(second.phase, "parked");
+  close(second.near, next.nextStationAt); assert.deepEqual(trainStationOffsets(), [0]);
 });
 
-test("a full cycle in one step lands back on the slow accel start", () => {
-  resetTrainScroll();
-  stepTrainScroll(CYCLE);
+test("parallax maintains spatial ratios while inertia scales with ball gravity", () => {
+  launch(); stepTrainScroll(3);
   const s = getTrainScroll();
-  assert.equal(s.phase, "accel");
-  assert.ok(s.phaseT < 1e-6);
-  assert.ok(Math.abs(s.trainSpeed - TRAIN_SPEED_MIN) < 1e-6);
-});
-
-test("tile shift repeats exactly one tile later and moves scenery left", () => {
-  const tile = 390;
-  assert.equal(trainScrollShift(10, tile), 10);
-  assert.equal(trainScrollShift(tile, tile), 0);
-  assert.equal(trainScrollShift(tile + 10, tile), 10);
-  assert.equal(trainScrollShift(tile * 4 + 10, tile), trainScrollShift(10, tile));
-  assert.equal(trainScrollShift(-10, tile), tile - 10);
-  const x0 = -trainScrollShift(0, tile);
-  const x1 = -trainScrollShift(30, tile);
-  assert.ok(x1 < x0);
-});
-
-test("train acceleration is the linear ramp, and the ball feels the opposite", () => {
-  const span = TRAIN_SPEED_MAX - TRAIN_SPEED_MIN;
-  const accel = span / TRAIN_ACCEL_SEC;
-  const decel = -span / TRAIN_DECEL_SEC;
-  assert.ok(Math.abs(trainAccel("accel") - accel) < 1e-9);
-  assert.equal(trainAccel("cruise"), 0);
-  assert.ok(Math.abs(trainAccel("decel") - decel) < 1e-9);
-  assert.ok(trainAccel("accel") > 0);
-  assert.ok(trainAccel("decel") < 0);
-
-  assert.ok(Math.abs(trainInertiaAccel("accel") - -accel * TRAIN_INERTIA_K) < 1e-9);
-  assert.equal(trainInertiaAccel("cruise"), 0);
-  assert.ok(Math.abs(trainInertiaAccel("decel") - -decel * TRAIN_INERTIA_K) < 1e-9);
-  assert.ok(trainInertiaAccel("accel") < 0);
-  assert.ok(trainInertiaAccel("decel") > 0);
-
-  resetTrainScroll();
-  assert.equal(trainAccel(), trainAccel("accel"));
-  stepTrainScroll(TRAIN_ACCEL_SEC);
-  assert.equal(trainAccel(), 0);
-  stepTrainScroll(TRAIN_CRUISE_SEC);
-  assert.ok(trainAccel() < 0);
-});
-
-test("heavier balls feel more horizontal inertia, lighter balls less", () => {
-  const classic = trainInertiaAccel("accel", TRAIN_INERTIA_K, 1);
-  const heavy = trainInertiaAccel("accel", TRAIN_INERTIA_K, trainGravScale(1.4, 1));
-  const light = trainInertiaAccel("accel", TRAIN_INERTIA_K, trainGravScale(0.9, 1));
-  assert.ok(Math.abs(heavy - classic * 1.4) < 1e-9);
-  assert.ok(Math.abs(light - classic * 0.9) < 1e-9);
-  assert.ok(Math.abs(heavy) > Math.abs(classic) && Math.abs(classic) > Math.abs(light));
-  assert.equal(trainInertiaAccel("cruise", TRAIN_INERTIA_K, 1.4), 0);
-  assert.equal(trainGravScale(0, 1), 0);
+  close(s.mid / s.near, TRAIN_PARALLAX.mid); close(s.far / s.near, TRAIN_PARALLAX.far);
+  const basic = trainInertiaAccel();
+  close(trainInertiaAccel(undefined, TRAIN_INERTIA_K, trainGravScale(1.4, 1)), basic * 1.4);
+  close(trainInertiaAccel(undefined, TRAIN_INERTIA_K, trainGravScale(0.9, 1)), basic * 0.9);
   assert.equal(trainGravScale(2, 0), 1);
-  assert.equal(trainGravScale(Number.NaN, 1), 1);
+  stepTrainScroll(54); assert.ok(trainInertiaAccel() > 0);
 });
 
-test("non-positive dt does not move the train", () => {
-  resetTrainScroll();
-  stepTrainScroll(0);
-  stepTrainScroll(-1);
-  const s = getTrainScroll();
-  assert.equal(s.phase, "accel");
-  assert.equal(s.near, 0);
-  assert.equal(s.trainSpeed, TRAIN_SPEED_MIN);
+test("invalid steps and duplicate launch calls do not mutate a moving route", () => {
+  launch(); stepTrainScroll(1); const before = getTrainScroll();
+  for (const dt of [0, -1, NaN, Infinity]) stepTrainScroll(dt);
+  startTrainScroll(); assert.deepEqual(getTrainScroll(), before);
+  assert.equal(trainScrollShift(400, 390), 10);
+  assert.equal(trainScrollShift(-10, 390), 380);
 });

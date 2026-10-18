@@ -61,6 +61,14 @@ export function superImpact(s:SuperState,b:Body,opts?:{shield?:boolean;nx?:numbe
   s.impact={at:s.clock};s.dash=null;s.chain=0;s.lastSwipe=-Infinity;
   return false;
 }
+/** Eagle grip requires two complete segments, never a partial shield payment. */
+export function superBirdImpact(s:SuperState,b:Body,catching:boolean,nx:number,ny:number) {
+  if (catching && s.shield) {
+    if (s.energy + 1e-8 < SUPER.segment * 2) return false;
+    spend(s, SUPER.segment * 2); s.flash = 0.18; return true;
+  }
+  return superImpact(s,b,{nx,ny});
+}
 export function superBaseBonus(s:SuperState){return s.shield?superSegments(s)*2:0;}
 export function superScore(s:SuperState,score:number,wasShield=s.shield){
   // A make cannot perfect-cancel: drop any pending rim/board/car window.

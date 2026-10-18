@@ -1,5 +1,9 @@
+import { stepTrainSmoke } from "./train-smoke";
+import { getTrainTunnel, restoreTrainTunnel, stepTrainTunnel, tunnelPassing, tunnelReserved, tunnelHoopMin, tunnelGeometry, collideTunnel } from "./train-tunnel.ts";
+import { collideTrainGantries, getTrainGantries, getTrainGantryWarnings } from "./train-gantry.ts";
+import { createBirds, stepBirds, collideBirds, collideFrozenBirds, releaseBirdCarrier, type BirdSkills, collideBirdGantries, birdOwnsBall, spawnBirdWave, type BirdKind, type BirdState } from "./birds.ts";
 import { createRocket, rocketLayout, releaseRocket, stepRocket, refillRocket, drawRocket } from "./rocket";
-import { SUPER, createSuper, superSwipe, superImpact, superToggle, superPulseShield, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper, drawSuperGhosts, drawSuperGas, drawSuperAura, superIsFrozen } from "./super";
+import { SUPER, createSuper, superSwipe, superImpact, superBirdImpact, superToggle, superPulseShield, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper, drawSuperGhosts, drawSuperGas, drawSuperAura, superIsFrozen } from "./super";
 import { VECTOR, createVector, vectorLayout, vectorRecover, vectorMake, vectorRelease, vectorHold, cancelVectorPress, drawVector, vectorPulse, vectorChargeScale, vectorFinishBurst, stepVectorLeak, vectorLeakBounce, stepVectorCorrection } from "./vector";
 import { createAudio } from "./audio";
 import { primeArt, artProgress, reloadSceneArt } from "./art";
@@ -28,7 +32,7 @@ import { DEFAULT_MAZE, DEFAULT_PHYS, clampMaze, clampPhys, clampPhysKey, wantDev
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
-import { TRAIN_INERTIA_K, getTrainScroll, resetTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
+import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
@@ -191,6 +195,8 @@ export function createGame(
   let booted = artProgress().ready;
   let lastLoadN = booted ? 100 : -1;
   let score = 0;
+  // Lasts for this whole run (including rogue stages), never saved across new games.
+  let birdBaseBonus = 0;
   let best = save.best;
   let bestMinute = save.bestMinute ?? 0;
   let bestRogue = save.bestRogue ?? 0;
@@ -781,6 +787,7 @@ export function createGame(
   let running = true;
   let prevBallY = 0;
   let prevBallX = 0;
+  let birds = createBirds();
   let tapLock = 0;
   let scoredLock = 0;
   /** Physical hoop that last accepted a make; clears the per-ball score gate once exited. */
@@ -962,6 +969,14 @@ export function createGame(
     cloudSx: number;
     cloudSy: number;
     stageState: unknown;
+    trainRoute: ReturnType<typeof getTrainScroll>;
+    tunnel: ReturnType<typeof getTrainTunnel>;
+    birds: BirdState;
+    birdBaseBonus: number;
+    frostBonus: number; glassBase: number;
+    holeLived: number; holeScoreAcc: number; holeTick: number;
+    overRim: boolean; otherOverRim: boolean; scoredLock: number; rimHitLock: number; boardHitLock: number;
+    shotState: { open: boolean; made: boolean; missed: boolean; airborne: boolean; rimHits: number; hitBoardTop: boolean; wentOffTop: boolean; fromBelow: boolean; gate: "hoop" | "other" | null };
   };
   let rewindHistory: RewindSnapshot[] = [];
   let rewindSampleLeft = 0;
@@ -1003,16 +1018,34 @@ export function createGame(
       pathClock,
       time, cloudT, cloudShift, cloudHop, cloudMode, cloudSx, cloudSy,
       stageState: stageMod.rewindState?.(),
+      trainRoute: getTrainScroll(), tunnel: getTrainTunnel(),
+      birds: structuredClone(birds),
+      birdBaseBonus, frostBonus, glassBase, holeLived, holeScoreAcc, holeTick,
+      overRim, otherOverRim, scoredLock, rimHitLock, boardHitLock,
+      shotState: { open: shotOpen, made: shotMade, missed: shotMissed, airborne: shotAirborne,
+        rimHits, hitBoardTop, wentOffTop, fromBelow, gate: scoreGateHoop === hoop ? "hoop" : other && scoreGateHoop === other ? "other" : null },
     });
     const maxSamples = Math.ceil(REWIND_SECONDS / REWIND_SAMPLE_SECONDS) + 2;
     if (rewindHistory.length > maxSamples) rewindHistory.shift();
   }
 
   function restoreRewindSnapshot(snapshot: RewindSnapshot) {
+    restoreTrainScroll(snapshot.trainRoute); restoreTrainTunnel(snapshot.tunnel);
+    birds = structuredClone(snapshot.birds);
+    birdBaseBonus = snapshot.birdBaseBonus;
+    frostBonus = snapshot.frostBonus; glassBase = snapshot.glassBase;
+    holeLeft = snapshot.holeLeft; holeLived = snapshot.holeLived; holeScoreAcc = snapshot.holeScoreAcc; holeTick = snapshot.holeTick;
+    overRim = snapshot.overRim; otherOverRim = snapshot.otherOverRim;
+    scoredLock = snapshot.scoredLock; rimHitLock = snapshot.rimHitLock; boardHitLock = snapshot.boardHitLock;
     ball = structuredClone(snapshot.ball);
     traffic = structuredClone(snapshot.traffic);
     hoop = structuredClone(snapshot.hoop);
     other = snapshot.other ? structuredClone(snapshot.other) : null;
+    shotOpen = snapshot.shotState.open; shotMade = snapshot.shotState.made;
+    shotMissed = snapshot.shotState.missed; shotAirborne = snapshot.shotState.airborne;
+    rimHits = snapshot.shotState.rimHits; hitBoardTop = snapshot.shotState.hitBoardTop;
+    wentOffTop = snapshot.shotState.wentOffTop; fromBelow = snapshot.shotState.fromBelow;
+    scoreGateHoop = snapshot.shotState.gate === "hoop" ? hoop : snapshot.shotState.gate === "other" ? other : null;
     particles = structuredClone(snapshot.particles);
     callouts = structuredClone(snapshot.callouts);
     mazeHoles = structuredClone(snapshot.mazeHoles);
@@ -1426,7 +1459,7 @@ export function createGame(
 
   /** Fictitious horizontal accel for the ball on the train. 0 off the train and in cruise. */
   function trainPull() {
-    if (!trainBackdropOn()) return 0;
+    if (!trainBackdropOn() || phase !== "playing") return 0;
     return trainInertiaAccel(undefined, TRAIN_INERTIA_K, trainGravScale(gravity(), baseBallGravity()));
   }
 
@@ -1585,8 +1618,10 @@ export function createGame(
   function applyScenePack(id: SceneId) {
     if (getSceneId() === id) return;
     setScene(id);
+    birds = createBirds();
     traffic = createTraffic();
     ball.trafficSafe = false;
+    ball.sootLeft = 0; hoop.sootLeft = 0; if (other) other.sootLeft = 0;
     clearSceneLayers();
     reloadSceneArt();
     if (id === "train") resetTrainScroll();
@@ -2683,6 +2718,16 @@ export function createGame(
     world = layout(cssW, cssH);
     const sx = prev.w > 1 ? world.w / prev.w : 1;
     const sy = prev.h > 1 ? world.h / prev.h : 1;
+    for (const b of birds.birds) {
+      b.x *= sx; b.px *= sx; b.y *= sy; b.py *= sy;
+      b.vx *= sx; b.vy *= sy; b.baseY *= sy;
+      b.flightVx = birds.trainSpeed + (b.flightVx - birds.trainSpeed) * sx; b.exitX *= sx;
+      b.r = world.ballR * (b.kind === "eagle" ? 1.05 : 0.9);
+    }
+    if (birds.respawn) {
+      birds.respawn.x *= sx; birds.respawn.y *= sy;
+      birds.respawn.vx *= sx; birds.respawn.vy *= sy;
+    }
     for (const vehicle of traffic.vehicles) {
       vehicle.x *= sx;
       vehicle.prevX *= sx;
@@ -2702,7 +2747,7 @@ export function createGame(
     ball.x *= sx;
     ball.y *= sy;
     ball.r = activeBallR();
-    if (ball.y + ball.r > world.floorY) ball.y = world.floorY - ball.r;
+    if (!birdOwnsBall(birds) && ball.y + ball.r > world.floorY) ball.y = world.floorY - ball.r;
     if (holeOn) {
       const c = holeCenter();
       holeX = c.x;
@@ -2768,7 +2813,92 @@ export function createGame(
     if (opts.rescue) balanceRescues += 1;
   }
 
+  function rewardBirdStuns(count: number) {
+    if (count <= 0) return;
+    birdBaseBonus += count * 2;
+    const stunned = birds.birds.find(b => b.mode === "stunned" && b.modeTime === 0);
+    callouts.push({ text: `基础 +${count * 2}`, x: Math.max(50, Math.min(world.w - 50, stunned?.x ?? ball.x)),
+      y: Math.max(90, Math.min(world.floorY - 40, (stunned?.y ?? ball.y) - ball.r * 2)), life: 1.1, max: 1.1, kind: "base" });
+    emitHud();
+  }
+
+  function birdSkills(): BirdSkills {
+    return {
+      unobservable: quantumTunnelLeft > 0,
+      lethal: (isHacker() && hackerAwaken) || (isBolt() && (Boolean(boltStorm) || (boltCharge > 90 && !ball.scored))),
+      burn: heatN() >= STAGE_IGNITE,
+      frostChance: isFrost() ? frostChance() : 0,
+      hole: holeOn ? { x: holeX, y: holeY, r: holeR } : undefined,
+      block: isSuper() ? (catching, nx, ny) => superBirdImpact(superBall, ball, catching, nx, ny) : undefined,
+    };
+  }
+
+  function settleBirdEffects(iceBefore: number, absorbedBefore: number) {
+    const frostGain = (birds.iceBreaks - iceBefore) * 3;
+    if (frostGain > 0) {
+      frostBonus += frostGain;
+      callouts.push({ text: `基础 +${frostGain}`, x: ball.x, y: ball.y - ball.r * 2, life: 1, max: 1, kind: "base" });
+      emitHud();
+    }
+    rewardBirdStuns(birds.absorbed - absorbedBefore);
+  }
+
+  function stepBirdIce(scrollDelta: number) {
+    if (!birds.birds.some(b => b.mode === "frozen")) return;
+    const boxes: Array<{ x: number; y: number; w: number; h: number; shift?: number }> = [
+      { x: -world.w, y: world.floorY, w: world.w * 3, h: world.h },
+    ];
+    const segments: Array<{ x0: number; y0: number; x1: number; y1: number; halfW: number }> = [];
+    for (const target of other ? [hoop, other] : [hoop]) {
+      if (!target.noBoard) {
+        const g = boardGeom(target, world);
+        boxes.push({ x: g.visX, y: g.visY, w: g.visW, h: g.bh });
+        segments.push(...braceColliders(target, world));
+      }
+      for (const side of [-1, 1]) boxes.push({ x: target.x + side * target.inner - target.tube, y: target.y - target.tube, w: target.tube * 2, h: target.tube * 2 });
+    }
+    for (const gantry of getTrainGantries(world, getTrainScroll(), Math.abs(scrollDelta) + world.ballR * 3)) {
+      for (const rect of gantry.rects) boxes.push({ ...rect, shift: scrollDelta });
+    }
+    if (tunnelPassing()) {
+      const g = tunnelGeometry(world);
+      boxes.push({ x: g.x, y: -world.h * 4, w: g.end - g.x, h: world.h * 4 + g.roof, shift: scrollDelta });
+    }
+    collideFrozenBirds(birds, boxes, segments);
+  }
+
+  function resolveBirdContact(fromX: number, fromY: number) {
+    const iceBefore = birds.iceBreaks, absorbedBefore = birds.absorbed;
+    let incoming = 0, contactDistance = 0;
+    const skills = birdSkills();
+    skills.contact = (impact, distance) => { incoming = impact; contactDistance = distance; };
+    const hit = collideBirds(birds, ball, fromX, fromY, skills);
+    settleBirdEffects(iceBefore, absorbedBefore);
+    if (!hit) return null;
+    if (hit === "knockdown") rewardBirdStuns(1);
+    if (isGlass() && hit !== "knockdown" && hit !== "caught" && !glassBoardHurtShot) {
+      const damage = glassScaledHurt(incoming, contactDistance, GLASS_BOARD_HURT_MAX, 520, ball.r * 2);
+      if (damage > 0) { glassBoardHurtShot = true; hurtGlass(damage, ball.x, ball.y); }
+    }
+    prevBallX = ball.x; prevBallY = ball.y;
+    resetShotFlags(); resetTrail(); audio.board(0.45);
+    if (hit === "caught") {
+      const caughtBody = { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy };
+      const parryPointer = isSuper() ? superBall.pointer : null;
+      cancelVectorInput(); vector.burst = 0; vector.correction = null; vector.anchor = null;
+      vector.trail = []; superBall.ghosts = [];
+      superBall.pending = null; superBall.queue = []; superBall.dash = null; superBall.pointer = parryPointer;
+      releaseRocket(rocket, ball); pointerHeld = false; boltPendingTap = false; boltStorm = null;
+      holeOn = false; hackerDir = null;
+      ball.scored = false; scoreGateHoop = null;
+      Object.assign(ball, caughtBody);
+    }
+    return hit;
+  }
+
   function beginPlay() {
+    birdBaseBonus = 0;
+    birds = createBirds();
     traffic = createTraffic();
     ball.trafficSafe = false;
     resetBalanceTrialCounters();
@@ -2803,6 +2933,8 @@ export function createGame(
     hackerSpeed = HACKER_SPEED_BASE;
     clearSparseCodeRain();
     madeCount = 0;
+    resetTrainScroll();
+    ball.sootLeft = 0;
     if (isRogueMode()) {
       rogueRun = createRogueRun();
       rogueStageDecay = null;
@@ -3171,9 +3303,12 @@ export function createGame(
   }
 
   function startRogueStageCourt() {
+    birds = createBirds();
     traffic = createTraffic();
     ball.trafficSafe = false;
     madeCount = 0;
+    resetTrainScroll();
+    ball.sootLeft = 0;
     score = 0;
     mazeBaseBonus = 0;
     combo = 0;
@@ -3611,6 +3746,7 @@ export function createGame(
   }
 
   function tapJump(pointerId: number = -1) {
+    if (birdOwnsBall(birds)) return;
     if (!booted) return;
     if (phase === "title") {
       audio.unlock();
@@ -3763,6 +3899,8 @@ export function createGame(
     audio.unlock();
     if (phase === "over") return;
     e.preventDefault();
+    if (birdOwnsBall(birds) && !(isSuper() || isVector() || isTime())) return;
+    if (birdOwnsBall(birds) && isSuper() && !superBall.impact) return;
     if(phase==="playing" && isSuper()) {
       if(paused || buzzer || timeUp || stageMod.holdsBall?.() || superBall.pointer) return;
       const p=pointerWorld(e),bar=superLayout(world);
@@ -3813,6 +3951,7 @@ export function createGame(
         return;
       }
     }
+    if (birdOwnsBall(birds) && !isTime()) return;
     pointerHeld = true;
     if (phase === "playing" && !paused && isTime() && !timeRewindBlocked()) {
       const point = pointerWorld(e);
@@ -3875,6 +4014,8 @@ export function createGame(
   }
 
   function onMove(e: PointerEvent) {
+    if (birdOwnsBall(birds) && !(isSuper() || isVector())) return;
+    if (birdOwnsBall(birds) && isSuper() && !superBall.impact) return;
     if(isSuper() && superBall.pointer?.id===e.pointerId){
       const start=superBall.pointer,p=pointerWorld(e);superBall.lastAction=superBall.clock;
       if(!start.used && Math.hypot(p.x-start.x,p.y-start.y)>=SUPER.swipeSlop){
@@ -3887,6 +4028,7 @@ export function createGame(
           const result=superSwipe(superBall,ball,p.x-start.x,p.y-start.y);
           if(result==='dash'){prepareVectorShot();}
           if(result==='parry'){
+            if (releaseBirdCarrier(birds)) rewardBirdStuns(1);
             traffic.launched=false;
             ball.vx=0;ball.vy=0;ball.omega=0;
             ball.hitRim=false;ball.hitBoard=false;hitBoardTop=false;
@@ -3915,6 +4057,7 @@ export function createGame(
   }
 
   function onUp(e: PointerEvent) {
+    if (birdOwnsBall(birds) && !(isSuper() || isVector() || isTime())) { pointerHeld = false; return; }
     if(isSuper() && superBall.pointer?.id===e.pointerId){
       superBall.pointer=null;
       superTapUndo=null;
@@ -3925,7 +4068,10 @@ export function createGame(
     if (vector.pointer === e.pointerId) {
       releaseVectorAnchor();
       if (e.type === "pointercancel" || e.type === "lostpointercapture" || paused || phase !== "playing" || buzzer || timeUp || stageMod.holdsBall?.()) cancelVectorInput();
-      else if (vectorRelease(vector) === "correct") startVectorCorrection();
+      else if (vectorRelease(vector) === "correct") {
+        if (releaseBirdCarrier(birds)) rewardBirdStuns(1);
+        startVectorCorrection();
+      }
       return;
     }
     if (timeRewindPointer === e.pointerId) {
@@ -3966,6 +4112,7 @@ export function createGame(
       }
       return;
     }
+    if (birdOwnsBall(birds)) return;
     if (phase === "playing" && !paused && isHacker() && hackerAwaken) {
       const directions: Record<string, HackerDir> = {
         ArrowLeft: "l",
@@ -4018,6 +4165,8 @@ export function createGame(
   }
 
   function goTitle() {
+    birdBaseBonus = 0;
+    birds = createBirds();
     traffic = createTraffic();
     ball.trafficSafe = false;
     phase = "title";
@@ -4034,6 +4183,8 @@ export function createGame(
     streak = 0;
     hint = true;
     madeCount = 0;
+    resetTrainScroll();
+    ball.sootLeft = 0;
     hackerDir = null;
     hackerAwaken = false;
     vector = createVector(); superBall = createSuper();
@@ -4715,7 +4866,8 @@ export function createGame(
       stepRewind(dt);
       return;
     }
-    stepVector(dt);
+    if (!birdOwnsBall(birds)) stepVector(dt);
+    else if (isVector() && vector.pointer !== null) vector.held += dt;
     if(isSuper() && phase==='playing') {
       stepSuper(superBall,ball,dt);
       if(buzzer || timeUp || stageMod.holdsBall?.()){superBall.pending=null;superBall.queue=[];superBall.dash=null;superBall.pointer=null;superTapUndo=null;}
@@ -4727,7 +4879,7 @@ export function createGame(
       ball.blink = quantumTunnelLeft > 0;
       if (quantumTunnelLeft <= 0) ball.blink = false;
     }
-    stepMazeHoles(dt);
+    if (!birdOwnsBall(birds)) stepMazeHoles(dt);
     if (camShake > 0) camShake = Math.max(0, camShake - dt);
     else camShake = 0;
     if (whiteFlash > 0) whiteFlash = Math.max(0, whiteFlash - dt);
@@ -4736,6 +4888,22 @@ export function createGame(
     if (hitstop > 0) {
       hitstop -= dt;
       return;
+    }
+    const trainBefore = getTrainScroll().near;
+    if (phase === "playing" && trainBackdropOn()) {
+      stepTrainScroll(dt);
+      const smokyHoops = [hoop, ...(other ? [other] : [])].map(h => ({ x: h.x, y: h.y, r: h.inner, sootLeft: h.sootLeft }));
+      stepTrainSmoke(dt, getTrainScroll().trainSpeed, world, [ball, ...birds.birds, ...smokyHoops], getTrainScroll());
+      hoop.sootLeft = smokyHoops[0].sootLeft;
+      if (other) other.sootLeft = smokyHoops[1].sootLeft;
+      stepTrainTunnel(getTrainScroll(), world, dt, () => {
+        const minimum = tunnelHoopMin(world);
+        const safeHoop = (h: Hoop) => h.y >= minimum && (h.moving || h.baseY >= minimum);
+        return safeHoop(hoop) && (!other || safeHoop(other)) &&
+          !birdOwnsBall(birds) && !birds.enteringFromTop && birds.birds.length === 0 &&
+          ball.y - ball.r > getTrainTunnel().depth * world.h + world.ballR &&
+          getTrainGantries(world, getTrainScroll()).length === 0;
+      });
     }
     if (trafficEnabled() && madeCount > 0) {
       stepTraffic(traffic, world, dt);
@@ -4750,7 +4918,7 @@ export function createGame(
     if (burnFlash > 0) burnFlash = Math.max(0, burnFlash - dt);
 
     // Overheat locks the ball only. Clock, hoops, frost, combo, and stage mechanisms keep stepping.
-    const boltOverheated = stepBoltOverheat(dt);
+    const boltOverheated = !birdOwnsBall(birds) && stepBoltOverheat(dt);
 
     if (
       !boltOverheated &&
@@ -4898,8 +5066,16 @@ export function createGame(
 
     stepHoop(hoop, dt);
     tickFrost(hoop, dt, false);
-    if (phase === "playing" && !paused) {
+    if (phase === "playing" && !paused && !birdOwnsBall(birds)) {
       stageMod.update(dt, modifierHost());
+    }
+    if (trainBackdropOn() && tunnelPassing()) {
+      // Modifiers can move ghost/frozen targets outside stepHoop's normal path.
+      for (const target of other ? [hoop, other] : [hoop]) {
+        const shift = Math.max(0, tunnelHoopMin(world) - target.y);
+        if (shift > 0) { target.y += shift; nudgeNet(target, 0, shift); }
+        target.baseY = Math.max(tunnelHoopMin(world), target.baseY);
+      }
     }
     if (other) {
       if (other.jolt > 0) other.jolt = Math.max(0, other.jolt - dt / 0.28);
@@ -4931,11 +5107,42 @@ export function createGame(
       }
     }
 
+    if (trainBackdropOn() && (phase === "playing" || birdOwnsBall(birds))) {
+      const wasOwned = birdOwnsBall(birds);
+      const iceBefore = birds.iceBreaks, absorbedBefore = birds.absorbed;
+      const route = getTrainScroll(), scrollDelta = route.near - trainBefore;
+      const relativeTrainSpeed = scrollDelta / dt;
+      const returned = stepBirds(birds, world, ball, dt, phase === "playing" && madeCount > 0 && !buzzer && !timeUp && !tunnelReserved(), Math.random, relativeTrainSpeed, madeCount, birdSkills());
+      // Eagles leave naturally at their next edge rather than reentering a tunnel.
+      if (tunnelReserved()) birds.birds = birds.birds.filter(b => b.mode !== "outside");
+      if (phase === "playing") {
+        const padding = birds.birds.reduce((max, b) => Math.max(max, Math.abs(b.x - b.px + scrollDelta) + b.r * 3), 0);
+        // Environmental stuns do not grant the basketball's permanent base bonus.
+        collideBirdGantries(birds, getTrainGantries(world, route, padding), scrollDelta);
+      }
+      stepBirdIce(scrollDelta);
+      settleBirdEffects(iceBefore, absorbedBefore);
+      if (returned) {
+        ball.scored = false; scoreGateHoop = null; scoredLock = 0;
+        resetShotFlags(); resetTrail(); syncChain();
+      }
+      if (wasOwned || birdOwnsBall(birds) || returned) {
+        prevBallX = ball.x; prevBallY = ball.y;
+        stepParticles(dt);
+        stepNet(hoop, ball, ball.x, ball.y, world, dt, time, false);
+        if (other) stepNet(other, ball, ball.x, ball.y, world, dt, time, false);
+        captureRewindSnapshot(dt);
+        return;
+      }
+    }
+
     boltFloorGrip = false;
     boltFloorSpeed = 0;
     boltBoardGrip = false;
     boltFastFill = false;
+    const boltFromX = ball.x, boltFromY = ball.y;
     const boltLock = boltOverheated || stepBoltStorm(dt) || vector.anchor !== null;
+    if (boltLock && boltStorm && trainBackdropOn() && phase === "playing") resolveBirdContact(boltFromX, boltFromY);
 
     if (!boltLock) {
     prevBallX = ball.x;
@@ -5085,6 +5292,23 @@ export function createGame(
         ball.x += ball.vx * dt * move;
         ball.y += ball.vy * dt * move;
       }
+      if (trainBackdropOn() && phase === "playing" && quantumTunnelLeft <= 0) {
+        if (resolveBirdContact(prevBallX, prevBallY) === "caught") {
+          captureRewindSnapshot(dt); return;
+        }
+        const incomingVx = ball.vx, incomingVy = ball.vy;
+        const route = getTrainScroll();
+        if (collideTunnel(world, ball, prevBallX, prevBallY, dt) || collideTrainGantries(world, route, ball, prevBallX, prevBallY, route.near - trainBefore, dt, isSuper() ? (nx, ny) => superCancelsSolid(nx, ny) : undefined)) {
+          vectorCollision(incomingVx, incomingVy);
+          shotAirborne = true;
+          // Do not let the displacement caused by a collision count as a basket.
+          prevBallX = ball.x; prevBallY = ball.y;
+          if (boardHitLock <= 0) {
+            audio.board(0.7); boardHitLock = 0.12;
+            if (gfx.impact) camShake = Math.max(camShake, 0.1);
+          }
+        }
+      }
       const rocketFreeY=ball.y,rocketFreeVy=ball.vy;
       if (trafficEnabled() && phase === "playing") {
         const vectorIncoming = {vx:ball.vx,vy:ball.vy};
@@ -5155,7 +5379,7 @@ export function createGame(
       }
       // Resolve traffic escape before hacker wrapping; otherwise side wrapping hides it.
       if (hacking) wrapHackerBounds();
-      if (isMaze() && ball.y - ball.r < 0 && !(trafficEnabled() && traffic.launched)) {
+      if (isMaze() && !birds.enteringFromTop && ball.y - ball.r < 0 && !(trafficEnabled() && traffic.launched)) {
         // The top of the court is a solid wall for the rolling-board mode.
         // Keep the normal impact speed and reflect it with maze restitution.
         const impact = -ball.vy;
@@ -5166,7 +5390,7 @@ export function createGame(
           if (phase !== "title") audio.board(Math.min(1, impact / 700));
         }
       }
-      if (ball.y + ball.r < 0) wentOffTop = true;
+      if (ball.y + ball.r < 0 && !birds.enteringFromTop) wentOffTop = true;
       // Leash before wrap so a taut chain yanks the ball and can block side-respawn.
       if (phase === "playing" && !stageMod.holdsBall?.()) {
         stageMod.afterPhysics?.(dt, modifierHost());
@@ -5174,9 +5398,10 @@ export function createGame(
       if(isRocket()) {
         if(ball.x<ball.r){ball.x=ball.r;ball.vx=Math.max(0,ball.vx);}
         if(ball.x>world.w-ball.r){ball.x=world.w-ball.r;ball.vx=Math.min(0,ball.vx);}
-        if(ball.y<ball.r){ball.y=ball.r;ball.vy=Math.max(0,ball.vy);}
+        if(ball.y<ball.r && !birds.enteringFromTop){ball.y=ball.r;ball.vy=Math.max(0,ball.vy);}
       } else if (vector.burst > 0) vectorBounds();
       else if (!hacking) wrapX();
+      if (birds.enteringFromTop && ball.y >= ball.r) birds.enteringFromTop = false;
       pushNinjaPath(dt);
       stepNinjaGhosts(dt);
       pushTrail();
@@ -5316,7 +5541,7 @@ export function createGame(
   }
 
   function boardTravel() {
-    return hoopYLimits(world);
+    return hoopYLimits(world, tunnelPassing());
   }
 
   function rollMoveSpeed() {
@@ -5389,6 +5614,10 @@ export function createGame(
     } else {
       h.x += (h.targetX - h.x) * (1 - Math.exp(-11 * dt));
       h.y += (h.baseY - h.y) * (1 - Math.exp(-8 * dt));
+    }
+    if (trainBackdropOn() && tunnelPassing()) {
+      const minY = tunnelHoopMin(world);
+      h.y = Math.max(minY, h.y); h.baseY = Math.max(minY, h.baseY);
     }
     nudgeNet(h, h.x - ox, h.y - oy);
   }
@@ -6187,6 +6416,7 @@ export function createGame(
     }
 
     madeCount += 1;
+    if (trainBackdropOn()) startTrainScroll();
     if (!ghost) {
       // Dynamic hoop: +0.4% chance per make, cap 50%; scoring a mover raises speed hi.
       moveChance = Math.min(MOVE_CHANCE_MAX, moveChance + MOVE_CHANCE_STEP);
@@ -6234,9 +6464,10 @@ export function createGame(
     if (isRogueMode() && rogueRun && hasChaosBase(rogueRun) && !bunshinGhost && !ninjaGhost) {
       basePart = Math.floor(Math.random() * 26) - 10;
     }
+    basePart += birdBaseBonus;
     const superShieldScore = !ghost && isSuper() && superBall.shield;
     if(!ghost && isSuper()) basePart+=superBaseBonus(superBall);
-    let gain = bunshinGhost ? 1 : ninjaGhost ? 0 : basePart + streakPart;
+    let gain = bunshinGhost ? 1 + birdBaseBonus : ninjaGhost ? birdBaseBonus : basePart + streakPart;
     if (!bunshinGhost && !ninjaGhost) {
       if (trafficEnabled()) gain += traffic.nearMiss;
       if (isFrost()) gain += frostBonus;
@@ -6772,7 +7003,7 @@ export function createGame(
       if (!paused) {
         const dt = Math.min(raw, 0.1);
         time += dt;
-        if (!rewindActive && trainBackdropOn()) stepTrainScroll(dt);
+
         acc += dt;
         const MAX_STEPS = 3;
         let steps = 0;
@@ -6890,7 +7121,7 @@ export function createGame(
               const pack = getScene().traffic;
               if (trafficEnabled() && pack) drawTrafficWorld(c, traffic, world, pack.textures, time);
               stageMod.drawWorldBack?.(c, world, time);
-              if (isSuper()) {
+              if (isSuper() && !birdOwnsBall(birds)) {
                 drawSuperGhosts(c, superBall, ball.r, (x, y, radius, alpha) => {
                   c.save();
                   c.globalAlpha = alpha;
@@ -6913,6 +7144,8 @@ export function createGame(
               ? { gravity: mazePointerId === null ? { x: 0, y: 0 } : mazeGravity }
               : null,
             phase === "playing" && isTime() ? { energy: timeEnergy, active: rewindActive, disabled: timeRewindBlocked() } : null,
+            trainBackdropOn() ? birds : null,
+            birdBaseBonus,
           );
           if (phase === "playing" && isRocket()) drawRocket(ctx,world,rocket,ball,time);
           if (phase === "playing" && isVector()) drawVector(ctx, world, vector, paused || buzzer || timeUp);
@@ -7131,6 +7364,13 @@ export function createGame(
         phase,
         sceneId: getSceneId(),
         train: trainBackdropOn() ? getTrainScroll() : null,
+        tunnel: trainBackdropOn() ? getTrainTunnel() : null,
+        trainGantries: trainBackdropOn() ? getTrainGantries(world, getTrainScroll()) : [],
+        trainWarnings: trainBackdropOn() ? getTrainGantryWarnings(world, getTrainScroll()) : [],
+        birds: trainBackdropOn() ? structuredClone(birds) : null,
+        birdBaseBonus,
+        frostBonus, glassBase, quantumTunnelLeft, hackerAwaken,
+        blackHole: holeOn ? { x: holeX, y: holeY, r: holeR, left: holeLeft } : null,
         traffic: trafficEnabled() ? {
           vehicles: traffic.vehicles.map(v => ({ ...v })),
           warnings: traffic.warnings.map(v => ({ ...v })),
@@ -7166,8 +7406,8 @@ export function createGame(
         stage: fireStage(heatN()),
         sear: other?.sear ?? 0,
         burnFlash,
-        ball: { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy, r: ball.r, scored: ball.scored, omega: ball.omega, spin: ball.spin },
-        hoop: { x: hoop.x, y: hoop.y, side: hoop.side, inner: hoop.inner, moving: hoop.moving, moveKind: hoop.moveKind, moveDir: hoop.moveDir },
+        ball: { sootLeft: ball.sootLeft, x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy, r: ball.r, scored: ball.scored, omega: ball.omega, spin: ball.spin },
+        hoop: { sootLeft: hoop.sootLeft, x: hoop.x, y: hoop.y, side: hoop.side, inner: hoop.inner, moving: hoop.moving, moveKind: hoop.moveKind, moveDir: hoop.moveDir },
         netBottom: hoop.net.reduce((m, n) => Math.max(m, n.y), hoop.y),
         netMinY: hoop.net.reduce((m, n) => Math.min(m, n.y), hoop.y),
         netFreeMinY: hoop.net.reduce((m, n) => (n.pinned ? m : Math.min(m, n.y)), hoop.y + 400),
@@ -7188,6 +7428,11 @@ export function createGame(
       };
     },
     tap: () => tapJump(),
+    spawnBirds(kind: BirdKind, count = 1) {
+      if (!trainBackdropOn() || tunnelReserved() || !["silly", "dive", "eagle"].includes(kind) || birdOwnsBall(birds)) return false;
+      birds.birds = [];
+      return spawnBirdWave(birds, world, kind, Math.random, count, getTrainScroll().trainSpeed);
+    },
     setCombo(n: number) {
       combo = Math.max(0, Math.floor(n));
       streak = combo;
@@ -7271,10 +7516,10 @@ function makeBall(world: World, side: -1 | 1, r = world.ballR): Ball {
   };
 }
 
-function hoopYLimits(world: World) {
+function hoopYLimits(world: World, useTunnel = true) {
   const topLen = world.h * 0.182;
   const pad = Math.max(8, world.h * 0.012);
-  const minY = topLen + pad;
+  const minY = Math.max(topLen + pad, useTunnel && getSceneId() === "train" ? tunnelHoopMin(world) : 0);
   const maxY = world.floorY - world.ballR * 6;
   return { minY, maxY: Math.max(minY + 8, maxY) };
 }
@@ -7284,9 +7529,9 @@ function makeHoop(world: World, side: -1 | 1, first: boolean, made = 0): Hoop {
   const x = side < 0 ? inner + world.w * 0.1 : world.w - inner - world.w * 0.1;
   const { minY: lo, maxY: hi } = hoopYLimits(world);
   const t = Math.min(1, made / 36);
-  const minY = world.h * 0.3 + (lo - world.h * 0.3) * t;
-  const maxY = world.floorY * 0.58 + (hi - world.floorY * 0.58) * t;
-  const y = first ? (minY + maxY) * 0.52 : minY + Math.random() * Math.max(8, maxY - minY);
+  const minY = Math.max(lo, world.h * 0.3 + (lo - world.h * 0.3) * t);
+  const maxY = Math.max(minY, world.floorY * 0.58 + (hi - world.floorY * 0.58) * t);
+  const y = first ? (minY + maxY) * 0.52 : minY + Math.random() * Math.max(0, maxY - minY);
   const hoop: Hoop = {
     side,
     x,
