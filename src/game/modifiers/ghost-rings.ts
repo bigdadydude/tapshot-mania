@@ -21,6 +21,7 @@ export function createGhostRings(): GhostRingsMod {
   let gap = 0.7;
   /** After a make, prefer the opposite side once. */
   let preferSide: -1 | 1 | null = null;
+  const snapshot = () => ({ phase, t, life, gap, preferSide });
 
   function pickSide(host: ModifierHost): -1 | 1 {
     if (preferSide != null) {
@@ -85,6 +86,12 @@ export function createGhostRings(): GhostRingsMod {
   const mod: GhostRingsMod = {
     id: "ghost-rings",
     _ghost: true,
+    rewindState: snapshot,
+    restoreRewindState(state) {
+      if (!state || typeof state !== "object") return;
+      const saved = state as ReturnType<typeof snapshot>;
+      phase = saved.phase; t = saved.t; life = saved.life; gap = saved.gap; preferSide = saved.preferSide;
+    },
     begin(host) {
       phase = "wait";
       t = 0;

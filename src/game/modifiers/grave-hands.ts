@@ -79,6 +79,7 @@ export function createGraveHands(): StageModifier {
   let puffed = false;
   let bits: Bit[] = [];
   let paintBall: ModifierHost["paintBall"] = () => {};
+  const snapshot = () => structuredClone({ act, t, cycleT, clock, hurt, grace, caughtR, caughtSpin, puffed, bits });
   loadFrame("open");
   loadFrame("closed");
 
@@ -192,6 +193,14 @@ export function createGraveHands(): StageModifier {
   }
 
   return {
+    rewindState: snapshot,
+    restoreRewindState(state) {
+      if (!state || typeof state !== "object") return;
+      const saved = structuredClone(state) as ReturnType<typeof snapshot>;
+      act = saved.act; t = saved.t; cycleT = saved.cycleT; clock = saved.clock;
+      hurt = saved.hurt; grace = saved.grace; caughtR = saved.caughtR;
+      caughtSpin = saved.caughtSpin; puffed = saved.puffed; bits = saved.bits;
+    },
     id: "grave-hands",
     begin(host) {
       paintBall = host.paintBall;

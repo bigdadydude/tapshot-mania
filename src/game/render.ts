@@ -1,6 +1,9 @@
+import { drawTrainSmoke, sootFilter } from "./train-smoke";
 import { drawBlackHole } from "./black-hole-render";
 import { drawCity } from "./city-render";
-import { drawTrainBackdrop } from "./train-bg";
+import { drawTrainBackdrop, getTrainScroll } from "./train-bg";
+import { drawTrainGantryWarnings } from "./train-gantry";
+import { birdOwnsBall, drawBirds, drawEagleWarnings, type BirdState } from "./birds";
 import type { Ball, Callout, Gfx, Hoop, NinjaCloneDraw, Particle, PrisonHud, TrailPt, World } from "./types";
 import { DEFAULT_GFX, fireStage } from "./types";
 import { artImage, ballImage, cloudImages, graffitiImage } from "./art";
@@ -310,7 +313,10 @@ export function drawScene(
   hacker: { dir: HackerDir | null } | null = null,
   maze: { gravity: MazeGravity } | null = null,
   timeControl: { energy: number; active: boolean; disabled: boolean } | null = null,
+  birds: BirdState | null = null,
+  birdBaseBonus = 0,
 ) {
+	const birdHeld = birds !== null && birdOwnsBall(birds);
 	ctx.save();
 	ctx.translate(shakeX, shakeY);
 	if (backdrop === "void") drawVoid(ctx, world);
@@ -320,6 +326,7 @@ export function drawScene(
 	else if (backdrop === "train") {
 		// Street sky sheet. Cloud size uses the street band. Trees still paint after both cloud passes.
 		drawOpenSky(ctx, world, cloudT, cloudSx, cloudSy, false, 0, world.floorY, world.floorY);
+		if (birds) drawBirds(ctx, birds, world.h, "cloud", gfx.clouds !== "off");
 		const wallImg = artImage("wall");
 		let cloudBot = world.floorY * 0.4;
 		if (wallImg) {
@@ -349,11 +356,12 @@ export function drawScene(
 		drawCourt(ctx, world);
 	}
 	afterCourt?.(ctx);
+	if (birds) drawBirds(ctx, birds, world.h, "world", gfx.clouds !== "off");
 	if (hole) drawBlackHole(ctx, hole, time);
 	for (const pit of mazeHoles) drawMazePit(ctx, pit);
 	if (antimatter) drawAntiMatter(ctx, antimatter, time);
 	if (boltTrail.length > 1) drawBoltTrail(ctx, boltTrail, time);
-	if (gfx.ballShadow) drawGroundShadow(ctx, ball, world);
+	if (gfx.ballShadow && !birdHeld) drawGroundShadow(ctx, ball, world);
 	if (chain) drawChain(ctx, chain, true);
 	if (showHud && !greenWash) drawCountdown(ctx, world, timer01, buzzer, barLabel);
 	const distH = Math.hypot(ball.x - hoop.x, ball.y - hoop.y);
@@ -364,9 +372,10 @@ export function drawScene(
 		drawSparseCodeRain(ctx, world, time);
 		neonGreenCourt = true;
 	}
-	if (other) drawHoopStack(ctx, other, world, ballWithOther ? ball : null, combo, time, gfx.particles ? trail : [], gfx, ballId);
-	drawHoopStack(ctx, hoop, world, ballWithOther ? null : ball, combo, time, gfx.particles ? trail : [], gfx, ballId);
+	if (other) drawHoopStack(ctx, other, world, ballWithOther && !birdHeld ? ball : null, combo, time, gfx.particles ? trail : [], gfx, ballId);
+	drawHoopStack(ctx, hoop, world, ballWithOther || birdHeld ? null : ball, combo, time, gfx.particles ? trail : [], gfx, ballId);
 	neonGreenCourt = false;
+	if (backdrop === "train") drawTrainSmoke(ctx, world);
 	if (hacker) drawHackerPad(ctx, hackerPadLayout(world), hacker.dir);
 	if (maze) drawMazePad(ctx, mazePadLayout(world), maze.gravity);
 	if (timeControl) drawTimeRewindControl(ctx, world, timeControl.energy, timeControl.active, timeControl.disabled);
@@ -394,6 +403,7 @@ export function drawScene(
 	}
 	if (chain) drawChain(ctx, chain, false);
 	if (gfx.particles) for (const p of particles) drawParticle(ctx, p);
+	if (backdrop === "train") drawTrainGantryWarnings(ctx, world, getTrainScroll());
 	const pops = prison?.mode === "shackle" ? callouts.filter((c) => c.kind === "tag") : callouts;
 	drawScorePops(ctx, pops, world);
 	if (buzzer && gfx.buzzerSpot) drawBuzzerSpot(ctx, world, ball);
@@ -430,7 +440,19 @@ export function drawScene(
 			boltCharge,
 			scoreFlash,
 			ball.trafficNearMiss ?? 0,
+			birdBaseBonus,
 		);
+	}
+	if (birds) {
+		ctx.save(); ctx.translate(shakeX, shakeY);
+		drawEagleWarnings(ctx, birds);
+		ctx.restore();
+	}
+	if (birds?.carrier !== null && birds?.carrier !== undefined) {
+		ctx.save(); ctx.translate(shakeX, shakeY);
+		drawBall(ctx, ball, combo, world, time, gfx.ballShade, ballId);
+		drawBirds(ctx, birds, world.h, "carried");
+		ctx.restore();
 	}
 }
 
@@ -565,6 +587,7 @@ function drawHoopStack(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
 	}
 	const beginHoopFx = () => {
 		ctx.save();
+		if ((hoop.sootLeft ?? 0) > 0) ctx.filter = sootFilter(hoop.sootLeft);
 		const scale = hoop.fxScale ?? 1;
 		if (scale !== 1) {
 			ctx.translate(hoop.x, hoop.y);
@@ -2279,6 +2302,12 @@ function drawMazeBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean) {
 }
 
 function drawBall(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _world: World, time = 0, lit = true, ballId: BallId = DEFAULT_BALL) {
+	ctx.save();
+	if ((ball.sootLeft ?? 0) > 0) ctx.filter = sootFilter(ball.sootLeft);
+	drawBallBody(ctx, ball, combo, _world, time, lit, ballId);
+	ctx.restore();
+}
+function drawBallBody(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, _world: World, time = 0, lit = true, ballId: BallId = DEFAULT_BALL) {
   if (ball.trafficSafe && Math.floor(time * 10) % 2 === 0) {
     ctx.save();
     ctx.translate(ball.x, ball.y + (ball.squash < 1 ? ball.r * (1 - ball.squash) : 0));
@@ -2890,6 +2919,7 @@ function drawHud(
 	boltCharge = -1,
 	scoreFlash = false,
 	trafficNearMiss = 0,
+	birdBaseBonus = 0,
 ) {
 	const { w } = world;
 	const g = hudGeom(world);
@@ -3021,10 +3051,11 @@ function drawHud(
 	}
 	let tag = null;
 	for (const c of callouts) if (c.kind === "tag") tag = c;
-	if (trafficNearMiss > 0) {
+	if (trafficNearMiss > 0 || birdBaseBonus > 0) {
 		// Keep the avoidance base bonus on the combo baseline, even after combo expires.
 		const comboText = comboBanner || (combo >= 2 ? `连击×${combo}` : "");
-		const text = `${comboText ? `${comboText}  ·  ` : ""}擦车而过 ×${trafficNearMiss}`;
+		const bonuses = [trafficNearMiss > 0 ? `擦车而过 ×${trafficNearMiss}` : "", birdBaseBonus > 0 ? `基础 +${birdBaseBonus}` : ""].filter(Boolean).join("  ·  ");
+		const text = `${comboText ? `${comboText}  ·  ` : ""}${bonuses}`;
 		ctx.save();
 		ctx.font = `800 ${g.comboSize}px 'Noto Sans SC', sans-serif`;
 		ctx.textAlign = "center";
