@@ -6,8 +6,11 @@ import type { World } from "./types";
  * 阶段 2 以后的激光、发射器和图纸系统不在这里。
  */
 
-/** 方块边长，按画面宽 390 换算。 */
-export const BLUEPRINT_BLOCK_SIZE = 44;
+/**
+ * 方块边长，按画面宽 390 换算。
+ * 28 比原先的 44 更密：单格更小，篮筐走廊之间能放下更多列。
+ */
+export const BLUEPRINT_BLOCK_SIZE = 28;
 /** 同时凸出的格子上限。 */
 export const BLUEPRINT_MAX_COUNT = 10;
 /** 凸出时长下限，秒。进球数为 0 时整段就是 1 秒。 */

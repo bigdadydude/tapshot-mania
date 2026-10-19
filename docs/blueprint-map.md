@@ -107,7 +107,7 @@ Tap Shot Mania 新场景「蓝图」。纯蓝网格风格，强调环境干扰�
 
 | 常数 | 默认 | 作用 |
 | --- | --- | --- |
-| `BLUEPRINT_BLOCK_SIZE` | 44 | 方块边长。按画面宽 390 缩放，背景网格用同一间距 |
+| `BLUEPRINT_BLOCK_SIZE` | 28 | 方块边长。按画面宽 390 缩放，背景网格用同一间距。由 44 收到 28，单格更小，走廊之间的合法格更多、更散 |
 | `BLUEPRINT_MAX_COUNT` | 10 | 同时凸出的格子上限。原为 6 |
 | `BLUEPRINT_EXTEND_MIN` | 1 | 凸出时长下限，秒。进球数为 0 时整段就是 1 秒 |
 | `BLUEPRINT_EXTEND_PER_GOAL` | 0.2 | 每进一球，时长区间右端增加的秒数 |

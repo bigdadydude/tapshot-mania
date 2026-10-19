@@ -3,6 +3,7 @@ import test from "node:test";
 import { getScene, SCENE_LABELS, setScene } from "./scenes.ts";
 import {
   BLUEPRINT_BALL_CLEAR,
+  BLUEPRINT_BLOCK_SIZE,
   BLUEPRINT_BOUNCE_CLEAR,
   BLUEPRINT_EXTEND_CAP,
   BLUEPRINT_EXTEND_MIN,
@@ -389,16 +390,31 @@ function pieceKeepAt(pieces: { x: number; y: number; w: number; h: number; keep:
   return hit ? hit.keep : null;
 }
 
+test("网格更密，合法格铺在走廊之间", () => {
+  assert.equal(BLUEPRINT_BLOCK_SIZE, 28);
+  const grid = blueprintGrid(world);
+  const legal = blueprintLegalCells(world, null);
+  const cols = new Set(legal.map((cell) => cell.col));
+  const jumpable = legal.filter((cell) => cell.y > blueprintJumpClearY(world));
+  assert.ok(grid.cols >= 12, `cols ${grid.cols}`);
+  assert.ok(grid.rows >= 20, `rows ${grid.rows}`);
+  assert.ok(legal.length >= 60, `legal ${legal.length}`);
+  assert.ok(cols.size >= 5, `columns ${cols.size}`);
+  assert.ok(jumpable.length >= 8, `jumpable ${jumpable.length}`);
+  assert.ok(jumpable.length < legal.length);
+});
+
 test("上方阴影落在下方凸出格上时随凸出减淡", () => {
-  const upper = { x: 100, y: 200, w: 44, h: 44 };
-  const lower = { x: 100, y: 244, w: 44, h: 44 };
+  const size = BLUEPRINT_BLOCK_SIZE;
+  const upper = { x: 100, y: 200, w: size, h: size };
+  const lower = { x: 100, y: 200 + size, w: size, h: size };
   const extend = 1;
   const shadow = blueprintShadowBox(upper, extend);
   const cover = blueprintCellCover(lower);
   const cast = blueprintShadowCast(upper.h, extend);
   assert.equal(shadow.h, cast);
-  assert.equal(cast, Math.max(4, Math.round(44 * (0.28 + 1.05))));
-  assert.ok(blueprintShadowCast(44, 1) > blueprintShadowCast(44, 0.2));
+  assert.equal(cast, Math.max(4, Math.round(size * (0.28 + 1.05))));
+  assert.ok(blueprintShadowCast(size, 1) > blueprintShadowCast(size, 0.2));
   assert.ok(cast > cover.h);
 
   const open = blueprintShadowPieces(shadow, []);
@@ -435,7 +451,7 @@ test("上方阴影落在下方凸出格上时随凸出减淡", () => {
   const along = inside.y - shadow.y;
   assert.ok(Math.abs(blueprintShadowAlpha(extend, along, cast, 0.5) - blueprintShadowAlpha(extend, along, cast) * 0.5) < 1e-9);
 
-  const side = blueprintCellCover({ x: 120, y: 244, w: 44, h: 44 });
+  const side = blueprintCellCover({ x: 100 + size * 0.45, y: 200 + size, w: size, h: size });
   const sided = blueprintShadowPieces(shadow, [{ box: side, extend: 1 }]);
   assert.equal(pieceKeepAt(sided, { x: shadow.x + 4, y: shadow.y + 3 }), 1);
   assert.equal(pieceKeepAt(sided, { x: side.x + 4, y: shadow.y + 3 }), 0);
