@@ -8,6 +8,7 @@ import {
   BLUEPRINT_RAMP_PACE,
   BLUEPRINT_START_COUNT,
   blueprintBlocks,
+  blueprintCellPixels,
   blueprintExtend,
   blueprintFloorDepthX,
   blueprintFloorRowY,
@@ -170,6 +171,20 @@ test("地面消失点在交线上方，交线处格子与墙面对齐", () => {
     assert.ok(Math.abs(block.cell.x - (grid.ox + col * grid.size)) < 1e-6);
     assert.ok(Math.abs(block.cell.y - (grid.oy + row * grid.size)) < 1e-6);
     assert.equal(block.cell.w, grid.size);
+  }
+});
+
+test("凸出填色贴住网格线", () => {
+  for (const block of at(10_000, BLUEPRINT_EXTEND_PERIOD / 2)) {
+    const px = blueprintCellPixels(block.cell);
+    assert.equal(px.left, Math.round(block.cell.x));
+    assert.equal(px.right, Math.round(block.cell.x + block.cell.w));
+    assert.equal(px.top, Math.round(block.cell.y));
+    assert.equal(px.bottom, Math.round(block.cell.y + block.cell.h));
+    assert.equal(px.fill.x, px.left + 1);
+    assert.equal(px.fill.y, px.top + 1);
+    assert.equal(px.fill.x + px.fill.w, px.right);
+    assert.equal(px.fill.y + px.fill.h, px.bottom);
   }
 });
 

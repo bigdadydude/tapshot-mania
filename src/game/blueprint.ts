@@ -349,12 +349,13 @@ function strokeGrid(ctx: CanvasRenderingContext2D, world: View) {
         if (p < -1 || p > limit + 1) continue;
         const index = Math.round((p - origin) / grid.size);
         if (major !== (index % 4 === 0)) continue;
+        const line = Math.round(p) + 0.5;
         if (horizontal) {
-          ctx.moveTo(0, p + 0.5);
-          ctx.lineTo(world.w, p + 0.5);
+          ctx.moveTo(0, line);
+          ctx.lineTo(world.w, line);
         } else {
-          ctx.moveTo(p + 0.5, 0);
-          ctx.lineTo(p + 0.5, world.floorY);
+          ctx.moveTo(line, 0);
+          ctx.lineTo(line, world.floorY);
         }
       }
     };
@@ -388,9 +389,9 @@ function drawPerspectiveFloor(ctx: CanvasRenderingContext2D, world: View) {
     ctx.beginPath();
     for (let i = 0; i <= grid.cols; i++) {
       if (major !== (i % 4 === 0)) continue;
-      const x = grid.ox + i * grid.size + 0.5;
-      ctx.moveTo(x, floorY);
-      ctx.lineTo(blueprintFloorDepthX(world, x - 0.5, h + 1) + 0.5, h + 1);
+      const x = Math.round(grid.ox + i * grid.size);
+      ctx.moveTo(x + 0.5, floorY);
+      ctx.lineTo(blueprintFloorDepthX(world, x, h + 1) + 0.5, h + 1);
     }
     strokeWhite(ctx, major);
   };
@@ -413,22 +414,33 @@ function drawPerspectiveFloor(ctx: CanvasRenderingContext2D, world: View) {
   ctx.restore();
 }
 
+/** 填色贴在四条网格线的内侧，阴影从底边那条线的下一像素向下拉。 */
+export function blueprintCellPixels(cell: Rect) {
+  const left = Math.round(cell.x);
+  const top = Math.round(cell.y);
+  const right = Math.round(cell.x + cell.w);
+  const bottom = Math.round(cell.y + cell.h);
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    fill: { x: left + 1, y: top + 1, w: Math.max(0, right - left - 1), h: Math.max(0, bottom - top - 1) },
+  };
+}
+
 function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock) {
   const extend = block.extend;
   if (extend < 0.04) return;
-  const { x, y, w, h } = block.cell;
-  const contact = Math.max(3, h * (0.07 + 0.2 * extend));
-  const cast = Math.max(contact + 8, h * (0.28 + 1.05 * extend));
-  const grad = ctx.createLinearGradient(0, y + h, 0, y + h + cast);
-  grad.addColorStop(0, `rgba(1, 8, 22, ${0.22 + 0.28 * extend})`);
-  grad.addColorStop(Math.min(0.8, contact / cast), `rgba(1, 8, 22, ${0.12 + 0.16 * extend})`);
+  const { left, top, right, bottom, fill } = blueprintCellPixels(block.cell);
+  const cast = Math.max(4, Math.round(block.cell.h * (0.28 + 1.05 * extend)));
+  const grad = ctx.createLinearGradient(0, bottom + 1, 0, bottom + 1 + cast);
+  grad.addColorStop(0, `rgba(1, 8, 22, ${0.42 + 0.4 * extend})`);
   grad.addColorStop(1, "rgba(1, 8, 22, 0)");
   ctx.fillStyle = grad;
-  ctx.fillRect(x, y + h, w, cast);
-  ctx.fillStyle = `rgba(1, 6, 18, ${0.55 + 0.4 * extend})`;
-  ctx.fillRect(x, y + h, w, contact);
+  ctx.fillRect(left, bottom + 1, right - left + 1, cast);
   ctx.fillStyle = `rgba(236, 244, 255, ${0.07 + 0.2 * extend})`;
-  ctx.fillRect(x + 1.5, y + 1.5, Math.max(0, w - 3), Math.max(0, h - 3));
+  ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
 }
 
 export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View) {
