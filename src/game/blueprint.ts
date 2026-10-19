@@ -11,14 +11,41 @@ import type { World } from "./types";
  * 28 比原先的 44 更密：单格更小，篮筐走廊之间能放下更多列。
  */
 export const BLUEPRINT_BLOCK_SIZE = 28;
-/** 同时凸出的格子上限。 */
+/** 同时凸出的格子上限（静态 + 动态合计）。 */
 export const BLUEPRINT_MAX_COUNT = 10;
-/** 凸出时长下限，秒。进球数为 0 时整段就是 1 秒。 */
-export const BLUEPRINT_EXTEND_MIN = 1;
-/** 每进一球，时长区间右端增加的秒数。 */
-export const BLUEPRINT_EXTEND_PER_GOAL = 0.2;
-/** 凸出时长上限，秒。 */
-export const BLUEPRINT_EXTEND_CAP = 6;
+/**
+ * 一批从贴平升到完全凸出的秒数。
+ * 静态升满后保持到下一次进球；动态升满后进入 hold / cross。
+ */
+export const BLUEPRINT_RAISE = 0.35;
+/**
+ * 动态挪一步时：缩回 / 再升起各用这么久。
+ * 比首升短，整组一起收一起伸，看起来更齐。
+ */
+export const BLUEPRINT_CROSS_RAISE = 0.2;
+/** @deprecated 旧周期下限；现改用 BLUEPRINT_RAISE，保留别名以免外部旧引用断裂。 */
+export const BLUEPRINT_EXTEND_MIN = BLUEPRINT_RAISE;
+/** 从第 2 球起，每多一球给「复数凸起」加的偏置（叠到约 0.9）。 */
+export const BLUEPRINT_MULTI_PER_GOAL = 0.12;
+/** 进球时若场上无动态，尝试生成一组的概率。 */
+export const BLUEPRINT_DYNAMIC_SPAWN = 0.45;
+/** 进球时动态整组消失：起步概率。 */
+export const BLUEPRINT_DESPAWN_BASE = 0.15;
+/** 每多一球，消失概率增加。 */
+export const BLUEPRINT_DESPAWN_PER_GOAL = 0.08;
+/** 消失概率上限。 */
+export const BLUEPRINT_DESPAWN_CAP = 0.85;
+/** 动态 hold 多久后挪一步，秒。 */
+export const BLUEPRINT_STEP_MIN = 0.45;
+export const BLUEPRINT_STEP_MAX = 0.85;
+/** 0 右、1 下、2 左、3 上。 */
+export const BLUEPRINT_DIR_DELTA = [
+  { dc: 1, dr: 0 },
+  { dc: 0, dr: 1 },
+  { dc: -1, dr: 0 },
+  { dc: 0, dr: -1 },
+] as const;
+export type BlueprintDir = 0 | 1 | 2 | 3;
 /** 篮球周围禁生成的半径，按格计。 */
 export const BLUEPRINT_BALL_CLEAR = 2;
 /** 缩到这个比例以下就不再挡球。 */
@@ -67,18 +94,34 @@ export type BlueprintBatch = {
   anchor: BlueprintCellRef | null;
 };
 
+export type BlueprintDynamicPhase = "raise" | "hold" | "cross_out" | "cross_in";
+export type BlueprintDynamic = {
+  cells: BlueprintCellRef[];
+  /** cross_out 时已选定、尚未落到的下一格；否则为空。 */
+  pending: BlueprintCellRef[];
+  dir: BlueprintDir;
+  phase: BlueprintDynamicPhase;
+  age: number;
+  stepSpan: number;
+  raise: number;
+};
 export type BlueprintClock = {
   seed: number;
   elapsed: number;
-  /** 当前这批已经过的秒数。 */
-  cycle: number;
-  /** 抽出这一批时长时的进球数。 */
+  /** 抽出静态批时的进球数。0 表示尚未进球。 */
   goals: number;
-  /** 这一批伸出再缩回的秒数。 */
-  duration: number;
-  cells: BlueprintCellRef[];
-  /** 每换一批加一，用来抽下一个形状。 */
+  /** 每换一批静态加一。 */
   serial: number;
+  staticCells: BlueprintCellRef[];
+  staticAge: number;
+  staticRaise: number;
+  dynamic: BlueprintDynamic | null;
+  /** @deprecated 等同 staticCells，留给旧测试 / rewind。 */
+  cells: BlueprintCellRef[];
+  /** @deprecated 等同 staticAge。 */
+  cycle: number;
+  /** @deprecated 等同 staticRaise。 */
+  duration: number;
 };
 export type BlueprintBlock = {
   id: string;
@@ -101,11 +144,13 @@ const PATH_REACH = 2;
 
 let seed = Math.random() * 1e6;
 let elapsed = 0;
-let cycle = 0;
 let goals = 0;
-let duration = BLUEPRINT_EXTEND_MIN;
-let cells: BlueprintCellRef[] = [];
 let serial = 0;
+let staticCells: BlueprintCellRef[] = [];
+let staticAge = 0;
+let staticRaise = BLUEPRINT_RAISE;
+let dynamic: BlueprintDynamic | null = null;
+/** 是否已按当前进球数落定（含进球前的空场）。 */
 let hasBatch = false;
 let aim: BlueprintAim | null = null;
 let view: View | null = null;
@@ -114,37 +159,99 @@ function copyCells(list: readonly BlueprintCellRef[]) {
   return list.map((cell) => ({ col: cell.col, row: cell.row }));
 }
 
+function normalizeDynamicPhase(phase: string | undefined): BlueprintDynamicPhase {
+  if (phase === "raise" || phase === "hold" || phase === "cross_out" || phase === "cross_in") return phase;
+  // 旧存档里的 "cross"：按缩回段处理，避免半套动画。
+  if (phase === "cross") return "cross_out";
+  return "hold";
+}
+
+function copyDynamic(next: BlueprintDynamic & { prev?: BlueprintCellRef[] }): BlueprintDynamic {
+  const pending = next.pending?.length
+    ? copyCells(next.pending)
+    : next.prev?.length && normalizeDynamicPhase(next.phase) === "cross_out"
+      ? copyCells(next.cells)
+      : [];
+  const cells = next.prev?.length && normalizeDynamicPhase(next.phase) === "cross_out" && !next.pending?.length
+    ? copyCells(next.prev)
+    : copyCells(next.cells);
+  return {
+    cells,
+    pending,
+    dir: clampDir(next.dir),
+    phase: normalizeDynamicPhase(next.phase),
+    age: Number.isFinite(next.age) ? Math.max(0, next.age) : 0,
+    stepSpan: next.stepSpan > 0 ? next.stepSpan : BLUEPRINT_STEP_MIN,
+    raise: next.raise > 0 ? next.raise : BLUEPRINT_RAISE,
+  };
+}
+
+function clampDir(value: number): BlueprintDir {
+  const n = ((Math.floor(Number.isFinite(value) ? value : 0) % 4) + 4) % 4;
+  return n as BlueprintDir;
+}
+
+function cellKey(cell: BlueprintCellRef) {
+  return `${cell.col}:${cell.row}`;
+}
+
+function staticKeySet(list: readonly BlueprintCellRef[] = staticCells) {
+  return new Set(list.map(cellKey));
+}
+
 export function getBlueprintClock(): BlueprintClock {
-  return { seed, elapsed, cycle, goals, duration, serial, cells: copyCells(cells) };
+  const cells = copyCells(staticCells);
+  return {
+    seed,
+    elapsed,
+    goals,
+    serial,
+    staticCells: cells,
+    staticAge,
+    staticRaise,
+    dynamic: dynamic ? copyDynamic(dynamic) : null,
+    cells,
+    cycle: staticAge,
+    duration: staticRaise,
+  };
 }
 
 export function restoreBlueprintClock(next: BlueprintClock) {
   seed = next.seed;
   elapsed = next.elapsed;
-  cycle = next.cycle;
   goals = finiteGoals(next.goals);
-  duration = next.duration > 0 ? next.duration : BLUEPRINT_EXTEND_MIN;
-  cells = copyCells(next.cells ?? []);
   serial = Number.isFinite(next.serial) ? next.serial : 0;
+  const fromStatic = next.staticCells ?? next.cells;
+  staticCells = goals > 0 ? copyCells(fromStatic ?? []) : [];
+  staticAge = Number.isFinite(next.staticAge) ? next.staticAge : Number.isFinite(next.cycle) ? next.cycle : 0;
+  staticRaise = next.staticRaise > 0 ? next.staticRaise : next.duration > 0 ? next.duration : BLUEPRINT_RAISE;
+  dynamic = next.dynamic ? copyDynamic(next.dynamic) : null;
   hasBatch = true;
 }
 
-/** 换场景或回到标题时重新抽一块图纸。 */
+/** 换场景或回到标题时清空凸出。 */
 export function resetBlueprint(nextSeed = Math.random() * 1e6) {
   seed = nextSeed;
   elapsed = 0;
-  cycle = 0;
   goals = 0;
-  duration = BLUEPRINT_EXTEND_MIN;
-  cells = [];
   serial = 0;
+  staticCells = [];
+  staticAge = 0;
+  staticRaise = BLUEPRINT_RAISE;
+  dynamic = null;
   hasBatch = false;
   aim = null;
 }
 
-/** 新一局只清对局秒数。当前这批格子留着，跟标题上看到的一致。 */
+/** 新一局清对局秒数与凸出；首球前场上保持空。 */
 export function resetBlueprintProgress() {
   elapsed = 0;
+  goals = 0;
+  staticCells = [];
+  staticAge = 0;
+  staticRaise = BLUEPRINT_RAISE;
+  dynamic = null;
+  hasBatch = false;
 }
 
 function finiteGoals(value: number) {
@@ -152,43 +259,199 @@ function finiteGoals(value: number) {
   return Math.max(0, Math.floor(value));
 }
 
-function rollCurrent() {
-  if (!view) return;
-  const goalsNow = aim ? finiteGoals(aim.goals) : goals;
-  const ball = aim && Number.isFinite(aim.ballX) && Number.isFinite(aim.ballY) ? { x: aim.ballX, y: aim.ballY } : null;
-  const hoop = aim && Number.isFinite(aim.hoopX) && Number.isFinite(aim.hoopY) ? { x: aim.hoopX, y: aim.hoopY } : null;
-  const batch = rollBlueprintBatch(view, { seed, serial, goals: goalsNow, ball, hoop });
+export function blueprintDespawnChance(made: number) {
+  const g = finiteGoals(made);
+  if (g <= 0) return 0;
+  return Math.min(BLUEPRINT_DESPAWN_CAP, BLUEPRINT_DESPAWN_BASE + BLUEPRINT_DESPAWN_PER_GOAL * (g - 1));
+}
+
+export function blueprintTranslateCells(list: readonly BlueprintCellRef[], dir: BlueprintDir) {
+  const delta = BLUEPRINT_DIR_DELTA[dir]!;
+  return list.map((cell) => ({ col: cell.col + delta.dc, row: cell.row + delta.dr }));
+}
+
+function aimBall() {
+  return aim && Number.isFinite(aim.ballX) && Number.isFinite(aim.ballY) ? { x: aim.ballX, y: aim.ballY } : null;
+}
+function aimHoop() {
+  return aim && Number.isFinite(aim.hoopX) && Number.isFinite(aim.hoopY) ? { x: aim.hoopX, y: aim.hoopY } : null;
+}
+
+function cellRectAt(world: View, ref: BlueprintCellRef): Cell {
+  const grid = blueprintGrid(world);
+  return {
+    col: ref.col,
+    row: ref.row,
+    x: grid.ox + ref.col * grid.size,
+    y: grid.oy + ref.row * grid.size,
+    w: grid.size,
+    h: grid.size,
+  };
+}
+
+/** 出界 / 走廊 / 球旁 / 静态格均为硬阻挡，避免一组里有的升有的平。 */
+function dynamicHardBlocked(
+  world: View,
+  ref: BlueprintCellRef,
+  ball: { x: number; y: number } | null,
+  staticKeys: Set<string>,
+) {
+  const grid = blueprintGrid(world);
+  if (ref.col < 0 || ref.row < 0 || ref.col >= grid.cols || ref.row >= grid.rows) return true;
+  if (staticKeys.has(cellKey(ref))) return true;
+  const rect = cellRectAt(world, ref);
+  if (!cellAllowed(world, rect)) return true;
+  if (ball && blueprintNearBall(world, rect, ball)) return true;
+  return false;
+}
+
+function groupHardBlocked(
+  world: View,
+  list: readonly BlueprintCellRef[],
+  ball: { x: number; y: number } | null,
+  staticKeys: Set<string>,
+) {
+  return list.some((cell) => dynamicHardBlocked(world, cell, ball, staticKeys));
+}
+
+function sampleStepSpan(layoutSeed: number, batchSerial: number) {
+  const t = unitAt(layoutSeed, batchSerial, 7);
+  return BLUEPRINT_STEP_MIN + (BLUEPRINT_STEP_MAX - BLUEPRINT_STEP_MIN) * t;
+}
+
+function trySpawnDynamic(goalsNow: number) {
+  if (!view || dynamic) return;
+  const room = BLUEPRINT_MAX_COUNT - staticCells.length;
+  if (room <= 0) return;
+  const ball = aimBall();
+  const hoop = aimHoop();
+  const blocked = staticKeySet();
+  const batch = rollBlueprintBatch(view, {
+    seed,
+    serial: serial + 17,
+    goals: goalsNow,
+    ball,
+    hoop,
+    exclude: staticCells,
+    maxCount: room,
+  });
+  if (!batch.cells.length) return;
+  // 再滤一次，保证不与静态同格开场。
+  const cells = batch.cells.filter((cell) => !blocked.has(cellKey(cell))).slice(0, room);
+  if (!cells.length) return;
+  dynamic = {
+    cells,
+    pending: [],
+    dir: clampDir(Math.floor(unitAt(seed, serial + 17, 8) * 4)),
+    phase: "raise",
+    age: 0,
+    stepSpan: sampleStepSpan(seed, serial + 17),
+    raise: BLUEPRINT_RAISE,
+  };
+}
+
+function applyGoalChange(goalsNow: number) {
+  // 还没收到 world 时先别落批，等下一帧。
+  if (goalsNow > 0 && !view) return;
+  if (hasBatch && goalsNow !== goals) serial += 1;
   goals = goalsNow;
-  duration = batch.duration;
-  cells = batch.cells;
+  staticAge = 0;
+  staticRaise = BLUEPRINT_RAISE;
+  if (goalsNow <= 0 || !view) {
+    staticCells = [];
+    dynamic = null;
+    hasBatch = true;
+    return;
+  }
+  const ball = aimBall();
+  const hoop = aimHoop();
+  const batch = rollBlueprintBatch(view, { seed, serial, goals: goalsNow, ball, hoop });
+  staticCells = batch.cells.slice(0, BLUEPRINT_MAX_COUNT);
+  if (dynamic) {
+    if (unitAt(seed, serial, 9) < blueprintDespawnChance(goalsNow)) dynamic = null;
+    else {
+      // 保留动态；裁掉与新静态重叠的格，避免一组里高低不齐。
+      const blocked = staticKeySet(staticCells);
+      const room = BLUEPRINT_MAX_COUNT - staticCells.length;
+      let cells = dynamic.cells.filter((cell) => !blocked.has(cellKey(cell)));
+      if (cells.length > room) cells = cells.slice(0, Math.max(0, room));
+      if (!cells.length) dynamic = null;
+      else {
+        dynamic = {
+          ...dynamic,
+          cells,
+          pending: [],
+          phase: "hold",
+          age: 0,
+          raise: BLUEPRINT_RAISE,
+        };
+      }
+    }
+  } else if (unitAt(seed, serial, 10) < BLUEPRINT_DYNAMIC_SPAWN) {
+    trySpawnDynamic(goalsNow);
+  }
   hasBatch = true;
+}
+
+function beginDynamicCross() {
+  if (!dynamic || !view) return;
+  const ball = aimBall();
+  const blocked = staticKeySet();
+  const order: BlueprintDir[] = [0, 1, 2, 3].map((i) => clampDir(dynamic!.dir + i));
+  for (const dir of order) {
+    const next = blueprintTranslateCells(dynamic.cells, dir);
+    if (groupHardBlocked(view, next, ball, blocked)) continue;
+    // 先整组同步缩回，再落到新格同步升起；全程同一线性进度。
+    dynamic = {
+      ...dynamic,
+      dir,
+      pending: next,
+      phase: "cross_out",
+      age: 0,
+      raise: BLUEPRINT_CROSS_RAISE,
+    };
+    return;
+  }
+  // 四面都不通：跳过这一步，继续 hold。
+  dynamic = { ...dynamic, phase: "hold", age: 0, pending: [] };
+}
+
+function stepDynamic(dt: number) {
+  if (!dynamic || !(dt > 0)) return;
+  let d = dynamic;
+  d = { ...d, age: d.age + dt };
+  if (d.phase === "raise" || d.phase === "cross_in") {
+    if (d.age >= d.raise) d = { ...d, phase: "hold", age: 0, pending: [] };
+  } else if (d.phase === "hold") {
+    if (d.age >= d.stepSpan) {
+      dynamic = d;
+      beginDynamicCross();
+      return;
+    }
+  } else if (d.phase === "cross_out") {
+    if (d.age >= d.raise) {
+      d = {
+        ...d,
+        cells: copyCells(d.pending),
+        pending: [],
+        phase: "cross_in",
+        age: 0,
+      };
+    }
+  }
+  dynamic = d;
 }
 
 export function stepBlueprint(dt: number, playing: boolean, next?: BlueprintAim, world?: View) {
   if (next) aim = next;
   if (world) view = { w: world.w, h: world.h, floorY: world.floorY, ballR: world.ballR, hoopInner: world.hoopInner };
-  if (!hasBatch) {
-    rollCurrent();
-    if (hasBatch) cycle = 0;
-  }
+  const goalsNow = aim ? finiteGoals(aim.goals) : goals;
+  if (!hasBatch || goalsNow !== goals) applyGoalChange(goalsNow);
   if (!(dt > 0)) return;
-  if (playing) elapsed += dt;
-  let left = dt;
-  for (let guard = 0; guard < 8 && left > 1e-8; guard++) {
-    const dur = duration > 1e-6 ? duration : BLUEPRINT_EXTEND_MIN;
-    const room = dur - cycle;
-    if (room > 1e-8 && left < room) {
-      cycle += left;
-      return;
-    }
-    if (!view) {
-      cycle = Math.min(dur, cycle + left);
-      return;
-    }
-    left -= Math.max(0, room);
-    cycle = 0;
-    serial += 1;
-    rollCurrent();
+  if (playing) {
+    elapsed += dt;
+    staticAge += dt;
+    stepDynamic(dt);
   }
 }
 
@@ -298,28 +561,36 @@ function clampInt(value: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, n));
 }
 
-/** 本批格数不超过同时凸出上限。时间爬坡已删除。 */
+/** 本批格数不超过同时凸出上限。 */
 export function blueprintQuota(requested: number) {
   if (!Number.isFinite(requested) || requested <= 0) return 0;
   return Math.min(BLUEPRINT_MAX_COUNT, Math.floor(requested));
 }
 
-/** 时长区间 `[1, min(6, 1 + 0.2 × 进球数)]`。 */
-export function blueprintExtendSpan(made: number) {
-  const goalsNow = finiteGoals(made);
-  const minTenths = Math.round(BLUEPRINT_EXTEND_MIN * 10);
-  const stepTenths = Math.round(BLUEPRINT_EXTEND_PER_GOAL * 10);
-  const capTenths = Math.round(BLUEPRINT_EXTEND_CAP * 10);
-  const maxTenths = Math.min(capTenths, minTenths + stepTenths * goalsNow);
-  return { min: minTenths / 10, max: maxTenths / 10 };
+/**
+ * 本批要凸出几格。
+ * 进球前为 0；第 1 球固定 1；之后软上限随进球升高，且 `roll` 越容易落到更大值。
+ */
+export function blueprintSampleCount(made: number, roll: number) {
+  const g = finiteGoals(made);
+  if (g <= 0) return 0;
+  if (g === 1) return 1;
+  const softMax = Math.min(BLUEPRINT_MAX_COUNT, 1 + g);
+  const bias = Math.min(0.9, (g - 1) * BLUEPRINT_MULTI_PER_GOAL);
+  const p = Math.max(0.28, 1 - bias);
+  const t = Math.min(1, Math.max(0, Number.isFinite(roll) ? roll : 0));
+  const u = Math.pow(t, p);
+  return Math.max(1, Math.min(softMax, 1 + Math.floor(u * softMax)));
 }
 
-/** `roll` 为 0 取下限，为 1 取上限。 */
-export function blueprintSampleDuration(made: number, roll: number) {
-  const span = blueprintExtendSpan(made);
-  if (span.max <= span.min) return span.min;
-  const t = Math.min(1, Math.max(0, Number.isFinite(roll) ? roll : 0));
-  return span.min + (span.max - span.min) * t;
+/** @deprecated 旧时长区间；现一批保持到下一次进球，升起用 BLUEPRINT_RAISE。 */
+export function blueprintExtendSpan(_made: number) {
+  return { min: BLUEPRINT_RAISE, max: BLUEPRINT_RAISE };
+}
+
+/** @deprecated 现固定返回升起时长。 */
+export function blueprintSampleDuration(_made: number, _roll: number) {
+  return BLUEPRINT_RAISE;
 }
 
 const FIXED_SHAPES: Record<Exclude<BlueprintShape, "line" | "diag">, readonly { c: number; r: number }[]> = {
@@ -458,7 +729,7 @@ function shapeLength(shape: BlueprintShape, requested: number) {
   return blueprintShapeOffsets(shape).length;
 }
 
-/** 抽一批凸出。时长跟进球数走，格子是一个形状裁完的结果。 */
+/** 抽一批凸出。进球前为空；格数随进球变，升起后保持到下一次进球。 */
 export function rollBlueprintBatch(
   world: View,
   opts: {
@@ -467,19 +738,28 @@ export function rollBlueprintBatch(
     goals: number;
     ball?: { x: number; y: number } | null;
     hoop?: { x: number; y: number } | null;
+    exclude?: readonly BlueprintCellRef[] | null;
+    maxCount?: number;
   },
 ): BlueprintBatch {
   const layoutSeed = Number.isFinite(opts.seed) ? opts.seed : 1;
   const batchSerial = Number.isFinite(opts.serial) ? opts.serial : 0;
   const made = finiteGoals(opts.goals);
-  const shape = BLUEPRINT_SHAPES[Math.min(BLUEPRINT_SHAPES.length - 1, Math.floor(unitAt(layoutSeed, batchSerial, 1) * BLUEPRINT_SHAPES.length))]!;
-  const requested = 1 + Math.min(5, Math.floor(unitAt(layoutSeed, batchSerial, 2) * 6));
-  const length = shapeLength(shape, requested);
-  const variant = Math.min(7, Math.floor(unitAt(layoutSeed, batchSerial, 3) * 8));
-  const duration = blueprintSampleDuration(made, unitAt(layoutSeed, batchSerial, 0));
+  const cap = blueprintQuota(opts.maxCount ?? BLUEPRINT_MAX_COUNT);
+  const want = Math.min(cap, blueprintSampleCount(made, unitAt(layoutSeed, batchSerial, 0)));
+  const duration = BLUEPRINT_RAISE;
+  if (want <= 0) {
+    return { cells: [], duration, shape: "line", length: 1, variant: 0, mode: "idle", anchor: null };
+  }
+  const shape = want === 1
+    ? "line"
+    : BLUEPRINT_SHAPES[Math.min(BLUEPRINT_SHAPES.length - 1, Math.floor(unitAt(layoutSeed, batchSerial, 1) * BLUEPRINT_SHAPES.length))]!;
+  const length = shapeLength(shape, want);
+  const variant = want === 1 ? 0 : Math.min(7, Math.floor(unitAt(layoutSeed, batchSerial, 3) * 8));
   const ball = opts.ball && Number.isFinite(opts.ball.x) && Number.isFinite(opts.ball.y) ? opts.ball : null;
   const hoop = opts.hoop && Number.isFinite(opts.hoop.x) && Number.isFinite(opts.hoop.y) ? opts.hoop : null;
-  const legal = blueprintLegalCells(world, ball);
+  const banned = new Set((opts.exclude ?? []).map(cellKey));
+  const legal = blueprintLegalCells(world, ball).filter((cell) => !banned.has(cellKey(cell)));
   const allowed = new Set(legal.map((cell) => `${cell.col}:${cell.row}`));
   const path = ball && hoop ? legal.filter((cell) => blueprintOnShotPath(world, cell, ball, hoop)) : [];
   const wantPath = unitAt(layoutSeed, batchSerial, 4) < 0.5 && path.length > 0;
@@ -488,25 +768,33 @@ export function rollBlueprintBatch(
   const ordered = pool.slice().sort((a, b) => hash01(layoutSeed + batchSerial * 3.1, a) - hash01(layoutSeed + batchSerial * 3.1, b) || a.row - b.row || a.col - b.col);
   let placed: BlueprintCellRef[] = [];
   let anchor: BlueprintCellRef | null = null;
-  for (const cell of ordered) {
-    const stamped = blueprintStamp(shape, length, variant, { col: cell.col, row: cell.row });
-    const kept = clipBlueprintCells(stamped, (col, row) => allowed.has(`${col}:${row}`));
-    if (kept.length > placed.length) {
-      placed = kept;
-      anchor = { col: cell.col, row: cell.row };
+  if (want === 1) {
+    const pick = ordered[0];
+    if (pick) {
+      placed = [{ col: pick.col, row: pick.row }];
+      anchor = { col: pick.col, row: pick.row };
+    }
+  } else {
+    for (const cell of ordered) {
+      const stamped = blueprintStamp(shape, length, variant, { col: cell.col, row: cell.row });
+      const kept = clipBlueprintCells(stamped, (col, row) => allowed.has(`${col}:${row}`));
+      if (kept.length > placed.length) {
+        placed = kept;
+        anchor = { col: cell.col, row: cell.row };
+      }
+      if (placed.length >= want) break;
     }
   }
-  const capped = placed.slice(0, blueprintQuota(placed.length));
+  const capped = placed.slice(0, Math.min(want, cap));
   return { cells: capped, duration, shape, length, variant, mode, anchor: capped.length ? anchor : null };
 }
 
-/** 0 贴平，1 完全凸出。周期结束回到 0，没有一直凸着的墙。 */
-export function blueprintExtend(age: number, span = BLUEPRINT_EXTEND_MIN) {
-  const period = span > 1e-6 ? span : BLUEPRINT_EXTEND_MIN;
-  let t = age % period;
-  if (t < 0) t += period;
-  const phase = t / period;
-  return 0.5 - 0.5 * Math.cos(phase * Math.PI * 2);
+/** 0 贴平，1 完全凸出。升满后保持为 1，直到换批把 age 清零。 */
+export function blueprintExtend(age: number, span = BLUEPRINT_RAISE) {
+  const raise = span > 1e-6 ? span : BLUEPRINT_RAISE;
+  if (!(age > 0)) return 0;
+  if (age >= raise) return 1;
+  return 0.5 - 0.5 * Math.cos((age / raise) * Math.PI);
 }
 
 export function solidFromCell(cell: Rect, extend: number): Rect | null {
@@ -516,34 +804,94 @@ export function solidFromCell(cell: Rect, extend: number): Rect | null {
   return { x: cell.x, y: cell.y, w: cell.w, h: cell.h };
 }
 
+function pushBlock(
+  blocks: BlueprintBlock[],
+  world: View,
+  grid: ReturnType<typeof blueprintGrid>,
+  ref: BlueprintCellRef,
+  extend: number,
+  isDynamic: boolean,
+  occupied: Set<string>,
+) {
+  if (blocks.length >= BLUEPRINT_MAX_COUNT) return;
+  const key = cellKey(ref);
+  if (occupied.has(key)) return;
+  if (ref.col < 0 || ref.row < 0 || ref.col >= grid.cols || ref.row >= grid.rows) return;
+  const rect = {
+    col: ref.col,
+    row: ref.row,
+    x: grid.ox + ref.col * grid.size,
+    y: grid.oy + ref.row * grid.size,
+    w: grid.size,
+    h: grid.size,
+  };
+  if (!cellAllowed(world, rect)) return;
+  const base = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
+  occupied.add(key);
+  blocks.push({
+    id: `${isDynamic ? "d" : "s"}:${key}`,
+    index: blocks.length,
+    col: ref.col,
+    row: ref.row,
+    dynamic: isDynamic,
+    extend,
+    cell: base,
+    solid: solidFromCell(base, extend),
+  });
+}
+
+/** 动态伸缩进度：线性 0→1，整组共用，比余弦更齐整。 */
+export function blueprintDynamicProgress(age: number, span = BLUEPRINT_RAISE) {
+  const raise = span > 1e-6 ? span : BLUEPRINT_RAISE;
+  if (!(age > 0)) return 0;
+  if (age >= raise) return 1;
+  return age / raise;
+}
+
+/**
+ * 动态格伸出量。同一 phase 里整组共用同一进度：
+ * raise / cross_in 同步升起，cross_out 同步缩回。
+ * 任一格压在静态上时整组贴平（挪移本身不会踩静态，进球换批后可能短暂重叠）。
+ */
+export function blueprintDynamicCellExtend(
+  dyn: BlueprintDynamic,
+  ref: BlueprintCellRef,
+  staticKeys: Set<string>,
+) {
+  if (dyn.cells.some((cell) => staticKeys.has(cellKey(cell)))) return 0;
+  if (staticKeys.has(cellKey(ref))) return 0;
+  const raise = dyn.raise > 0 ? dyn.raise : BLUEPRINT_RAISE;
+  if (dyn.phase === "hold") return 1;
+  if (dyn.phase === "raise" || dyn.phase === "cross_in") return blueprintDynamicProgress(dyn.age, raise);
+  if (dyn.phase === "cross_out") return Math.max(0, 1 - blueprintDynamicProgress(dyn.age, raise));
+  return 0;
+}
+
+/** 当前这一帧要画的动态格（cross_out 仍在旧位，cross_in 已在新位）。 */
+export function blueprintDynamicDrawCells(dyn: BlueprintDynamic) {
+  return dyn.cells;
+}
+
 export function blueprintBlocks(world: View, clock = getBlueprintClock()): BlueprintBlock[] {
   const grid = blueprintGrid(world);
-  const span = clock.duration > 0 ? clock.duration : BLUEPRINT_EXTEND_MIN;
-  const extend = blueprintExtend(clock.cycle, span);
+  if (finiteGoals(clock.goals) <= 0) return [];
+  const staticList = clock.staticCells ?? clock.cells ?? [];
+  const staticKeys = staticKeySet(staticList);
+  const staticSpan = clock.staticRaise > 0 ? clock.staticRaise : clock.duration > 0 ? clock.duration : BLUEPRINT_RAISE;
+  const staticAgeNow = Number.isFinite(clock.staticAge) ? clock.staticAge : clock.cycle;
+  const staticExtend = blueprintExtend(staticAgeNow, staticSpan);
   const blocks: BlueprintBlock[] = [];
-  for (const ref of clock.cells ?? []) {
-    if (blocks.length >= BLUEPRINT_MAX_COUNT) break;
-    if (ref.col < 0 || ref.row < 0 || ref.col >= grid.cols || ref.row >= grid.rows) continue;
-    const rect = {
-      col: ref.col,
-      row: ref.row,
-      x: grid.ox + ref.col * grid.size,
-      y: grid.oy + ref.row * grid.size,
-      w: grid.size,
-      h: grid.size,
-    };
-    if (!cellAllowed(world, rect)) continue;
-    const base = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
-    blocks.push({
-      id: `${ref.col}:${ref.row}`,
-      index: blocks.length,
-      col: ref.col,
-      row: ref.row,
-      dynamic: true,
-      extend,
-      cell: base,
-      solid: solidFromCell(base, extend),
-    });
+  const occupied = new Set<string>();
+  for (const ref of staticList) {
+    pushBlock(blocks, world, grid, ref, staticExtend, false, occupied);
+  }
+  const dyn = clock.dynamic;
+  if (dyn?.cells?.length) {
+    for (const ref of blueprintDynamicDrawCells(dyn)) {
+      const extend = blueprintDynamicCellExtend(dyn, ref, staticKeys);
+      if (extend <= 0) continue;
+      pushBlock(blocks, world, grid, ref, extend, true, occupied);
+    }
   }
   return blocks;
 }

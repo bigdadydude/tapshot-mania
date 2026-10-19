@@ -5,19 +5,24 @@ import {
   BLUEPRINT_BALL_CLEAR,
   BLUEPRINT_BLOCK_SIZE,
   BLUEPRINT_BOUNCE_CLEAR,
-  BLUEPRINT_EXTEND_CAP,
-  BLUEPRINT_EXTEND_MIN,
-  BLUEPRINT_EXTEND_PER_GOAL,
+  BLUEPRINT_DESPAWN_BASE,
+  BLUEPRINT_DESPAWN_CAP,
+  BLUEPRINT_DESPAWN_PER_GOAL,
   BLUEPRINT_FLOOR_SPREAD,
   BLUEPRINT_HIT_EXTEND,
   BLUEPRINT_MAX_COUNT,
   BLUEPRINT_MAX_LIGHTNESS,
+  BLUEPRINT_MULTI_PER_GOAL,
+  BLUEPRINT_CROSS_RAISE,
+  BLUEPRINT_RAISE,
   BLUEPRINT_SHAPES,
   blueprintBlocks,
   blueprintCellCover,
   blueprintCellPixels,
+  blueprintDespawnChance,
+  blueprintDynamicCellExtend,
+  blueprintDynamicProgress,
   blueprintExtend,
-  blueprintExtendSpan,
   blueprintFillAlpha,
   blueprintFloorDepthX,
   blueprintFloorRowY,
@@ -27,7 +32,7 @@ import {
   blueprintNearBall,
   blueprintOnShotPath,
   blueprintQuota,
-  blueprintSampleDuration,
+  blueprintSampleCount,
   blueprintShadowAlpha,
   blueprintShadowBox,
   blueprintShadowCast,
@@ -36,6 +41,7 @@ import {
   blueprintShadowPieces,
   blueprintShapeOffsets,
   blueprintStamp,
+  blueprintTranslateCells,
   blueprintVanishingPoint,
   clipBlueprintCells,
   collideBlueprint,
@@ -46,6 +52,7 @@ import {
   stepBlueprint,
   type BlueprintCellRef,
   type BlueprintClock,
+  type BlueprintDynamic,
 } from "./blueprint.ts";
 
 function makeWorld(w = 390, h = 844) {
@@ -55,13 +62,43 @@ function makeWorld(w = 390, h = 844) {
 
 const world = makeWorld();
 
-function clock(partial: Partial<BlueprintClock> & Pick<BlueprintClock, "cells" | "cycle">): BlueprintClock {
+function clock(partial: Partial<BlueprintClock> & { cells?: BlueprintCellRef[]; cycle?: number } = {}): BlueprintClock {
+  const {
+    cells: legacyCells,
+    cycle: legacyCycle,
+    duration: legacyDuration,
+    staticCells: staticCellsOpt,
+    staticAge: staticAgeOpt,
+    staticRaise: staticRaiseOpt,
+    ...rest
+  } = partial;
+  const staticCells = staticCellsOpt ?? legacyCells ?? [];
+  const staticAge = staticAgeOpt ?? legacyCycle ?? 0;
+  const staticRaise = staticRaiseOpt ?? legacyDuration ?? BLUEPRINT_RAISE;
   return {
     seed: 1,
     elapsed: 0,
-    goals: 0,
-    duration: BLUEPRINT_EXTEND_MIN,
+    goals: 1,
     serial: 1,
+    dynamic: null,
+    ...rest,
+    staticCells,
+    staticAge,
+    staticRaise,
+    cells: staticCells,
+    cycle: staticAge,
+    duration: staticRaise,
+  };
+}
+
+function dyn(partial: Partial<BlueprintDynamic> & Pick<BlueprintDynamic, "cells">): BlueprintDynamic {
+  return {
+    pending: [],
+    dir: 0,
+    phase: "hold",
+    age: 0,
+    stepSpan: 0.5,
+    raise: BLUEPRINT_RAISE,
     ...partial,
   };
 }
@@ -88,7 +125,7 @@ function aimAt(goals: number, sample = world) {
 
 function raisedCell() {
   for (let serial = 0; serial < 20; serial++) {
-    const batch = rollBlueprintBatch(world, { seed: 1, serial, goals: 0, ball: null, hoop: null });
+    const batch = rollBlueprintBatch(world, { seed: 1, serial, goals: 1, ball: null, hoop: null });
     if (batch.cells[0]) return batch.cells[0];
   }
   throw new Error("no legal blueprint cell");
@@ -103,76 +140,248 @@ test("同时凸出不超过 10 格", () => {
   assert.equal(blueprintQuota(99.9), 10);
   const many = Array.from({ length: 12 }, (_, i) => ({ col: i, row: 0 }));
   assert.equal(clipBlueprintCells(many, () => true).length, 10);
-  const shot = aimAt(0);
+  const shot = aimAt(8);
   for (let serial = 0; serial < 40; serial++) {
     const batch = rollBlueprintBatch(world, {
       seed: 3,
       serial,
-      goals: serial,
+      goals: Math.max(1, serial),
       ball: { x: shot.ballX, y: shot.ballY },
       hoop: { x: shot.hoopX, y: shot.hoopY },
     });
     assert.ok(batch.cells.length <= BLUEPRINT_MAX_COUNT);
-    assert.ok(batch.cells.length <= blueprintShapeOffsets(batch.shape, batch.length).length);
-    const blocks = blueprintBlocks(world, clock({ cells: batch.cells, cycle: batch.duration / 2, duration: batch.duration }));
+    const blocks = blueprintBlocks(world, clock({ cells: batch.cells, goals: Math.max(1, serial), cycle: batch.duration, duration: batch.duration }));
     assert.ok(blocks.length <= BLUEPRINT_MAX_COUNT);
   }
 });
 
-test("凸出时长从 1 秒起，每球加 0.2 秒，封顶 6 秒", () => {
-  assert.equal(BLUEPRINT_EXTEND_MIN, 1);
-  assert.equal(BLUEPRINT_EXTEND_PER_GOAL, 0.2);
-  assert.equal(BLUEPRINT_EXTEND_CAP, 6);
-  assert.deepEqual(blueprintExtendSpan(0), { min: 1, max: 1 });
-  assert.equal(blueprintSampleDuration(0, 0), 1);
-  assert.equal(blueprintSampleDuration(0, 0.4), 1);
-  assert.equal(blueprintSampleDuration(0, 1), 1);
-  assert.deepEqual(blueprintExtendSpan(1), { min: 1, max: 1.2 });
-  assert.equal(blueprintSampleDuration(1, 0), 1);
-  assert.equal(blueprintSampleDuration(1, 1), 1.2);
-  assert.equal(blueprintExtendSpan(5).max, 2);
-  assert.equal(blueprintExtendSpan(25).max, 6);
-  assert.equal(blueprintExtendSpan(80).max, 6);
-  assert.equal(blueprintSampleDuration(80, 1), 6);
-  assert.equal(blueprintSampleDuration(-3, 1), 1);
-  assert.equal(blueprintExtend(0, 1), 0);
-  assert.ok(Math.abs(blueprintExtend(0.5, 1) - 1) < 1e-6);
-  assert.equal(blueprintExtend(1, 1), 0);
-  assert.ok(blueprintExtend(4, 4) < 1e-6);
-  for (const goals of [0, 1, 4, 25]) {
-    const span = blueprintExtendSpan(goals);
-    for (let serial = 0; serial < 8; serial++) {
-      const batch = rollBlueprintBatch(world, { seed: 9, serial, goals, ball: null, hoop: null });
-      assert.ok(batch.duration >= span.min - 1e-9);
-      assert.ok(batch.duration <= span.max + 1e-9);
-    }
+test("首球前不凸出；第 1 球 1 格；进球越多越容易复数", () => {
+  assert.equal(BLUEPRINT_RAISE, 0.35);
+  assert.equal(BLUEPRINT_MULTI_PER_GOAL, 0.12);
+  assert.equal(blueprintSampleCount(0, 0), 0);
+  assert.equal(blueprintSampleCount(0, 1), 0);
+  assert.equal(blueprintSampleCount(1, 0), 1);
+  assert.equal(blueprintSampleCount(1, 1), 1);
+  assert.equal(rollBlueprintBatch(world, { seed: 2, serial: 0, goals: 0, ball: null, hoop: null }).cells.length, 0);
+  for (let serial = 0; serial < 24; serial++) {
+    const batch = rollBlueprintBatch(world, { seed: 7, serial, goals: 1, ball: null, hoop: null });
+    assert.equal(batch.cells.length, 1);
+    assert.equal(batch.duration, BLUEPRINT_RAISE);
   }
+  let multiAtLow = 0;
+  let multiAtHigh = 0;
+  const samples = 80;
+  for (let serial = 0; serial < samples; serial++) {
+    if (blueprintSampleCount(2, serial / samples) > 1) multiAtLow += 1;
+    if (blueprintSampleCount(12, serial / samples) > 1) multiAtHigh += 1;
+  }
+  assert.ok(multiAtHigh > multiAtLow, `high=${multiAtHigh} low=${multiAtLow}`);
+  assert.ok(multiAtHigh > samples * 0.45);
+  assert.equal(blueprintExtend(0, BLUEPRINT_RAISE), 0);
+  assert.ok(blueprintExtend(BLUEPRINT_RAISE / 2, BLUEPRINT_RAISE) > 0.4);
+  assert.equal(blueprintExtend(BLUEPRINT_RAISE, BLUEPRINT_RAISE), 1);
+  assert.equal(blueprintExtend(BLUEPRINT_RAISE * 8, BLUEPRINT_RAISE), 1);
 });
 
-test("一批会缩回，中途进球不改本批时长", () => {
+test("进球前空场；每次进球换批并保持到下一次进球", () => {
   resetBlueprint(4);
   const aim = aimAt(0);
   stepBlueprint(0.016, true, aim, world);
+  const idle = getBlueprintClock();
+  assert.equal(idle.goals, 0);
+  assert.equal(idle.cells.length, 0);
+  assert.equal(idle.staticCells.length, 0);
+  assert.equal(idle.dynamic, null);
+  assert.equal(blueprintBlocks(world, idle).length, 0);
+  stepBlueprint(0.5, true, { ...aim, goals: 0 }, world);
+  assert.equal(getBlueprintClock().cells.length, 0);
+
+  stepBlueprint(0.016, true, { ...aim, goals: 1 }, world);
   const first = getBlueprintClock();
-  assert.equal(first.goals, 0);
-  assert.equal(first.duration, 1);
-  assert.ok(first.cells.length >= 1);
-  assert.ok(first.cells.length <= BLUEPRINT_MAX_COUNT);
-  stepBlueprint(0.2, true, { ...aim, goals: 40 }, world);
-  const mid = getBlueprintClock();
-  assert.deepEqual(mid.cells, first.cells);
-  assert.equal(mid.duration, first.duration);
-  assert.equal(mid.goals, 0);
-  assert.equal(mid.serial, first.serial);
-  assert.ok(blueprintExtend(mid.cycle, mid.duration) > 0);
-  stepBlueprint(first.duration, true, { ...aim, goals: 4 }, world);
+  assert.equal(first.goals, 1);
+  assert.equal(first.staticCells.length, 1);
+  assert.equal(first.cells.length, 1);
+  assert.equal(first.staticRaise, BLUEPRINT_RAISE);
+  stepBlueprint(2, true, { ...aim, goals: 1 }, world);
+  const held = getBlueprintClock();
+  assert.deepEqual(held.staticCells, first.staticCells);
+  assert.equal(held.serial, first.serial);
+  assert.ok(held.staticAge > BLUEPRINT_RAISE);
+  assert.equal(blueprintExtend(held.staticAge, held.staticRaise), 1);
+
+  stepBlueprint(0.016, true, { ...aim, goals: 2 }, world);
   const next = getBlueprintClock();
+  assert.equal(next.goals, 2);
   assert.equal(next.serial, first.serial + 1);
-  assert.equal(next.goals, 4);
-  assert.ok(next.duration >= 1);
-  assert.ok(next.duration <= blueprintExtendSpan(4).max + 1e-9);
-  assert.ok(next.cycle < next.duration);
-  assert.ok(blueprintExtend(next.duration, next.duration) < 1e-6);
+  assert.ok(next.staticAge < 0.05);
+  assert.ok(next.staticCells.length >= 1);
+});
+
+test("动态刚体平移；与静态同格时整组贴平，静态不变", () => {
+  assert.deepEqual(blueprintTranslateCells([{ col: 3, row: 4 }], 0), [{ col: 4, row: 4 }]);
+  assert.deepEqual(blueprintTranslateCells([{ col: 3, row: 4 }], 3), [{ col: 3, row: 3 }]);
+  assert.equal(BLUEPRINT_CROSS_RAISE, 0.2);
+  assert.ok(Math.abs(blueprintDynamicProgress(BLUEPRINT_CROSS_RAISE / 2, BLUEPRINT_CROSS_RAISE) - 0.5) < 1e-9);
+  const legal = blueprintLegalCells(world, null);
+  const staticSpot = legal.find((cell, _, all) => all.some((other) => other.row === cell.row && other.col === cell.col - 1));
+  assert.ok(staticSpot);
+  const staticCell = { col: staticSpot.col, row: staticSpot.row };
+  const neighbor = { col: staticSpot.col - 1, row: staticSpot.row };
+  // 与静态重叠：整组动态贴平，同格只留静态。
+  const full = clock({
+    goals: 3,
+    staticCells: [staticCell],
+    staticAge: BLUEPRINT_RAISE,
+    staticRaise: BLUEPRINT_RAISE,
+    dynamic: dyn({
+      cells: [staticCell, neighbor],
+      pending: [],
+      dir: 0,
+      phase: "hold",
+      age: 0,
+    }),
+  });
+  const blocks = blueprintBlocks(world, full);
+  const atStatic = blocks.filter((b) => b.col === staticCell.col && b.row === staticCell.row);
+  assert.equal(atStatic.length, 1);
+  assert.equal(atStatic[0]!.dynamic, false);
+  assert.ok(atStatic[0]!.extend > 0.95);
+  assert.equal(blocks.some((b) => b.dynamic), false);
+
+  // cross_out：线性同步缩回。
+  const leaving = dyn({
+    cells: [neighbor],
+    pending: [staticCell],
+    dir: 0,
+    phase: "cross_out",
+    age: BLUEPRINT_CROSS_RAISE / 2,
+    raise: BLUEPRINT_CROSS_RAISE,
+  });
+  const empty = new Set<string>();
+  const leave = blueprintDynamicCellExtend(leaving, neighbor, empty);
+  assert.ok(Math.abs(leave - 0.5) < 1e-9, `leave=${leave}`);
+});
+
+test("动态挪移整组同步：先一起缩回，再一起升起", () => {
+  const legal = blueprintLegalCells(world, null);
+  const byRow = new Map<number, { col: number; row: number }[]>();
+  for (const cell of legal) {
+    const list = byRow.get(cell.row) ?? [];
+    list.push({ col: cell.col, row: cell.row });
+    byRow.set(cell.row, list);
+  }
+  let strip: { col: number; row: number }[] | null = null;
+  for (const list of byRow.values()) {
+    list.sort((a, b) => a.col - b.col);
+    for (let i = 0; i + 2 < list.length; i++) {
+      const a = list[i]!, b = list[i + 1]!, c = list[i + 2]!;
+      if (b.col === a.col + 1 && c.col === a.col + 2) {
+        strip = [a, b, c];
+        break;
+      }
+    }
+    if (strip) break;
+  }
+  assert.ok(strip);
+  const [a, b, c] = strip!;
+  const next = [{ col: a.col + 1, row: a.row }, { col: b.col + 1, row: b.row }, { col: c.col + 1, row: c.row }];
+  const empty = new Set<string>();
+  const sinking = dyn({
+    cells: [a, b, c],
+    pending: next,
+    dir: 0,
+    phase: "cross_out",
+    age: BLUEPRINT_CROSS_RAISE / 2,
+    raise: BLUEPRINT_CROSS_RAISE,
+  });
+  const e0 = blueprintDynamicCellExtend(sinking, a, empty);
+  const e1 = blueprintDynamicCellExtend(sinking, b, empty);
+  const e2 = blueprintDynamicCellExtend(sinking, c, empty);
+  assert.equal(e0, e1);
+  assert.equal(e1, e2);
+  assert.ok(Math.abs(e0 - 0.5) < 1e-9);
+
+  const rising = dyn({
+    cells: next,
+    pending: [],
+    dir: 0,
+    phase: "cross_in",
+    age: BLUEPRINT_CROSS_RAISE / 2,
+    raise: BLUEPRINT_CROSS_RAISE,
+  });
+  const r0 = blueprintDynamicCellExtend(rising, next[0]!, empty);
+  const r1 = blueprintDynamicCellExtend(rising, next[1]!, empty);
+  const r2 = blueprintDynamicCellExtend(rising, next[2]!, empty);
+  assert.equal(r0, r1);
+  assert.equal(r1, r2);
+  assert.ok(Math.abs(r0 - 0.5) < 1e-9);
+
+  const full = clock({
+    goals: 4,
+    staticCells: [],
+    staticAge: BLUEPRINT_RAISE,
+    dynamic: sinking,
+  });
+  const blocks = blueprintBlocks(world, full);
+  const dynBlocks = blocks.filter((block) => block.dynamic);
+  assert.equal(dynBlocks.length, 3);
+  assert.ok(dynBlocks.every((block) => Math.abs(block.extend - e0) < 1e-6));
+});
+
+test("进球时动态消失概率随进球升高；静态+动态合计不超过 10", () => {
+  assert.equal(BLUEPRINT_DESPAWN_BASE, 0.15);
+  assert.equal(BLUEPRINT_DESPAWN_PER_GOAL, 0.08);
+  assert.equal(BLUEPRINT_DESPAWN_CAP, 0.85);
+  assert.equal(blueprintDespawnChance(0), 0);
+  assert.equal(blueprintDespawnChance(1), 0.15);
+  assert.ok(blueprintDespawnChance(5) > blueprintDespawnChance(2));
+  assert.equal(blueprintDespawnChance(100), BLUEPRINT_DESPAWN_CAP);
+  const legal = blueprintLegalCells(world, null);
+  assert.ok(legal.length >= 12);
+  const staticList = legal.slice(0, 6).map((cell) => ({ col: cell.col, row: cell.row }));
+  const dynList = legal.slice(6, 12).map((cell) => ({ col: cell.col, row: cell.row }));
+  const full = clock({
+    goals: 8,
+    staticCells: staticList,
+    staticAge: BLUEPRINT_RAISE,
+    dynamic: dyn({ cells: dynList, phase: "hold" }),
+  });
+  const blocks = blueprintBlocks(world, full);
+  assert.ok(blocks.length <= BLUEPRINT_MAX_COUNT);
+  assert.equal(blocks.filter((b) => !b.dynamic).length, 6);
+  assert.equal(blocks.filter((b) => b.dynamic).length, 4);
+});
+
+test("进球换静态时可不杀动态", () => {
+  const staticA = [{ col: 2, row: 3 }];
+  const dynCells = [{ col: 6, row: 3 }];
+  restoreBlueprintClock(clock({
+    seed: 99,
+    goals: 2,
+    serial: 3,
+    staticCells: staticA,
+    staticAge: 1,
+    dynamic: dyn({ cells: dynCells, phase: "hold", age: 0.2 }),
+  }));
+  const before = getBlueprintClock();
+  assert.ok(before.dynamic);
+  // 用极低消失种子路径：直接构造 keep——进球后若未消失则 dynamic 仍在。
+  // 这里用 restore 模拟「未掷中消失」后的状态：静态已换、动态仍在。
+  restoreBlueprintClock({
+    ...before,
+    goals: 3,
+    serial: 4,
+    staticCells: [{ col: 3, row: 5 }],
+    staticAge: 0,
+    cells: [{ col: 3, row: 5 }],
+    cycle: 0,
+    dynamic: before.dynamic,
+  });
+  const after = getBlueprintClock();
+  assert.equal(after.goals, 3);
+  assert.deepEqual(after.staticCells, [{ col: 3, row: 5 }]);
+  assert.ok(after.dynamic);
+  assert.deepEqual(after.dynamic!.cells, dynCells);
 });
 
 test("形状是直线、斜线、Z、L、S、U、V、C，裁剪后仍不超过 10", () => {
@@ -207,15 +416,19 @@ test("形状是直线、斜线、Z、L、S、U、V、C，裁剪后仍不超过 1
   let single = false;
   let row = false;
   for (let serial = 0; serial < 80; serial++) {
-    const batch = rollBlueprintBatch(world, { seed: 11, serial, goals: 2, ball: null, hoop: null });
+    const goals = serial % 5 === 0 ? 1 : 6;
+    const batch = rollBlueprintBatch(world, { seed: 11, serial, goals, ball: null, hoop: null });
     seen.add(batch.shape);
     assert.ok(batch.cells.length <= 10);
     if (!batch.anchor) continue;
+    if (batch.cells.length === 1) {
+      single = true;
+      continue;
+    }
     const full = blueprintStamp(batch.shape, batch.length, batch.variant, batch.anchor);
     assert.ok(full.length <= BLUEPRINT_MAX_COUNT);
     const keys = new Set(full.map((cell) => `${cell.col}:${cell.row}`));
     for (const cell of batch.cells) assert.ok(keys.has(`${cell.col}:${cell.row}`));
-    if (batch.cells.length === 1) single = true;
     const sameRow = batch.cells.every((cell) => cell.row === batch.cells[0]!.row);
     const sameCol = batch.cells.every((cell) => cell.col === batch.cells[0]!.col);
     if (batch.cells.length >= 2 && (sameRow || sameCol)) row = true;
@@ -239,7 +452,7 @@ test("选位避开篮筐走廊，也不落在篮球两格内", () => {
   let sawPath = false;
   let sawIdle = false;
   for (let serial = 0; serial < 36; serial++) {
-    const batch = rollBlueprintBatch(world, { seed: 5, serial, goals: 1, ball, hoop });
+    const batch = rollBlueprintBatch(world, { seed: 5, serial, goals: 4, ball, hoop });
     if (batch.mode === "path") sawPath = true;
     if (batch.mode === "idle") sawIdle = true;
     if (batch.mode === "path" && batch.anchor) {
@@ -262,7 +475,7 @@ test("选位避开篮筐走廊，也不落在篮球两格内", () => {
   assert.equal(sawPath, true);
   assert.equal(sawIdle, true);
   for (const sample of [makeWorld(320, 700), makeWorld(500, 780), makeWorld(280, 620)]) {
-    const placed = rollBlueprintBatch(sample, { seed: 3, serial: 2, goals: 0, ball: { x: sample.w * 0.5, y: sample.floorY - sample.ballR }, hoop: { x: sample.w * 0.2, y: sample.h * 0.4 } });
+    const placed = rollBlueprintBatch(sample, { seed: 3, serial: 2, goals: 3, ball: { x: sample.w * 0.5, y: sample.floorY - sample.ballR }, hoop: { x: sample.w * 0.2, y: sample.h * 0.4 } });
     for (const ref of placed.cells) {
       const rect = cellRect(ref, sample);
       assert.ok(rect.y + rect.h < sample.floorY - sample.ballR);
@@ -270,16 +483,17 @@ test("选位避开篮筐走廊，也不落在篮球两格内", () => {
   }
 });
 
-test("格子位置不动，凸出后整格是墙，缩平后不再挡球", () => {
+test("格子位置不动，升起后整格是墙，未升起时不挡球", () => {
   const ref = raisedCell();
-  const span = 1;
+  const span = BLUEPRINT_RAISE;
   assert.ok(blueprintExtend(0, span) < BLUEPRINT_HIT_EXTEND);
-  assert.ok(Math.abs(blueprintExtend(span / 2, span) - 1) < 1e-6);
-  assert.ok(blueprintExtend(span, span) < 1e-6);
+  assert.ok(Math.abs(blueprintExtend(span / 2, span) - 1) > 0.1);
+  assert.equal(blueprintExtend(span, span), 1);
+  assert.equal(blueprintExtend(span * 4, span), 1);
   const flat = blueprintBlocks(world, clock({ cells: [ref], cycle: 0, duration: span }))[0]!;
-  const raised = blueprintBlocks(world, clock({ cells: [ref], cycle: span / 2, duration: span }))[0]!;
-  assert.equal(flat.dynamic, true);
-  assert.equal(raised.dynamic, true);
+  const raised = blueprintBlocks(world, clock({ cells: [ref], cycle: span, duration: span }))[0]!;
+  assert.equal(flat.dynamic, false);
+  assert.equal(raised.dynamic, false);
   assert.deepEqual(flat.cell, raised.cell);
   assert.equal(flat.solid, null);
   assert.ok(flat.extend < BLUEPRINT_HIT_EXTEND);
@@ -287,9 +501,9 @@ test("格子位置不动，凸出后整格是墙，缩平后不再挡球", () =>
   assert.ok(raised.extend > 0.95);
 });
 
-test("球会被方块弹开，缩回后让路，也可以从上方跳过", () => {
+test("球会被方块弹开，未升起时让路，也可以从上方跳过", () => {
   const ref = raisedCell();
-  const full = clock({ cells: [ref], cycle: 0.5, duration: 1 });
+  const full = clock({ cells: [ref], cycle: BLUEPRINT_RAISE, duration: BLUEPRINT_RAISE });
   restoreBlueprintClock(full);
   const target = blueprintBlocks(world, full)[0]!;
   assert.ok(target.solid);
@@ -309,9 +523,9 @@ test("球会被方块弹开，缩回后让路，也可以从上方跳过", () =>
   assert.equal(collideBlueprint(world, over, target.cell.x + overR + 3, overY, undefined, full), false);
 
   const inside = { x: target.cell.x + target.cell.w / 2, y: target.cell.y + target.cell.h / 2, vx: 0, vy: 0, r: 12 };
-  const hidden = clock({ cells: [ref], cycle: 0, duration: 1 });
+  const hidden = clock({ cells: [ref], cycle: 0, duration: BLUEPRINT_RAISE });
   restoreBlueprintClock(hidden);
-  assert.ok(blueprintExtend(0, 1) < 0.12);
+  assert.ok(blueprintExtend(0, BLUEPRINT_RAISE) < 0.12);
   assert.equal(collideBlueprint(world, { ...inside }, inside.x, inside.y), false);
   restoreBlueprintClock(full);
   assert.equal(collideBlueprint(world, { ...inside }, inside.x, inside.y), true);
@@ -321,7 +535,7 @@ test("球落在凸出格子上会弹开，不会黏住，跳起来也不会被�
   const g = world.h * 3.1;
   const dt = 1 / 60;
   const ref = raisedCell();
-  const full = clock({ cells: [ref], cycle: 0.5, duration: 1 });
+  const full = clock({ cells: [ref], cycle: BLUEPRINT_RAISE, duration: BLUEPRINT_RAISE });
   const target = blueprintBlocks(world, full)[0]!;
   const hop = Math.sqrt(2 * g * world.ballR * BLUEPRINT_BOUNCE_CLEAR);
   const ball = {
@@ -375,8 +589,8 @@ test("地面消失点在交线上方，交线处格子与墙面对齐", () => {
   assert.ok(Math.abs(y1 - (world.floorY + grid.size)) < 1e-4);
   assert.ok(y2 < world.h);
   assert.ok(y2 - y1 > y1 - world.floorY);
-  const batch = rollBlueprintBatch(world, { seed: 1, serial: 0, goals: 0, ball: null, hoop: null });
-  for (const block of blueprintBlocks(world, clock({ cells: batch.cells, cycle: 0.5, duration: 1 }))) {
+  const batch = rollBlueprintBatch(world, { seed: 1, serial: 0, goals: 3, ball: null, hoop: null });
+  for (const block of blueprintBlocks(world, clock({ cells: batch.cells, goals: 3, cycle: BLUEPRINT_RAISE, duration: BLUEPRINT_RAISE }))) {
     const col = Math.round((block.cell.x - grid.ox) / grid.size);
     const row = Math.round((block.cell.y - grid.oy) / grid.size);
     assert.ok(Math.abs(block.cell.x - (grid.ox + col * grid.size)) < 1e-6);
@@ -469,8 +683,8 @@ test("完全凸出时填色比以前暗，仍比没凸起亮", () => {
 });
 
 test("凸出填色贴住网格线", () => {
-  const batch = rollBlueprintBatch(world, { seed: 8, serial: 1, goals: 0, ball: null, hoop: null });
-  for (const block of blueprintBlocks(world, clock({ cells: batch.cells, cycle: 0.5, duration: 1 }))) {
+  const batch = rollBlueprintBatch(world, { seed: 8, serial: 1, goals: 3, ball: null, hoop: null });
+  for (const block of blueprintBlocks(world, clock({ cells: batch.cells, goals: 3, cycle: BLUEPRINT_RAISE, duration: BLUEPRINT_RAISE }))) {
     const px = blueprintCellPixels(block.cell);
     assert.equal(px.left, Math.round(block.cell.x));
     assert.equal(px.right, Math.round(block.cell.x + block.cell.w));
