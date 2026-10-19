@@ -5,11 +5,13 @@ import {
   BLUEPRINT_EXTEND_PERIOD,
   BLUEPRINT_FLOOR_SPREAD,
   BLUEPRINT_MAX_COUNT,
+  BLUEPRINT_MAX_LIGHTNESS,
   BLUEPRINT_RAMP_PACE,
   BLUEPRINT_START_COUNT,
   blueprintBlocks,
   blueprintCellPixels,
   blueprintExtend,
+  blueprintFillAlpha,
   blueprintFloorDepthX,
   blueprintFloorRowY,
   blueprintGrid,
@@ -172,6 +174,13 @@ test("地面消失点在交线上方，交线处格子与墙面对齐", () => {
     assert.ok(Math.abs(block.cell.y - (grid.oy + row * grid.size)) < 1e-6);
     assert.equal(block.cell.w, grid.size);
   }
+});
+
+test("完全凸出时填色比以前暗，仍比没凸起亮", () => {
+  assert.equal(blueprintFillAlpha(1), BLUEPRINT_MAX_LIGHTNESS);
+  assert.ok(BLUEPRINT_MAX_LIGHTNESS < 0.27);
+  assert.ok(BLUEPRINT_MAX_LIGHTNESS > 0.08);
+  assert.ok(blueprintFillAlpha(1) > blueprintFillAlpha(0.3));
 });
 
 test("凸出填色贴住网格线", () => {

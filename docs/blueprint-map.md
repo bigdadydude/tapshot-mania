@@ -90,6 +90,7 @@ Tap Shot Mania 新场景「蓝图」。纯蓝网格风格，强调环境干扰�
 | `BLUEPRINT_STAGGER` | 0.37 | 相邻动态方块的相位差，占一个伸缩周期的比例 |
 | `BLUEPRINT_BOUNCE` | 1.65 | 撞墙分离系数，法向速度大约弹回 0.65 |
 | `BLUEPRINT_FLOOR_SPREAD` | 2 | 画面底边的地面格子相对交线处放大的倍数。消失点因此在交线上方 |
+| `BLUEPRINT_MAX_LIGHTNESS` | 0.18 | 完全凸出时浅色罩的不透明度。越大越发白，仍比平格子亮 |
 
 开局 3 个方块，之后每 10 秒多一个，最多 6 个。每一格都按各自的相位伸出再缩回。安全格子不够时，实际数量会少于上限。测试：`src/game/blueprint.test.ts`。
 

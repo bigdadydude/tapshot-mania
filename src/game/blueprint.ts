@@ -27,6 +27,11 @@ export const BLUEPRINT_BOUNCE = 1.65;
  * 第一格高度仍等于墙面格子，消失点因此在交线上方，不压在交线上。
  */
 export const BLUEPRINT_FLOOR_SPREAD = 2;
+/**
+ * 完全凸出时，浅色罩在蓝底上的不透明度。
+ * 仍比没凸起的格子亮，但不要洗成发白。
+ */
+export const BLUEPRINT_MAX_LIGHTNESS = 0.18;
 
 export const BLUEPRINT_BLUE = "#11448f";
 
@@ -414,6 +419,13 @@ function drawPerspectiveFloor(ctx: CanvasRenderingContext2D, world: View) {
   ctx.restore();
 }
 
+/** 凸出填色的不透明度。完全凸出时等于 BLUEPRINT_MAX_LIGHTNESS。 */
+export function blueprintFillAlpha(extend: number) {
+  const min = 0.06;
+  const t = Math.min(1, Math.max(0, extend));
+  return min + (BLUEPRINT_MAX_LIGHTNESS - min) * t;
+}
+
 /** 填色贴在四条网格线的内侧，阴影从底边那条线的下一像素向下拉。 */
 export function blueprintCellPixels(cell: Rect) {
   const left = Math.round(cell.x);
@@ -439,7 +451,7 @@ function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock) {
   grad.addColorStop(1, "rgba(1, 8, 22, 0)");
   ctx.fillStyle = grad;
   ctx.fillRect(left, bottom + 1, right - left + 1, cast);
-  ctx.fillStyle = `rgba(236, 244, 255, ${0.07 + 0.2 * extend})`;
+  ctx.fillStyle = `rgba(236, 244, 255, ${blueprintFillAlpha(extend)})`;
   ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
 }
 
