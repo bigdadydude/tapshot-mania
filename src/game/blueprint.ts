@@ -22,6 +22,11 @@ export const BLUEPRINT_HIT_EXTEND = 0.12;
 export const BLUEPRINT_STAGGER = 0.37;
 /** 撞上方块时的分离系数。1.65 表示反弹保留约 0.65 的法向速度。 */
 export const BLUEPRINT_BOUNCE = 1.65;
+/**
+ * 画面底边的地面格子，相对墙地交线处放大的倍数。
+ * 第一格高度仍等于墙面格子，消失点因此在交线上方，不压在交线上。
+ */
+export const BLUEPRINT_FLOOR_SPREAD = 2;
 
 export const BLUEPRINT_BLUE = "#11448f";
 
@@ -83,13 +88,43 @@ export function blueprintGrid(world: View) {
   const size = Math.max(8, blueprintBlockSize(world));
   const cols = Math.max(1, Math.floor(world.w / size));
   const rows = Math.max(1, Math.floor(world.floorY / size));
+  const span = rows * size;
   return {
     size,
     cols,
     rows,
     ox: (world.w - cols * size) / 2,
-    oy: (world.floorY - rows * size) / 2,
+    oy: span <= world.floorY ? world.floorY - span : 0,
   };
+}
+
+/** 地面消失点。在交线上方，横向位置取画面中线。 */
+export function blueprintVanishingPoint(world: View) {
+  const grid = blueprintGrid(world);
+  return { x: world.w * 0.5, y: world.floorY - floorVanishingLift(world.h - world.floorY, grid.size) };
+}
+
+function floorVanishingLift(depth: number, size: number) {
+  const lift = depth / Math.max(0.35, BLUEPRINT_FLOOR_SPREAD - 1);
+  return Math.max(size * 1.25, lift);
+}
+
+/** 离墙 n 格的地面横线。n = 0 是墙地交线，不是消失点。 */
+export function blueprintFloorRowY(world: View, n: number) {
+  const size = blueprintGrid(world).size;
+  const vp = blueprintVanishingPoint(world);
+  const lift = world.floorY - vp.y;
+  const denom = lift + size * (1 - n);
+  if (denom <= 1e-3) return Number.POSITIVE_INFINITY;
+  return vp.y + (lift * (lift + size)) / denom;
+}
+
+/** 交线处横坐标 junctionX 的纵线，在画面高度 y 上的位置。 */
+export function blueprintFloorDepthX(world: View, junctionX: number, y: number) {
+  const vp = blueprintVanishingPoint(world);
+  const lift = world.floorY - vp.y;
+  if (lift <= 1e-3) return junctionX;
+  return vp.x + (junctionX - vp.x) * ((y - vp.y) / lift);
 }
 
 /** 左右篮筐所在的竖向通道，方块不得进入。 */
@@ -335,79 +370,67 @@ function strokeGrid(ctx: CanvasRenderingContext2D, world: View) {
   drawLines(true);
 }
 
+function strokeWhite(ctx: CanvasRenderingContext2D, major: boolean) {
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = major ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.34)";
+  ctx.stroke();
+}
+
 function drawPerspectiveFloor(ctx: CanvasRenderingContext2D, world: View) {
   const { w, h, floorY } = world;
   const depth = h - floorY;
   if (depth < 4) return;
-  const vpX = w * 0.5;
-  const near = h;
+  const grid = blueprintGrid(world);
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, floorY, w, depth + 1);
   ctx.clip();
-  ctx.strokeStyle = "rgba(255,255,255,0.82)";
-  ctx.lineWidth = 1.25;
-  ctx.beginPath();
-  const verts = 12;
-  for (let i = 0; i <= verts; i++) {
-    const x = (i / verts) * w;
-    ctx.moveTo(x, near + 1);
-    ctx.lineTo(vpX, floorY);
-  }
-  const zNear = 1;
-  const zFar = 7.5;
-  const bands = 8;
-  for (let i = 0; i <= bands; i++) {
-    const z = zNear + ((zFar - zNear) * i) / bands;
-    const t = (1 / z - 1 / zFar) / (1 / zNear - 1 / zFar);
-    const y = floorY + (near - floorY) * t;
-    ctx.moveTo(vpX + (0 - vpX) * t, y);
-    ctx.lineTo(vpX + (w - vpX) * t, y);
-  }
-  ctx.stroke();
+  const drawDepth = (major: boolean) => {
+    ctx.beginPath();
+    for (let i = 0; i <= grid.cols; i++) {
+      if (major !== (i % 4 === 0)) continue;
+      const x = grid.ox + i * grid.size + 0.5;
+      ctx.moveTo(x, floorY);
+      ctx.lineTo(blueprintFloorDepthX(world, x - 0.5, h + 1) + 0.5, h + 1);
+    }
+    strokeWhite(ctx, major);
+  };
+  const drawBands = (major: boolean) => {
+    ctx.beginPath();
+    for (let n = 1; n < 16; n++) {
+      if (major !== (n % 4 === 0)) continue;
+      const y = blueprintFloorRowY(world, n);
+      if (y > h - 1) break;
+      if (y <= floorY + 0.5) continue;
+      ctx.moveTo(0, y + 0.5);
+      ctx.lineTo(w, y + 0.5);
+    }
+    strokeWhite(ctx, major);
+  };
+  drawDepth(false);
+  drawBands(false);
+  drawDepth(true);
+  drawBands(true);
   ctx.restore();
-  ctx.strokeStyle = "rgba(255,255,255,0.95)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(0, floorY + 0.5);
-  ctx.lineTo(w, floorY + 0.5);
-  ctx.stroke();
 }
 
 function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock) {
-  const face = solidFromCell(block.cell, Math.max(block.extend, 0.04));
-  if (!face || block.extend < 0.03) return;
-  const depth = Math.min(face.w, face.h) * 0.2;
-  const dx = depth * 0.75;
-  const dy = depth;
-  ctx.fillStyle = `rgba(4, 18, 52, ${0.28 + 0.22 * block.extend})`;
+  const extend = block.extend;
+  if (extend < 0.04) return;
+  const cell = block.cell;
+  const inset = (1 - extend) * cell.w * 0.5;
+  const x = cell.x + inset;
+  const y = cell.y + inset;
+  const w = Math.max(0, cell.w - inset * 2);
+  const h = Math.max(0, cell.h - inset * 2);
+  const ry = Math.max(4, h * (0.1 + 0.16 * extend));
+  const alpha = 0.34 + 0.48 * extend;
+  ctx.save();
+  ctx.fillStyle = `rgba(1, 8, 24, ${alpha})`;
   ctx.beginPath();
-  ctx.ellipse(face.x + face.w / 2, face.y + face.h + dy * 0.45, face.w * 0.46, Math.max(2.5, dy * 0.55), 0, 0, Math.PI * 2);
+  ctx.ellipse(x + w / 2, y + h + 2 + ry, Math.max(2, w * 0.46), ry, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#e7eef8";
-  ctx.beginPath();
-  ctx.moveTo(face.x, face.y);
-  ctx.lineTo(face.x + dx, face.y - dy);
-  ctx.lineTo(face.x + face.w + dx, face.y - dy);
-  ctx.lineTo(face.x + face.w, face.y);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = "#c5d4ea";
-  ctx.beginPath();
-  ctx.moveTo(face.x + face.w, face.y);
-  ctx.lineTo(face.x + face.w + dx, face.y - dy);
-  ctx.lineTo(face.x + face.w + dx, face.y + face.h - dy);
-  ctx.lineTo(face.x + face.w, face.y + face.h);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = "#f7fbff";
-  ctx.fillRect(face.x, face.y, face.w, face.h);
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(face.x + 0.75, face.y + 0.75, Math.max(0, face.w - 1.5), Math.max(0, face.h - 1.5));
-  ctx.strokeStyle = "rgba(17, 68, 143, 0.45)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(face.x + 4, face.y + 4, Math.max(0, face.w - 8), Math.max(0, face.h - 8));
+  ctx.restore();
 }
 
 export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View) {

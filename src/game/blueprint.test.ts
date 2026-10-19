@@ -3,13 +3,18 @@ import test from "node:test";
 import { getScene, SCENE_LABELS, setScene } from "./scenes.ts";
 import {
   BLUEPRINT_EXTEND_PERIOD,
+  BLUEPRINT_FLOOR_SPREAD,
   BLUEPRINT_MAX_COUNT,
   BLUEPRINT_RAMP_PACE,
   BLUEPRINT_START_COUNT,
   blueprintBlocks,
   blueprintExtend,
+  blueprintFloorDepthX,
+  blueprintFloorRowY,
+  blueprintGrid,
   blueprintJumpClearY,
   blueprintQuota,
+  blueprintVanishingPoint,
   collideBlueprint,
   restoreBlueprintClock,
   type BlueprintBlock,
@@ -138,6 +143,30 @@ test("球会被方块弹开，缩回后让路，也可以从上方跳过", () =>
   assert.equal(collideBlueprint(world, { ...inside }, inside.x, inside.y), false);
   restoreBlueprintClock(clock(0, cycleNear(hidden.index, 1), 1));
   assert.equal(collideBlueprint(world, { ...inside }, inside.x, inside.y), true);
+});
+
+test("地面消失点在交线上方，交线处格子与墙面对齐", () => {
+  const grid = blueprintGrid(world);
+  assert.ok(Math.abs(grid.oy + grid.rows * grid.size - world.floorY) < 1e-6);
+  const vp = blueprintVanishingPoint(world);
+  assert.ok(world.floorY - vp.y > grid.size, `vp sits on the join: ${vp.y}`);
+  const x0 = grid.ox + 2 * grid.size;
+  const x1 = x0 + grid.size;
+  assert.ok(Math.abs(blueprintFloorDepthX(world, x0, world.floorY) - x0) < 1e-6);
+  const gapNear = blueprintFloorDepthX(world, x1, world.h) - blueprintFloorDepthX(world, x0, world.h);
+  assert.ok(Math.abs(gapNear / grid.size - BLUEPRINT_FLOOR_SPREAD) < 0.05, `foreground pitch ${gapNear}`);
+  const y1 = blueprintFloorRowY(world, 1);
+  const y2 = blueprintFloorRowY(world, 2);
+  assert.ok(Math.abs(y1 - (world.floorY + grid.size)) < 1e-4);
+  assert.ok(y2 < world.h);
+  assert.ok(y2 - y1 > y1 - world.floorY);
+  for (const block of at(10_000)) {
+    const col = Math.round((block.cell.x - grid.ox) / grid.size);
+    const row = Math.round((block.cell.y - grid.oy) / grid.size);
+    assert.ok(Math.abs(block.cell.x - (grid.ox + col * grid.size)) < 1e-6);
+    assert.ok(Math.abs(block.cell.y - (grid.oy + row * grid.size)) < 1e-6);
+    assert.equal(block.cell.w, grid.size);
+  }
 });
 
 test("标题和开发者场景条都有蓝图，其它场景配色不动", () => {
