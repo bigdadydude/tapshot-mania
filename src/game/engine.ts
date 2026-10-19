@@ -4914,7 +4914,15 @@ export function createGame(
           getTrainGantries(world, getTrainScroll()).length === 0;
       });
     }
-    if (blueprintOn()) stepBlueprint(dt, phase === "playing");
+    if (blueprintOn()) {
+      stepBlueprint(dt, phase === "playing", {
+        goals: madeCount,
+        ballX: ball.x,
+        ballY: ball.y,
+        hoopX: hoop.x,
+        hoopY: hoop.y,
+      }, world);
+    }
     if (trafficEnabled() && madeCount > 0) {
       stepTraffic(traffic, world, dt);
       if (holeOn) beginTrafficAbsorption(traffic, holeX, holeY);

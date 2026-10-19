@@ -8,18 +8,18 @@ import type { World } from "./types";
 
 /** 方块边长，按画面宽 390 换算。 */
 export const BLUEPRINT_BLOCK_SIZE = 44;
-/** 同时存在的凸出方块上限。 */
-export const BLUEPRINT_MAX_COUNT = 6;
-/** 每多出现一个方块所需的对局秒数。 */
-export const BLUEPRINT_RAMP_PACE = 10;
-/** 动态方块伸出再缩回一圈的秒数。 */
-export const BLUEPRINT_EXTEND_PERIOD = 2.6;
-/** 开局就在场上的方块数。每一格都会伸缩，没有永久凸出。 */
-export const BLUEPRINT_START_COUNT = 3;
+/** 同时凸出的格子上限。 */
+export const BLUEPRINT_MAX_COUNT = 10;
+/** 凸出时长下限，秒。进球数为 0 时整段就是 1 秒。 */
+export const BLUEPRINT_EXTEND_MIN = 1;
+/** 每进一球，时长区间右端增加的秒数。 */
+export const BLUEPRINT_EXTEND_PER_GOAL = 0.2;
+/** 凸出时长上限，秒。 */
+export const BLUEPRINT_EXTEND_CAP = 6;
+/** 篮球周围禁生成的半径，按格计。 */
+export const BLUEPRINT_BALL_CLEAR = 2;
 /** 缩到这个比例以下就不再挡球。 */
 export const BLUEPRINT_HIT_EXTEND = 0.12;
-/** 相邻动态方块的相位差，占一个伸缩周期的比例。 */
-export const BLUEPRINT_STAGGER = 0.37;
 /** 撞上方块时的分离系数。1.65 表示反弹保留约 0.65 的法向速度。 */
 export const BLUEPRINT_BOUNCE = 1.65;
 /**
@@ -44,7 +44,39 @@ type View = Pick<World, "w" | "h" | "floorY" | "ballR" | "hoopInner">;
 type Rect = { x: number; y: number; w: number; h: number };
 type Cell = Rect & { col: number; row: number };
 
-export type BlueprintClock = { seed: number; elapsed: number; cycle: number };
+export const BLUEPRINT_SHAPES = ["line", "diag", "z", "l", "s", "u", "v", "c"] as const;
+export type BlueprintShape = (typeof BLUEPRINT_SHAPES)[number];
+export type BlueprintCellRef = { col: number; row: number };
+export type BlueprintAim = {
+  goals: number;
+  ballX: number;
+  ballY: number;
+  hoopX: number;
+  hoopY: number;
+};
+export type BlueprintBatch = {
+  cells: BlueprintCellRef[];
+  duration: number;
+  shape: BlueprintShape;
+  length: number;
+  variant: number;
+  mode: "idle" | "path";
+  anchor: BlueprintCellRef | null;
+};
+
+export type BlueprintClock = {
+  seed: number;
+  elapsed: number;
+  /** 当前这批已经过的秒数。 */
+  cycle: number;
+  /** 抽出这一批时长时的进球数。 */
+  goals: number;
+  /** 这一批伸出再缩回的秒数。 */
+  duration: number;
+  cells: BlueprintCellRef[];
+  /** 每换一批加一，用来抽下一个形状。 */
+  serial: number;
+};
 export type BlueprintBlock = {
   id: string;
   index: number;
@@ -58,18 +90,40 @@ export type BlueprintBlock = {
   solid: Rect | null;
 };
 
+/**
+ * 投篮弧线附近，按格边长计。只用来选锚点。
+ * 篮球两格禁区会拿掉贴着球的格子，所以这条带宽要比禁区稍松，弧线旁的下一圈仍算必经路。
+ */
+const PATH_REACH = 2;
+
 let seed = Math.random() * 1e6;
 let elapsed = 0;
 let cycle = 0;
+let goals = 0;
+let duration = BLUEPRINT_EXTEND_MIN;
+let cells: BlueprintCellRef[] = [];
+let serial = 0;
+let hasBatch = false;
+let aim: BlueprintAim | null = null;
+let view: View | null = null;
+
+function copyCells(list: readonly BlueprintCellRef[]) {
+  return list.map((cell) => ({ col: cell.col, row: cell.row }));
+}
 
 export function getBlueprintClock(): BlueprintClock {
-  return { seed, elapsed, cycle };
+  return { seed, elapsed, cycle, goals, duration, serial, cells: copyCells(cells) };
 }
 
 export function restoreBlueprintClock(next: BlueprintClock) {
   seed = next.seed;
   elapsed = next.elapsed;
   cycle = next.cycle;
+  goals = finiteGoals(next.goals);
+  duration = next.duration > 0 ? next.duration : BLUEPRINT_EXTEND_MIN;
+  cells = copyCells(next.cells ?? []);
+  serial = Number.isFinite(next.serial) ? next.serial : 0;
+  hasBatch = true;
 }
 
 /** 换场景或回到标题时重新抽一块图纸。 */
@@ -77,17 +131,62 @@ export function resetBlueprint(nextSeed = Math.random() * 1e6) {
   seed = nextSeed;
   elapsed = 0;
   cycle = 0;
+  goals = 0;
+  duration = BLUEPRINT_EXTEND_MIN;
+  cells = [];
+  serial = 0;
+  hasBatch = false;
+  aim = null;
 }
 
-/** 新一局只清进程，格子布局跟标题上看到的一致。 */
+/** 新一局只清对局秒数。当前这批格子留着，跟标题上看到的一致。 */
 export function resetBlueprintProgress() {
   elapsed = 0;
 }
 
-export function stepBlueprint(dt: number, playing: boolean) {
+function finiteGoals(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
+}
+
+function rollCurrent() {
+  if (!view) return;
+  const goalsNow = aim ? finiteGoals(aim.goals) : goals;
+  const ball = aim && Number.isFinite(aim.ballX) && Number.isFinite(aim.ballY) ? { x: aim.ballX, y: aim.ballY } : null;
+  const hoop = aim && Number.isFinite(aim.hoopX) && Number.isFinite(aim.hoopY) ? { x: aim.hoopX, y: aim.hoopY } : null;
+  const batch = rollBlueprintBatch(view, { seed, serial, goals: goalsNow, ball, hoop });
+  goals = goalsNow;
+  duration = batch.duration;
+  cells = batch.cells;
+  hasBatch = true;
+}
+
+export function stepBlueprint(dt: number, playing: boolean, next?: BlueprintAim, world?: View) {
+  if (next) aim = next;
+  if (world) view = { w: world.w, h: world.h, floorY: world.floorY, ballR: world.ballR, hoopInner: world.hoopInner };
+  if (!hasBatch) {
+    rollCurrent();
+    if (hasBatch) cycle = 0;
+  }
   if (!(dt > 0)) return;
-  cycle += dt;
   if (playing) elapsed += dt;
+  let left = dt;
+  for (let guard = 0; guard < 8 && left > 1e-8; guard++) {
+    const dur = duration > 1e-6 ? duration : BLUEPRINT_EXTEND_MIN;
+    const room = dur - cycle;
+    if (room > 1e-8 && left < room) {
+      cycle += left;
+      return;
+    }
+    if (!view) {
+      cycle = Math.min(dur, cycle + left);
+      return;
+    }
+    left -= Math.max(0, room);
+    cycle = 0;
+    serial += 1;
+    rollCurrent();
+  }
 }
 
 export function blueprintBlockSize(world: Pick<World, "w">) {
@@ -186,47 +285,222 @@ function allowedCells(world: View): Cell[] {
   return cells;
 }
 
-function pickSlots(world: View, layoutSeed: number) {
-  const all = allowedCells(world);
-  const byHash = (a: Cell, b: Cell) => hash01(layoutSeed, a) - hash01(layoutSeed, b) || a.row - b.row || a.col - b.col;
-  const jump = all.filter((cell) => cell.y > blueprintJumpClearY(world)).sort(byHash);
-  const high = all.filter((cell) => cell.y <= blueprintJumpClearY(world)).sort(byHash);
-  const ordered = [...jump, ...high];
-  const chosen: Cell[] = [];
-  const rowWidth = (row: number) => all.filter((cell) => cell.row === row).length;
-  const accept = (cell: Cell, loose: boolean) => {
-    if (chosen.some((other) => other.col === cell.col && other.row === cell.row)) return false;
-    const rowMates = chosen.filter((other) => other.row === cell.row);
-    const cap = rowWidth(cell.row) >= 3 ? 2 : 1;
-    if (rowMates.length >= (loose ? 1 : cap)) return false;
-    if (!loose && rowMates.some((other) => Math.abs(other.col - cell.col) <= 1)) return false;
-    const colMates = chosen.filter((other) => other.col === cell.col);
-    if (colMates.length >= 3) return false;
-    if (colMates.some((other) => Math.abs(other.row - cell.row) <= 1)) return false;
-    return true;
-  };
-  for (const cell of ordered) {
-    if (chosen.length >= BLUEPRINT_MAX_COUNT) break;
-    if (accept(cell, false)) chosen.push(cell);
+function unitAt(layoutSeed: number, batchSerial: number, channel: number) {
+  const n = Math.sin(layoutSeed * 12.9898 + (batchSerial + 1) * 78.233 + (channel + 1) * 39.425) * 43758.5453;
+  return n - Math.floor(n);
+}
+
+function clampInt(value: number, lo: number, hi: number) {
+  const n = Math.floor(Number.isFinite(value) ? value : lo);
+  return Math.min(hi, Math.max(lo, n));
+}
+
+/** 本批格数不超过同时凸出上限。时间爬坡已删除。 */
+export function blueprintQuota(requested: number) {
+  if (!Number.isFinite(requested) || requested <= 0) return 0;
+  return Math.min(BLUEPRINT_MAX_COUNT, Math.floor(requested));
+}
+
+/** 时长区间 `[1, min(6, 1 + 0.2 × 进球数)]`。 */
+export function blueprintExtendSpan(made: number) {
+  const goalsNow = finiteGoals(made);
+  const minTenths = Math.round(BLUEPRINT_EXTEND_MIN * 10);
+  const stepTenths = Math.round(BLUEPRINT_EXTEND_PER_GOAL * 10);
+  const capTenths = Math.round(BLUEPRINT_EXTEND_CAP * 10);
+  const maxTenths = Math.min(capTenths, minTenths + stepTenths * goalsNow);
+  return { min: minTenths / 10, max: maxTenths / 10 };
+}
+
+/** `roll` 为 0 取下限，为 1 取上限。 */
+export function blueprintSampleDuration(made: number, roll: number) {
+  const span = blueprintExtendSpan(made);
+  if (span.max <= span.min) return span.min;
+  const t = Math.min(1, Math.max(0, Number.isFinite(roll) ? roll : 0));
+  return span.min + (span.max - span.min) * t;
+}
+
+const FIXED_SHAPES: Record<Exclude<BlueprintShape, "line" | "diag">, readonly { c: number; r: number }[]> = {
+  z: [
+    { c: 0, r: 0 },
+    { c: 1, r: 0 },
+    { c: 1, r: 1 },
+    { c: 2, r: 1 },
+  ],
+  l: [
+    { c: 0, r: 0 },
+    { c: 0, r: 1 },
+    { c: 0, r: 2 },
+    { c: 1, r: 2 },
+  ],
+  s: [
+    { c: 1, r: 0 },
+    { c: 2, r: 0 },
+    { c: 0, r: 1 },
+    { c: 1, r: 1 },
+  ],
+  u: [
+    { c: 0, r: 0 },
+    { c: 2, r: 0 },
+    { c: 0, r: 1 },
+    { c: 2, r: 1 },
+    { c: 0, r: 2 },
+    { c: 1, r: 2 },
+    { c: 2, r: 2 },
+  ],
+  v: [
+    { c: 0, r: 0 },
+    { c: 1, r: 1 },
+    { c: 2, r: 2 },
+    { c: 3, r: 1 },
+    { c: 4, r: 0 },
+  ],
+  c: [
+    { c: 0, r: 0 },
+    { c: 1, r: 0 },
+    { c: 2, r: 0 },
+    { c: 0, r: 1 },
+    { c: 0, r: 2 },
+    { c: 1, r: 2 },
+    { c: 2, r: 2 },
+  ],
+};
+
+/** 形状的原始偏移。直线 1～6 格，斜线 2～4 格，其余为固定图案。 */
+export function blueprintShapeOffsets(shape: BlueprintShape, length = 4) {
+  if (shape === "line") {
+    const n = clampInt(length, 1, 6);
+    return Array.from({ length: n }, (_, i) => ({ c: i, r: 0 }));
   }
-  if (chosen.length < Math.min(BLUEPRINT_START_COUNT, all.length)) {
-    for (const cell of ordered) {
-      if (chosen.length >= BLUEPRINT_MAX_COUNT) break;
-      if (accept(cell, true)) chosen.push(cell);
+  if (shape === "diag") {
+    const n = clampInt(length, 2, 4);
+    return Array.from({ length: n }, (_, i) => ({ c: i, r: i }));
+  }
+  return FIXED_SHAPES[shape].map((cell) => ({ c: cell.c, r: cell.r }));
+}
+
+function transformOffsets(offsets: { c: number; r: number }[], variant: number) {
+  const mirror = ((Math.floor(variant) % 8) + 8) % 8 >= 4;
+  const rot = ((Math.floor(variant) % 4) + 4) % 4;
+  return offsets.map(({ c, r }) => {
+    let x = mirror ? -c : c;
+    let y = r;
+    for (let i = 0; i < rot; i++) {
+      const nx = -y;
+      const ny = x;
+      x = nx;
+      y = ny;
+    }
+    return { c: x, r: y };
+  });
+}
+
+/** 把形状放到锚点上。锚点是旋转、镜像之后包围盒的左上角。 */
+export function blueprintStamp(shape: BlueprintShape, length: number, variant: number, anchor: BlueprintCellRef) {
+  const offsets = transformOffsets(blueprintShapeOffsets(shape, length), variant);
+  const minC = Math.min(...offsets.map((cell) => cell.c));
+  const minR = Math.min(...offsets.map((cell) => cell.r));
+  return offsets.map((cell) => ({ col: anchor.col + (cell.c - minC), row: anchor.row + (cell.r - minR) }));
+}
+
+/** 裁到合法格，并停在同时凸出上限。 */
+export function clipBlueprintCells(stamped: readonly BlueprintCellRef[], allowed: (col: number, row: number) => boolean) {
+  const out: BlueprintCellRef[] = [];
+  const seen = new Set<string>();
+  for (const cell of stamped) {
+    const key = `${cell.col}:${cell.row}`;
+    if (seen.has(key) || !allowed(cell.col, cell.row)) continue;
+    seen.add(key);
+    out.push({ col: cell.col, row: cell.row });
+    if (out.length >= BLUEPRINT_MAX_COUNT) break;
+  }
+  return out;
+}
+
+export function blueprintNearBall(world: View, cell: Rect, ball: { x: number; y: number }) {
+  const size = blueprintGrid(world).size;
+  const cx = cell.x + cell.w / 2;
+  const cy = cell.y + cell.h / 2;
+  return Math.hypot(cx - ball.x, cy - ball.y) <= BLUEPRINT_BALL_CLEAR * size + 1e-6;
+}
+
+function shotArc(ball: { x: number; y: number }, hoop: { x: number; y: number }, t: number) {
+  const x = ball.x + (hoop.x - ball.x) * t;
+  const y = ball.y + (hoop.y - ball.y) * t;
+  const chord = Math.hypot(hoop.x - ball.x, hoop.y - ball.y);
+  const lift = Math.sin(Math.PI * t) * Math.max(chord * 0.18, 1);
+  return { x, y: y - lift };
+}
+
+/** 格子中心离球到筐的弧线够近，就算投篮必经路。 */
+export function blueprintOnShotPath(world: View, cell: Rect, ball: { x: number; y: number }, hoop: { x: number; y: number }) {
+  const size = blueprintGrid(world).size;
+  const cx = cell.x + cell.w / 2;
+  const cy = cell.y + cell.h / 2;
+  let best = Infinity;
+  for (let i = 0; i <= 24; i++) {
+    const point = shotArc(ball, hoop, i / 24);
+    const dist = Math.hypot(cx - point.x, cy - point.y);
+    if (dist < best) best = dist;
+  }
+  return best <= PATH_REACH * size;
+}
+
+export function blueprintLegalCells(world: View, ball?: { x: number; y: number } | null) {
+  return allowedCells(world).filter((cell) => !ball || !blueprintNearBall(world, cell, ball));
+}
+
+function shapeLength(shape: BlueprintShape, requested: number) {
+  if (shape === "line") return clampInt(requested, 1, 6);
+  if (shape === "diag") return clampInt(requested, 2, 4);
+  return blueprintShapeOffsets(shape).length;
+}
+
+/** 抽一批凸出。时长跟进球数走，格子是一个形状裁完的结果。 */
+export function rollBlueprintBatch(
+  world: View,
+  opts: {
+    seed: number;
+    serial: number;
+    goals: number;
+    ball?: { x: number; y: number } | null;
+    hoop?: { x: number; y: number } | null;
+  },
+): BlueprintBatch {
+  const layoutSeed = Number.isFinite(opts.seed) ? opts.seed : 1;
+  const batchSerial = Number.isFinite(opts.serial) ? opts.serial : 0;
+  const made = finiteGoals(opts.goals);
+  const shape = BLUEPRINT_SHAPES[Math.min(BLUEPRINT_SHAPES.length - 1, Math.floor(unitAt(layoutSeed, batchSerial, 1) * BLUEPRINT_SHAPES.length))]!;
+  const requested = 1 + Math.min(5, Math.floor(unitAt(layoutSeed, batchSerial, 2) * 6));
+  const length = shapeLength(shape, requested);
+  const variant = Math.min(7, Math.floor(unitAt(layoutSeed, batchSerial, 3) * 8));
+  const duration = blueprintSampleDuration(made, unitAt(layoutSeed, batchSerial, 0));
+  const ball = opts.ball && Number.isFinite(opts.ball.x) && Number.isFinite(opts.ball.y) ? opts.ball : null;
+  const hoop = opts.hoop && Number.isFinite(opts.hoop.x) && Number.isFinite(opts.hoop.y) ? opts.hoop : null;
+  const legal = blueprintLegalCells(world, ball);
+  const allowed = new Set(legal.map((cell) => `${cell.col}:${cell.row}`));
+  const path = ball && hoop ? legal.filter((cell) => blueprintOnShotPath(world, cell, ball, hoop)) : [];
+  const wantPath = unitAt(layoutSeed, batchSerial, 4) < 0.5 && path.length > 0;
+  const pool = wantPath ? path : legal;
+  const mode: "idle" | "path" = wantPath ? "path" : "idle";
+  const ordered = pool.slice().sort((a, b) => hash01(layoutSeed + batchSerial * 3.1, a) - hash01(layoutSeed + batchSerial * 3.1, b) || a.row - b.row || a.col - b.col);
+  let placed: BlueprintCellRef[] = [];
+  let anchor: BlueprintCellRef | null = null;
+  for (const cell of ordered) {
+    const stamped = blueprintStamp(shape, length, variant, { col: cell.col, row: cell.row });
+    const kept = clipBlueprintCells(stamped, (col, row) => allowed.has(`${col}:${row}`));
+    if (kept.length > placed.length) {
+      placed = kept;
+      anchor = { col: cell.col, row: cell.row };
     }
   }
-  return chosen;
+  const capped = placed.slice(0, blueprintQuota(placed.length));
+  return { cells: capped, duration, shape, length, variant, mode, anchor: capped.length ? anchor : null };
 }
 
-export function blueprintQuota(playSeconds: number, available: number) {
-  const extra = Math.max(0, Math.floor(Math.max(0, playSeconds) / BLUEPRINT_RAMP_PACE));
-  return Math.max(0, Math.min(available, BLUEPRINT_MAX_COUNT, BLUEPRINT_START_COUNT + extra));
-}
-
-/** 0 贴平，1 完全凸出。每个格子都会回到 0，没有一直凸着的墙。 */
-export function blueprintExtend(anim: number, index: number) {
-  const period = BLUEPRINT_EXTEND_PERIOD;
-  let t = (anim + index * period * BLUEPRINT_STAGGER) % period;
+/** 0 贴平，1 完全凸出。周期结束回到 0，没有一直凸着的墙。 */
+export function blueprintExtend(age: number, span = BLUEPRINT_EXTEND_MIN) {
+  const period = span > 1e-6 ? span : BLUEPRINT_EXTEND_MIN;
+  let t = age % period;
   if (t < 0) t += period;
   const phase = t / period;
   return 0.5 - 0.5 * Math.cos(phase * Math.PI * 2);
@@ -240,22 +514,35 @@ export function solidFromCell(cell: Rect, extend: number): Rect | null {
 }
 
 export function blueprintBlocks(world: View, clock = getBlueprintClock()): BlueprintBlock[] {
-  const slots = pickSlots(world, clock.seed);
-  const count = blueprintQuota(clock.elapsed, slots.length);
-  return slots.slice(0, count).map((cell, index) => {
-    const extend = blueprintExtend(clock.cycle, index);
-    const base = { x: cell.x, y: cell.y, w: cell.w, h: cell.h };
-    return {
-      id: `${cell.col}:${cell.row}`,
-      index,
-      col: cell.col,
-      row: cell.row,
+  const grid = blueprintGrid(world);
+  const span = clock.duration > 0 ? clock.duration : BLUEPRINT_EXTEND_MIN;
+  const extend = blueprintExtend(clock.cycle, span);
+  const blocks: BlueprintBlock[] = [];
+  for (const ref of clock.cells ?? []) {
+    if (blocks.length >= BLUEPRINT_MAX_COUNT) break;
+    if (ref.col < 0 || ref.row < 0 || ref.col >= grid.cols || ref.row >= grid.rows) continue;
+    const rect = {
+      col: ref.col,
+      row: ref.row,
+      x: grid.ox + ref.col * grid.size,
+      y: grid.oy + ref.row * grid.size,
+      w: grid.size,
+      h: grid.size,
+    };
+    if (!cellAllowed(world, rect)) continue;
+    const base = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
+    blocks.push({
+      id: `${ref.col}:${ref.row}`,
+      index: blocks.length,
+      col: ref.col,
+      row: ref.row,
       dynamic: true,
       extend,
       cell: base,
       solid: solidFromCell(base, extend),
-    };
-  });
+    });
+  }
+  return blocks;
 }
 
 type Sweep = { t: number; nx: number; ny: number; depth: number };
