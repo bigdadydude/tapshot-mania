@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { getScene, SCENE_LABELS, setScene } from "./scenes.ts";
 import {
+  BLUEPRINT_BOUNCE_CLEAR,
   BLUEPRINT_EXTEND_PERIOD,
   BLUEPRINT_FLOOR_SPREAD,
+  BLUEPRINT_HIT_EXTEND,
   BLUEPRINT_MAX_COUNT,
   BLUEPRINT_MAX_LIGHTNESS,
   BLUEPRINT_RAMP_PACE,
@@ -88,19 +90,21 @@ function cycleNear(index: number, want: number) {
   return best;
 }
 
-test("动态方块只绕格子中心伸缩", () => {
+test("格子位置不动，凸出后整格是墙，缩平后不再挡球", () => {
   assert.ok(blueprintExtend(0, 0) < 1e-6);
   assert.ok(Math.abs(blueprintExtend(BLUEPRINT_EXTEND_PERIOD / 2, 0) - 1) < 1e-6);
   assert.ok(blueprintExtend(BLUEPRINT_EXTEND_PERIOD, 0) < 1e-6);
   const sample = at(0, 0).find((item) => item.dynamic)!;
-  const shut = at(0, cycleNear(sample.index, 0.2)).find((item) => item.id === sample.id)!;
+  const flat = at(0, cycleNear(sample.index, 0.05)).find((item) => item.id === sample.id)!;
+  const raised = at(0, cycleNear(sample.index, 0.2)).find((item) => item.id === sample.id)!;
   const open = at(0, cycleNear(sample.index, 1)).find((item) => item.id === sample.id)!;
-  assert.deepEqual(center(shut.cell), center(open.cell));
-  assert.ok(shut.solid && open.solid);
-  assert.deepEqual(center(shut.solid!), center(open.solid!));
-  assert.ok(open.solid!.w > shut.solid!.w + 4);
+  assert.deepEqual(center(flat.cell), center(open.cell));
+  assert.equal(flat.solid, null);
+  assert.ok(flat.extend < BLUEPRINT_HIT_EXTEND);
+  assert.ok(raised.solid);
+  assert.deepEqual(raised.solid, raised.cell);
+  assert.deepEqual(open.solid, open.cell);
   assert.ok(open.extend > 0.95);
-  assert.ok(shut.extend < 0.28);
 });
 
 test("方块让开篮筐、地面和起跳高度", () => {
@@ -150,6 +154,48 @@ test("球会被方块弹开，缩回后让路，也可以从上方跳过", () =>
   assert.equal(collideBlueprint(world, { ...inside }, inside.x, inside.y), false);
   restoreBlueprintClock(clock(0, cycleNear(hidden.index, 1), 1));
   assert.equal(collideBlueprint(world, { ...inside }, inside.x, inside.y), true);
+});
+
+test("球落在凸出格子上会弹开，不会黏住，跳起来也不会被底边折返", () => {
+  const g = world.h * 3.1;
+  const dt = 1 / 60;
+  const full = clock(0, BLUEPRINT_EXTEND_PERIOD / 2, 1);
+  const target = at(0, full.cycle).find((block) => block.solid)!;
+  const hop = Math.sqrt(2 * g * world.ballR * BLUEPRINT_BOUNCE_CLEAR);
+  const ball = {
+    x: target.cell.x + target.cell.w / 2,
+    y: target.cell.y - world.ballR - 2,
+    vx: 0,
+    vy: 40,
+    r: world.ballR,
+  };
+  let glued = 0;
+  let left = false;
+  for (let frame = 0; frame < 50; frame++) {
+    const prevX = ball.x;
+    const prevY = ball.y;
+    ball.vy += g * dt;
+    ball.x += ball.vx * dt;
+    ball.y += ball.vy * dt;
+    collideBlueprint(world, ball, prevX, prevY, undefined, full);
+    const onTop = Math.abs(ball.y - (target.cell.y - ball.r)) < 1.2 && ball.x > target.cell.x && ball.x < target.cell.x + target.cell.w;
+    glued = onTop ? glued + 1 : 0;
+    if (ball.x + ball.r < target.cell.x || ball.x - ball.r > target.cell.x + target.cell.w) left = true;
+    assert.ok(glued < 8, `球在第 ${frame} 帧还贴在格子顶上`);
+  }
+  assert.equal(left, true);
+  assert.ok(hop > g * dt, "最小弹起速度盖不过一帧重力");
+
+  const rising = {
+    x: target.cell.x + target.cell.w / 2,
+    y: target.cell.y + 8,
+    vx: 0,
+    vy: -700,
+    r: world.ballR,
+  };
+  assert.equal(collideBlueprint(world, rising, rising.x, rising.y + 4, undefined, full), true);
+  assert.ok(rising.y + rising.r <= target.cell.y + 1, "起跳时应从格子上方离开");
+  assert.ok(rising.vy < 0, "起跳速度不应被底边折成向下");
 });
 
 test("地面消失点在交线上方，交线处格子与墙面对齐", () => {

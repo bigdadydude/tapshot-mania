@@ -23,6 +23,11 @@ export const BLUEPRINT_STAGGER = 0.37;
 /** 撞上方块时的分离系数。1.65 表示反弹保留约 0.65 的法向速度。 */
 export const BLUEPRINT_BOUNCE = 1.65;
 /**
+ * 落在格子顶上时，至少弹起的高度，按球半径计。
+ * 只要盖过「一帧重力又把球按回去」的速度，又小于上下两格之间的空隙。
+ */
+export const BLUEPRINT_BOUNCE_CLEAR = 0.16;
+/**
  * 画面底边的地面格子，相对墙地交线处放大的倍数。
  * 第一格高度仍等于墙面格子，消失点因此在交线上方，不压在交线上。
  */
@@ -49,7 +54,7 @@ export type BlueprintBlock = {
   extend: number;
   /** 格子满尺寸。中心不随伸缩移动。 */
   cell: Rect;
-  /** 当前实体。缩得太小时为 null。 */
+  /** 当前墙体。缩得太小时为 null，否则与整格重合。 */
   solid: Rect | null;
 };
 
@@ -229,8 +234,9 @@ export function blueprintExtend(anim: number, index: number) {
 
 export function solidFromCell(cell: Rect, extend: number): Rect | null {
   if (extend < BLUEPRINT_HIT_EXTEND) return null;
-  const inset = (1 - extend) * cell.w * 0.5;
-  return { x: cell.x + inset, y: cell.y + inset, w: cell.w - inset * 2, h: cell.h - inset * 2 };
+  // 画面上亮的就是整格。碰撞盒若从中心慢慢放大，会在球底下继续往外长，
+  // 球每帧都被重新嵌进去。一旦算凸出，整格就是墙。
+  return { x: cell.x, y: cell.y, w: cell.w, h: cell.h };
 }
 
 export function blueprintBlocks(world: View, clock = getBlueprintClock()): BlueprintBlock[] {
@@ -271,8 +277,12 @@ export function sweepBlueprintCircle(x: number, y: number, dx: number, dy: numbe
       { d: y - box.y, nx: 0, ny: -1 },
       { d: box.y + box.h - y, nx: 0, ny: 1 },
     ];
-    sides.sort((a, b) => a.d - b.d);
-    return { t: 0, nx: sides[0]!.nx, ny: sides[0]!.ny, depth: r + sides[0]!.d };
+    // 人还在往上跳时，不要从底边把球推下去，否则起跳会被墙体折返，卡在格子下沿。
+    const movingUp = dy < -1;
+    const pool = movingUp ? sides.filter((side) => side.ny <= 0) : sides;
+    const ranked = (pool.length ? pool : sides).slice().sort((a, b) => a.d - b.d);
+    const pick = ranked[0]!;
+    return { t: 0, nx: pick.nx, ny: pick.ny, depth: r + pick.d };
   }
   for (const [edge, nx] of [
     [box.x - r, -1],
@@ -316,6 +326,19 @@ export function sweepBlueprintCircle(x: number, y: number, dx: number, dy: numbe
 
 type MovingBall = { x: number; y: number; vx: number; vy: number; r: number };
 
+function circleHits(x: number, y: number, r: number, box: Rect) {
+  const qx = Math.max(box.x, Math.min(box.x + box.w, x));
+  const qy = Math.max(box.y, Math.min(box.y + box.h, y));
+  return Math.hypot(x - qx, y - qy) < r - 1e-3;
+}
+
+/** 顶面反弹至少要盖过一帧重力，否则球会被按在格子上不动。 */
+function topEscapeSpeed(world: View) {
+  const g = world.h * 3.1;
+  const hop = Math.max(8, world.ballR) * BLUEPRINT_BOUNCE_CLEAR;
+  return Math.max(g / 60 + 24, Math.sqrt(2 * g * hop));
+}
+
 export function collideBlueprint(
   world: View,
   ball: MovingBall,
@@ -326,20 +349,54 @@ export function collideBlueprint(
 ) {
   const dx = ball.x - prevX;
   const dy = ball.y - prevY;
-  let hit: Sweep | null = null;
+  let hit: (Sweep & { box: Rect }) | null = null;
   for (const block of blueprintBlocks(world, clock)) {
     if (!block.solid) continue;
     const found = sweepBlueprintCircle(prevX, prevY, dx, dy, ball.r, block.solid);
-    if (found && (!hit || found.t < hit.t)) hit = found;
+    if (found && (!hit || found.t < hit.t)) hit = { ...found, box: block.solid };
   }
   if (!hit) return false;
   if (blockImpact?.(hit.nx, hit.ny)) return false;
-  ball.x = prevX + dx * hit.t + hit.nx * (hit.depth + 0.25);
-  ball.y = prevY + dy * hit.t + hit.ny * (hit.depth + 0.25);
+  const skin = 0.35;
+  const remain = 1 - hit.t;
+  let sx = dx * remain;
+  let sy = dy * remain;
+  const into = sx * hit.nx + sy * hit.ny;
+  if (into < 0) {
+    sx -= into * hit.nx;
+    sy -= into * hit.ny;
+  }
+  let x = prevX + dx * hit.t + hit.nx * (hit.depth + skin) + sx;
+  let y = prevY + dy * hit.t + hit.ny * (hit.depth + skin) + sy;
+  // 贴着墙滑的那段如果又扎回去，就只沿法线推出，避免切向位移把球留在格子里。
+  if (circleHits(x, y, ball.r, hit.box)) {
+    x = prevX + dx * hit.t + hit.nx * (hit.depth + skin);
+    y = prevY + dy * hit.t + hit.ny * (hit.depth + skin);
+  }
+  ball.x = x;
+  ball.y = y;
   const vn = ball.vx * hit.nx + ball.vy * hit.ny;
   if (vn < 0) {
     ball.vx -= BLUEPRINT_BOUNCE * vn * hit.nx;
     ball.vy -= BLUEPRINT_BOUNCE * vn * hit.ny;
+  }
+  const vnOut = ball.vx * hit.nx + ball.vy * hit.ny;
+  const embedded = hit.t === 0 && hit.depth > 0.5;
+  const landedOnTop = hit.ny < -0.5;
+  const escape = topEscapeSpeed(world);
+  if ((vn < 0 && landedOnTop) || embedded) {
+    if (vnOut < escape) {
+      const add = escape - vnOut;
+      ball.vx += add * hit.nx;
+      ball.vy += add * hit.ny;
+    }
+    // 格子只有一格宽。反弹已经小到会贴住时，顺手推向更近的侧边，球会滑下去而不是停在顶上。
+    if (landedOnTop && vn < 0 && -ball.vy <= escape + 1) {
+      const mid = hit.box.x + hit.box.w / 2;
+      const dir = Math.abs(ball.vx) > 40 ? Math.sign(ball.vx) : ball.x <= mid ? -1 : 1;
+      const slide = Math.max(80, world.ballR * 7);
+      if (Math.abs(ball.vx) < slide) ball.vx = (dir || 1) * slide;
+    }
   }
   return true;
 }
