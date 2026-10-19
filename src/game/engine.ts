@@ -33,6 +33,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
+import { collideBlueprint, getBlueprintClock, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, stepBlueprint, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
@@ -191,6 +192,7 @@ export function createGame(
   let traffic = createTraffic();
   const trafficEnabled = () => getSceneId() === "overpass" && !(devOn && devScene === "void");
   const trainBackdropOn = () => getSceneId() === "train" && !(devOn && devScene === "void");
+  const blueprintOn = () => getSceneId() === "blueprint" && !(devOn && devScene === "void");
   let phase: Phase = "title";
   let booted = artProgress().ready;
   let lastLoadN = booted ? 100 : -1;
@@ -860,6 +862,7 @@ export function createGame(
   let holeTick = 0;
   let otherOverRim = false;
   let boardHitLock = 0;
+  let blueprintHitLock = 0;
   /**
    * Glass: one rim / board / floor penalty per jump.
    * Cleared only on tapJump �?not in resetShotFlags (floor settle used to re-arm
@@ -971,6 +974,7 @@ export function createGame(
     stageState: unknown;
     trainRoute: ReturnType<typeof getTrainScroll>;
     tunnel: ReturnType<typeof getTrainTunnel>;
+    blueprint: BlueprintClock;
     birds: BirdState;
     birdBaseBonus: number;
     frostBonus: number; glassBase: number;
@@ -1018,7 +1022,7 @@ export function createGame(
       pathClock,
       time, cloudT, cloudShift, cloudHop, cloudMode, cloudSx, cloudSy,
       stageState: stageMod.rewindState?.(),
-      trainRoute: getTrainScroll(), tunnel: getTrainTunnel(),
+      trainRoute: getTrainScroll(), tunnel: getTrainTunnel(), blueprint: getBlueprintClock(),
       birds: structuredClone(birds),
       birdBaseBonus, frostBonus, glassBase, holeLived, holeScoreAcc, holeTick,
       overRim, otherOverRim, scoredLock, rimHitLock, boardHitLock,
@@ -1031,6 +1035,7 @@ export function createGame(
 
   function restoreRewindSnapshot(snapshot: RewindSnapshot) {
     restoreTrainScroll(snapshot.trainRoute); restoreTrainTunnel(snapshot.tunnel);
+    restoreBlueprintClock(snapshot.blueprint);
     birds = structuredClone(snapshot.birds);
     birdBaseBonus = snapshot.birdBaseBonus;
     frostBonus = snapshot.frostBonus; glassBase = snapshot.glassBase;
@@ -1625,6 +1630,7 @@ export function createGame(
     clearSceneLayers();
     reloadSceneArt();
     if (id === "train") resetTrainScroll();
+    if (id === "blueprint") resetBlueprint();
     persist();
   }
 
@@ -2934,6 +2940,7 @@ export function createGame(
     clearSparseCodeRain();
     madeCount = 0;
     resetTrainScroll();
+    resetBlueprintProgress();
     ball.sootLeft = 0;
     if (isRogueMode()) {
       rogueRun = createRogueRun();
@@ -3308,6 +3315,7 @@ export function createGame(
     ball.trafficSafe = false;
     madeCount = 0;
     resetTrainScroll();
+    resetBlueprintProgress();
     ball.sootLeft = 0;
     score = 0;
     mazeBaseBonus = 0;
@@ -4184,6 +4192,7 @@ export function createGame(
     hint = true;
     madeCount = 0;
     resetTrainScroll();
+    resetBlueprint();
     ball.sootLeft = 0;
     hackerDir = null;
     hackerAwaken = false;
@@ -4905,6 +4914,7 @@ export function createGame(
           getTrainGantries(world, getTrainScroll()).length === 0;
       });
     }
+    if (blueprintOn()) stepBlueprint(dt, phase === "playing");
     if (trafficEnabled() && madeCount > 0) {
       stepTraffic(traffic, world, dt);
       if (holeOn) beginTrafficAbsorption(traffic, holeX, holeY);
@@ -4915,6 +4925,7 @@ export function createGame(
     if (scoredLock > 0) scoredLock -= dt;
     if (rimHitLock > 0) rimHitLock -= dt;
     if (boardHitLock > 0) boardHitLock -= dt;
+    if (blueprintHitLock > 0) blueprintHitLock -= dt;
     if (burnFlash > 0) burnFlash = Math.max(0, burnFlash - dt);
 
     // Overheat locks the ball only. Clock, hoops, frost, combo, and stage mechanisms keep stepping.
@@ -5306,6 +5317,20 @@ export function createGame(
           if (boardHitLock <= 0) {
             audio.board(0.7); boardHitLock = 0.12;
             if (gfx.impact) camShake = Math.max(camShake, 0.1);
+          }
+        }
+      }
+      if (blueprintOn() && quantumTunnelLeft <= 0) {
+        const incomingVx = ball.vx;
+        const incomingVy = ball.vy;
+        if (collideBlueprint(world, ball, prevBallX, prevBallY, isSuper() ? (nx, ny) => superCancelsSolid(nx, ny) : undefined)) {
+          vectorCollision(incomingVx, incomingVy);
+          shotAirborne = true;
+          prevBallX = ball.x;
+          prevBallY = ball.y;
+          if (blueprintHitLock <= 0 && phase !== "title") {
+            audio.bounce(Math.min(1, Math.hypot(ball.vx, ball.vy) / 900));
+            blueprintHitLock = 0.12;
           }
         }
       }
@@ -7302,7 +7327,7 @@ export function createGame(
       emitHud();
     },
     setScene(id) {
-      if (id !== "street" && id !== "prison" && id !== "overpass" && id !== "train") return;
+      if (id !== "street" && id !== "prison" && id !== "overpass" && id !== "train" && id !== "blueprint") return;
       applyScenePack(id);
       if (devOn && devScene !== "void") {
         devScene = id;

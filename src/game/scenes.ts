@@ -1,4 +1,4 @@
-export type SceneId = "street" | "prison" | "overpass" | "train";
+export type SceneId = "street" | "prison" | "overpass" | "train" | "blueprint";
 export type TrafficTextures = {
   /** Transparent side views facing right; null uses the built-in drawing. */
   sedan: string | null;
@@ -228,13 +228,36 @@ const TRAIN: ScenePack = {
   name: "列车",
 };
 
-export const SCENES: ScenePack[] = [STREET, PRISON, OVERPASS, TRAIN];
+/** Same shot shell as street. The grid and blocks are drawn by blueprint.ts. */
+const BLUEPRINT: ScenePack = {
+  ...STREET,
+  id: "blueprint",
+  index: 5,
+  name: "蓝图",
+  hoop: {
+    pad: "#ffffff",
+    padHi: "#ffffff",
+    padLo: "#ffffff",
+    rim: "#ffffff",
+    rimHi: "#ffffff",
+    rimLo: "#ffffff",
+    rimBack: "#ffffff",
+    net: "#ffffff",
+    netChar: "#ffffff",
+    netHem: "#ffffff",
+    netHemChar: "#ffffff",
+    netHemFromRow: 3,
+  },
+};
+
+export const SCENES: ScenePack[] = [STREET, PRISON, OVERPASS, TRAIN, BLUEPRINT];
 
 const BY_ID: Record<SceneId, ScenePack> = {
   street: STREET,
   prison: PRISON,
   overpass: OVERPASS,
   train: TRAIN,
+  blueprint: BLUEPRINT,
 };
 
 let current: SceneId = "street";

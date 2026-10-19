@@ -56,7 +56,7 @@ function parsePlayMode(v: unknown): PlayMode {
 }
 
 function parseScene(v: unknown): SceneId {
-  return v === "prison" || v === "overpass" || v === "train" ? v : "street";
+  return v === "prison" || v === "overpass" || v === "train" || v === "blueprint" ? v : "street";
 }
 
 function parseGfx(raw: Partial<Gfx> | undefined): Gfx {

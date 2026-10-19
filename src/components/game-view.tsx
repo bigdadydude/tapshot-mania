@@ -670,14 +670,16 @@ function TitleCard({
                   ? "进第一球后开始来车，留意两侧预警，被车头撞出界获得5秒无敌"
                   : sceneId === "train"
                     ? "蒸汽客车首球发车，到站停靠5秒；旅程随游戏时间变长"
-                    : "点击弹跳，把球投进左右篮筐"}
+                    : sceneId === "blueprint"
+                      ? "网格方块会凸出来挡路，可以跳过，球也会被弹开"
+                      : "点击弹跳，把球投进左右篮筐"}
         </p>
         <p className="mt-1 text-xs text-subtle">
           {playMode === "rogue" ? `最远第 ${best} 关` : `最高 ${best}`}
         </p>
       </div>
 
-      <div className="pointer-events-auto mb-2 grid w-full max-w-xs grid-cols-4 gap-1.5">
+      <div className="pointer-events-auto mb-2 grid w-full max-w-sm grid-cols-5 gap-1">
         {SCENE_LABELS.map((s) => {
           const on = sceneId === s.id;
           return (
@@ -686,7 +688,7 @@ function TitleCard({
               type="button"
               onClick={() => onScene(s.id)}
               className={cn(
-                "min-h-11 rounded-xl border px-2 py-2 text-center text-sm font-medium",
+                "min-h-11 rounded-xl border px-1 py-2 text-center text-sm font-medium",
                 on ? "border-accent bg-bg-elevated text-fg" : "border-border bg-bg-subtle/80 text-muted",
               )}
             >
