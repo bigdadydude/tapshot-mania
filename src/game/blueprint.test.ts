@@ -62,8 +62,13 @@ test("已出现的格子不换位，动态方块随进程变多", () => {
     assert.equal(same!.dynamic, block.dynamic);
   }
   const dynamic = (blocks: BlueprintBlock[]) => blocks.filter((block) => block.dynamic).length;
-  assert.equal(dynamic(early), 1);
+  assert.equal(dynamic(early), early.length);
+  assert.equal(dynamic(late), late.length);
   assert.ok(dynamic(late) > dynamic(early));
+  for (const block of late) {
+    assert.ok(blueprintExtend(cycleNear(block.index, 0), block.index) < 0.05);
+    assert.ok(blueprintExtend(cycleNear(block.index, 1), block.index) > 0.95);
+  }
 });
 
 function cycleNear(index: number, want: number) {
@@ -71,7 +76,7 @@ function cycleNear(index: number, want: number) {
   let err = Infinity;
   for (let i = 0; i <= 90; i++) {
     const cycle = (i / 90) * BLUEPRINT_EXTEND_PERIOD;
-    const delta = Math.abs(blueprintExtend(true, cycle, index) - want);
+    const delta = Math.abs(blueprintExtend(cycle, index) - want);
     if (delta < err) {
       err = delta;
       best = cycle;
@@ -81,10 +86,9 @@ function cycleNear(index: number, want: number) {
 }
 
 test("动态方块只绕格子中心伸缩", () => {
-  assert.equal(blueprintExtend(false, 1.2, 4), 1);
-  assert.ok(blueprintExtend(true, 0, 0) < 1e-6);
-  assert.ok(Math.abs(blueprintExtend(true, BLUEPRINT_EXTEND_PERIOD / 2, 0) - 1) < 1e-6);
-  assert.ok(blueprintExtend(true, BLUEPRINT_EXTEND_PERIOD, 0) < 1e-6);
+  assert.ok(blueprintExtend(0, 0) < 1e-6);
+  assert.ok(Math.abs(blueprintExtend(BLUEPRINT_EXTEND_PERIOD / 2, 0) - 1) < 1e-6);
+  assert.ok(blueprintExtend(BLUEPRINT_EXTEND_PERIOD, 0) < 1e-6);
   const sample = at(0, 0).find((item) => item.dynamic)!;
   const shut = at(0, cycleNear(sample.index, 0.2)).find((item) => item.id === sample.id)!;
   const open = at(0, cycleNear(sample.index, 1)).find((item) => item.id === sample.id)!;
@@ -139,7 +143,7 @@ test("球会被方块弹开，缩回后让路，也可以从上方跳过", () =>
   const hidden = at(0, 0).find((block) => block.dynamic)!;
   const inside = { x: hidden.cell.x + hidden.cell.w / 2, y: hidden.cell.y + hidden.cell.h / 2, vx: 0, vy: 0, r: 12 };
   restoreBlueprintClock(clock(0, cycleNear(hidden.index, 0), 1));
-  assert.ok(blueprintExtend(true, cycleNear(hidden.index, 0), hidden.index) < 0.12);
+  assert.ok(blueprintExtend(cycleNear(hidden.index, 0), hidden.index) < 0.12);
   assert.equal(collideBlueprint(world, { ...inside }, inside.x, inside.y), false);
   restoreBlueprintClock(clock(0, cycleNear(hidden.index, 1), 1));
   assert.equal(collideBlueprint(world, { ...inside }, inside.x, inside.y), true);

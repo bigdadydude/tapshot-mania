@@ -14,7 +14,7 @@ export const BLUEPRINT_MAX_COUNT = 6;
 export const BLUEPRINT_RAMP_PACE = 10;
 /** 动态方块伸出再缩回一圈的秒数。 */
 export const BLUEPRINT_EXTEND_PERIOD = 2.6;
-/** 开局就在场上的方块数（前两格固定，第三格起为动态）。 */
+/** 开局就在场上的方块数。每一格都会伸缩，没有永久凸出。 */
 export const BLUEPRINT_START_COUNT = 3;
 /** 缩到这个比例以下就不再挡球。 */
 export const BLUEPRINT_HIT_EXTEND = 0.12;
@@ -213,8 +213,8 @@ export function blueprintQuota(playSeconds: number, available: number) {
   return Math.max(0, Math.min(available, BLUEPRINT_MAX_COUNT, BLUEPRINT_START_COUNT + extra));
 }
 
-export function blueprintExtend(dynamic: boolean, anim: number, index: number) {
-  if (!dynamic) return 1;
+/** 0 贴平，1 完全凸出。每个格子都会回到 0，没有一直凸着的墙。 */
+export function blueprintExtend(anim: number, index: number) {
   const period = BLUEPRINT_EXTEND_PERIOD;
   let t = (anim + index * period * BLUEPRINT_STAGGER) % period;
   if (t < 0) t += period;
@@ -232,15 +232,14 @@ export function blueprintBlocks(world: View, clock = getBlueprintClock()): Bluep
   const slots = pickSlots(world, clock.seed);
   const count = blueprintQuota(clock.elapsed, slots.length);
   return slots.slice(0, count).map((cell, index) => {
-    const dynamic = index >= 2;
-    const extend = blueprintExtend(dynamic, clock.cycle, index);
+    const extend = blueprintExtend(clock.cycle, index);
     const base = { x: cell.x, y: cell.y, w: cell.w, h: cell.h };
     return {
       id: `${cell.col}:${cell.row}`,
       index,
       col: cell.col,
       row: cell.row,
-      dynamic,
+      dynamic: true,
       extend,
       cell: base,
       solid: solidFromCell(base, extend),
@@ -417,20 +416,19 @@ function drawPerspectiveFloor(ctx: CanvasRenderingContext2D, world: View) {
 function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock) {
   const extend = block.extend;
   if (extend < 0.04) return;
-  const cell = block.cell;
-  const inset = (1 - extend) * cell.w * 0.5;
-  const x = cell.x + inset;
-  const y = cell.y + inset;
-  const w = Math.max(0, cell.w - inset * 2);
-  const h = Math.max(0, cell.h - inset * 2);
-  const ry = Math.max(4, h * (0.1 + 0.16 * extend));
-  const alpha = 0.34 + 0.48 * extend;
-  ctx.save();
-  ctx.fillStyle = `rgba(1, 8, 24, ${alpha})`;
-  ctx.beginPath();
-  ctx.ellipse(x + w / 2, y + h + 2 + ry, Math.max(2, w * 0.46), ry, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+  const { x, y, w, h } = block.cell;
+  const contact = Math.max(3, h * (0.07 + 0.2 * extend));
+  const cast = Math.max(contact + 8, h * (0.28 + 1.05 * extend));
+  const grad = ctx.createLinearGradient(0, y + h, 0, y + h + cast);
+  grad.addColorStop(0, `rgba(1, 8, 22, ${0.22 + 0.28 * extend})`);
+  grad.addColorStop(Math.min(0.8, contact / cast), `rgba(1, 8, 22, ${0.12 + 0.16 * extend})`);
+  grad.addColorStop(1, "rgba(1, 8, 22, 0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(x, y + h, w, cast);
+  ctx.fillStyle = `rgba(1, 6, 18, ${0.55 + 0.4 * extend})`;
+  ctx.fillRect(x, y + h, w, contact);
+  ctx.fillStyle = `rgba(236, 244, 255, ${0.07 + 0.2 * extend})`;
+  ctx.fillRect(x + 1.5, y + 1.5, Math.max(0, w - 3), Math.max(0, h - 3));
 }
 
 export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View) {
