@@ -785,16 +785,131 @@ export function blueprintCellPixels(cell: Rect) {
   };
 }
 
-function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock) {
-  const extend = block.extend;
-  if (extend < 0.04) return;
-  const { left, top, right, bottom, fill } = blueprintCellPixels(block.cell);
-  const cast = Math.max(4, Math.round(block.cell.h * (0.28 + 1.05 * extend)));
-  const grad = ctx.createLinearGradient(0, bottom + 1, 0, bottom + 1 + cast);
-  grad.addColorStop(0, `rgba(1, 8, 22, ${0.42 + 0.4 * extend})`);
+export type BlueprintShadowBox = { x: number; y: number; w: number; h: number };
+export type BlueprintShadowPiece = BlueprintShadowBox & { keep: number };
+
+/** 直边阴影的长度。越凸越长，和原来的公式一样。 */
+export function blueprintShadowCast(cellHeight: number, extend: number) {
+  return Math.max(4, Math.round(cellHeight * (0.28 + 1.05 * extend)));
+}
+
+/** 贴着底边时的阴影不透明度。远端渐淡到 0。 */
+export function blueprintShadowHead(extend: number) {
+  return 0.42 + 0.4 * extend;
+}
+
+/**
+ * 阴影上一点的不透明度。`along` 是离底边的像素距离，`keep` 是下方格子还没吃掉的比例。
+ * 没有下方格子时 keep 为 1。
+ */
+export function blueprintShadowAlpha(extend: number, along: number, cast: number, keep = 1) {
+  if (!(cast > 0) || along < 0 || along > cast) return 0;
+  const scale = Math.min(1, Math.max(0, keep));
+  return blueprintShadowHead(extend) * scale * (1 - along / cast);
+}
+
+/** 下方格子还留着的阴影比例。完全凸出时为 0。 */
+export function blueprintShadowKeep(lowerExtend: number) {
+  return 1 - Math.min(1, Math.max(0, lowerExtend));
+}
+
+/** 从底边下一像素开始的直边阴影。 */
+export function blueprintShadowBox(cell: Rect, extend: number): BlueprintShadowBox {
+  const { left, right, bottom } = blueprintCellPixels(cell);
+  return {
+    x: left,
+    y: bottom + 1,
+    w: Math.max(0, right - left + 1),
+    h: blueprintShadowCast(cell.h, extend),
+  };
+}
+
+/** 凸出格在画面上占的整格，含网格线。阴影和它对上的一段会被吃掉。 */
+export function blueprintCellCover(cell: Rect): BlueprintShadowBox {
+  const { left, top, right, bottom } = blueprintCellPixels(cell);
+  return { x: left, y: top, w: Math.max(0, right - left + 1), h: Math.max(0, bottom - top + 1) };
+}
+
+function shadowOverlaps(a: BlueprintShadowBox, b: BlueprintShadowBox) {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+function uniqueSorted(values: number[]) {
+  return [...new Set(values)].sort((a, b) => a - b);
+}
+
+/**
+ * 把一条阴影切成若干块。没有下方凸出格时就是整条、keep 为 1。
+ * 落在下方格子上的块，keep 等于 `1 - 下方凸出`；完全凸出则 keep 为 0。
+ */
+export function blueprintShadowPieces(
+  shadow: BlueprintShadowBox,
+  lowers: readonly { box: BlueprintShadowBox; extend: number }[],
+): BlueprintShadowPiece[] {
+  if (!(shadow.w > 0) || !(shadow.h > 0)) return [];
+  const hits = lowers.filter((lower) => lower.extend > 0 && shadowOverlaps(shadow, lower.box));
+  if (hits.length === 0) return [{ x: shadow.x, y: shadow.y, w: shadow.w, h: shadow.h, keep: 1 }];
+  const y0 = shadow.y;
+  const y1 = shadow.y + shadow.h;
+  const x0 = shadow.x;
+  const x1 = shadow.x + shadow.w;
+  const ys = [y0, y1];
+  for (const hit of hits) {
+    const top = Math.max(y0, hit.box.y);
+    const bot = Math.min(y1, hit.box.y + hit.box.h);
+    if (bot > top) ys.push(top, bot);
+  }
+  const pieces: BlueprintShadowPiece[] = [];
+  for (const [top, bot] of pairs(uniqueSorted(ys))) {
+    const midY = (top + bot) / 2;
+    const rowHits = hits.filter((hit) => hit.box.y <= midY && midY < hit.box.y + hit.box.h);
+    const xs = [x0, x1];
+    for (const hit of rowHits) {
+      const left = Math.max(x0, hit.box.x);
+      const right = Math.min(x1, hit.box.x + hit.box.w);
+      if (right > left) xs.push(left, right);
+    }
+    for (const [left, right] of pairs(uniqueSorted(xs))) {
+      const midX = (left + right) / 2;
+      let keep = 1;
+      for (const hit of rowHits) {
+        if (hit.box.x <= midX && midX < hit.box.x + hit.box.w) keep = Math.min(keep, blueprintShadowKeep(hit.extend));
+      }
+      pieces.push({ x: left, y: top, w: right - left, h: bot - top, keep });
+    }
+  }
+  return pieces;
+}
+
+function pairs(cuts: number[]) {
+  const spans: [number, number][] = [];
+  for (let i = 0; i < cuts.length - 1; i++) {
+    const start = cuts[i]!;
+    const end = cuts[i + 1]!;
+    if (end > start) spans.push([start, end]);
+  }
+  return spans;
+}
+
+function paintShadow(ctx: CanvasRenderingContext2D, full: BlueprintShadowBox, piece: BlueprintShadowPiece, extend: number) {
+  if (piece.keep <= 0 || piece.w <= 0 || piece.h <= 0) return;
+  const head = blueprintShadowHead(extend) * piece.keep;
+  const grad = ctx.createLinearGradient(0, full.y, 0, full.y + full.h);
+  grad.addColorStop(0, `rgba(1, 8, 22, ${head})`);
   grad.addColorStop(1, "rgba(1, 8, 22, 0)");
   ctx.fillStyle = grad;
-  ctx.fillRect(left, bottom + 1, right - left + 1, cast);
+  ctx.fillRect(piece.x, piece.y, piece.w, piece.h);
+}
+
+function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock, others: readonly BlueprintBlock[]) {
+  const extend = block.extend;
+  if (extend < 0.04) return;
+  const { fill } = blueprintCellPixels(block.cell);
+  const shadow = blueprintShadowBox(block.cell, extend);
+  const lowers = others
+    .filter((other) => other !== block && other.extend > 0)
+    .map((other) => ({ box: blueprintCellCover(other.cell), extend: other.extend }));
+  for (const piece of blueprintShadowPieces(shadow, lowers)) paintShadow(ctx, shadow, piece, extend);
   ctx.fillStyle = `rgba(236, 244, 255, ${blueprintFillAlpha(extend)})`;
   ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
 }
@@ -805,5 +920,5 @@ export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View) {
   strokeGrid(ctx, world);
   drawPerspectiveFloor(ctx, world);
   const blocks = blueprintBlocks(world).slice().sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x);
-  for (const block of blocks) drawBlock(ctx, block);
+  for (const block of blocks) drawBlock(ctx, block, blocks);
 }

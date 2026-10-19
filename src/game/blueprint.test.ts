@@ -13,6 +13,7 @@ import {
   BLUEPRINT_MAX_LIGHTNESS,
   BLUEPRINT_SHAPES,
   blueprintBlocks,
+  blueprintCellCover,
   blueprintCellPixels,
   blueprintExtend,
   blueprintExtendSpan,
@@ -26,6 +27,12 @@ import {
   blueprintOnShotPath,
   blueprintQuota,
   blueprintSampleDuration,
+  blueprintShadowAlpha,
+  blueprintShadowBox,
+  blueprintShadowCast,
+  blueprintShadowHead,
+  blueprintShadowKeep,
+  blueprintShadowPieces,
   blueprintShapeOffsets,
   blueprintStamp,
   blueprintVanishingPoint,
@@ -375,6 +382,67 @@ test("地面消失点在交线上方，交线处格子与墙面对齐", () => {
     assert.ok(Math.abs(block.cell.y - (grid.oy + row * grid.size)) < 1e-6);
     assert.equal(block.cell.w, grid.size);
   }
+});
+
+function pieceKeepAt(pieces: { x: number; y: number; w: number; h: number; keep: number }[], point: { x: number; y: number }) {
+  const hit = pieces.find((piece) => point.x >= piece.x && point.x < piece.x + piece.w && point.y >= piece.y && point.y < piece.y + piece.h);
+  return hit ? hit.keep : null;
+}
+
+test("上方阴影落在下方凸出格上时随凸出减淡", () => {
+  const upper = { x: 100, y: 200, w: 44, h: 44 };
+  const lower = { x: 100, y: 244, w: 44, h: 44 };
+  const extend = 1;
+  const shadow = blueprintShadowBox(upper, extend);
+  const cover = blueprintCellCover(lower);
+  const cast = blueprintShadowCast(upper.h, extend);
+  assert.equal(shadow.h, cast);
+  assert.equal(cast, Math.max(4, Math.round(44 * (0.28 + 1.05))));
+  assert.ok(blueprintShadowCast(44, 1) > blueprintShadowCast(44, 0.2));
+  assert.ok(cast > cover.h);
+
+  const open = blueprintShadowPieces(shadow, []);
+  assert.equal(open.length, 1);
+  assert.equal(open[0]!.keep, 1);
+  assert.equal(open[0]!.x, shadow.x);
+  assert.equal(open[0]!.y, shadow.y);
+  assert.equal(open[0]!.w, shadow.w);
+  assert.equal(open[0]!.h, shadow.h);
+  const flat = blueprintShadowPieces(shadow, [{ box: cover, extend: 0 }]);
+  assert.equal(flat.length, 1);
+  assert.equal(flat[0]!.keep, 1);
+
+  const head = blueprintShadowHead(extend);
+  assert.ok(Math.abs(blueprintShadowAlpha(extend, 0, cast) - head) < 1e-9);
+  assert.equal(blueprintShadowAlpha(extend, cast, cast), 0);
+  assert.ok(blueprintShadowAlpha(extend, cast * 0.25, cast) > blueprintShadowAlpha(extend, cast * 0.75, cast));
+
+  const eaten = blueprintShadowPieces(shadow, [{ box: cover, extend: 1 }]);
+  const inside = { x: cover.x + cover.w / 2, y: shadow.y + 2 };
+  const below = { x: shadow.x + 4, y: cover.y + cover.h + 1 };
+  assert.ok(below.y < shadow.y + shadow.h);
+  assert.equal(blueprintShadowKeep(1), 0);
+  assert.equal(pieceKeepAt(eaten, inside), 0);
+  assert.equal(blueprintShadowAlpha(extend, inside.y - shadow.y, cast, 0), 0);
+  assert.equal(pieceKeepAt(eaten, below), 1);
+  const belowAlong = below.y - shadow.y;
+  assert.ok(Math.abs(blueprintShadowAlpha(extend, belowAlong, cast, 1) - head * (1 - belowAlong / cast)) < 1e-9);
+
+  const half = blueprintShadowPieces(shadow, [{ box: cover, extend: 0.5 }]);
+  assert.equal(blueprintShadowKeep(0.5), 0.5);
+  assert.equal(pieceKeepAt(half, inside), 0.5);
+  assert.equal(pieceKeepAt(half, below), 1);
+  const along = inside.y - shadow.y;
+  assert.ok(Math.abs(blueprintShadowAlpha(extend, along, cast, 0.5) - blueprintShadowAlpha(extend, along, cast) * 0.5) < 1e-9);
+
+  const side = blueprintCellCover({ x: 120, y: 244, w: 44, h: 44 });
+  const sided = blueprintShadowPieces(shadow, [{ box: side, extend: 1 }]);
+  assert.equal(pieceKeepAt(sided, { x: shadow.x + 4, y: shadow.y + 3 }), 1);
+  assert.equal(pieceKeepAt(sided, { x: side.x + 4, y: shadow.y + 3 }), 0);
+
+  let area = 0;
+  for (const piece of eaten) area += piece.w * piece.h;
+  assert.equal(area, shadow.w * shadow.h);
 });
 
 test("完全凸出时填色比以前暗，仍比没凸起亮", () => {
