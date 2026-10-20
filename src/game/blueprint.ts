@@ -289,29 +289,18 @@ function cellRectAt(world: View, ref: BlueprintCellRef): Cell {
   };
 }
 
-/** 出界 / 走廊 / 球旁 / 静态格均为硬阻挡，避免一组里有的升有的平。 */
-function dynamicHardBlocked(
-  world: View,
-  ref: BlueprintCellRef,
-  ball: { x: number; y: number } | null,
-  staticKeys: Set<string>,
-) {
+/** 出界、走廊、球旁才挡住整组。静态格可以踩，不因此换向或拆组。 */
+function dynamicHardBlocked(world: View, ref: BlueprintCellRef, ball: { x: number; y: number } | null) {
   const grid = blueprintGrid(world);
   if (ref.col < 0 || ref.row < 0 || ref.col >= grid.cols || ref.row >= grid.rows) return true;
-  if (staticKeys.has(cellKey(ref))) return true;
   const rect = cellRectAt(world, ref);
   if (!cellAllowed(world, rect)) return true;
   if (ball && blueprintNearBall(world, rect, ball)) return true;
   return false;
 }
 
-function groupHardBlocked(
-  world: View,
-  list: readonly BlueprintCellRef[],
-  ball: { x: number; y: number } | null,
-  staticKeys: Set<string>,
-) {
-  return list.some((cell) => dynamicHardBlocked(world, cell, ball, staticKeys));
+function groupHardBlocked(world: View, list: readonly BlueprintCellRef[], ball: { x: number; y: number } | null) {
+  return list.some((cell) => dynamicHardBlocked(world, cell, ball));
 }
 
 function sampleStepSpan(layoutSeed: number, batchSerial: number) {
@@ -325,19 +314,16 @@ function trySpawnDynamic(goalsNow: number) {
   if (room <= 0) return;
   const ball = aimBall();
   const hoop = aimHoop();
-  const blocked = staticKeySet();
   const batch = rollBlueprintBatch(view, {
     seed,
     serial: serial + 17,
     goals: goalsNow,
     ball,
     hoop,
-    exclude: staticCells,
     maxCount: room,
   });
   if (!batch.cells.length) return;
-  // 再滤一次，保证不与静态同格开场。
-  const cells = batch.cells.filter((cell) => !blocked.has(cellKey(cell))).slice(0, room);
+  const cells = batch.cells.slice(0, room);
   if (!cells.length) return;
   dynamic = {
     cells,
@@ -369,23 +355,9 @@ function applyGoalChange(goalsNow: number) {
   staticCells = batch.cells.slice(0, BLUEPRINT_MAX_COUNT);
   if (dynamic) {
     if (unitAt(seed, serial, 9) < blueprintDespawnChance(goalsNow)) dynamic = null;
-    else {
-      // 保留动态；裁掉与新静态重叠的格，避免一组里高低不齐。
-      const blocked = staticKeySet(staticCells);
-      const room = BLUEPRINT_MAX_COUNT - staticCells.length;
-      let cells = dynamic.cells.filter((cell) => !blocked.has(cellKey(cell)));
-      if (cells.length > room) cells = cells.slice(0, Math.max(0, room));
-      if (!cells.length) dynamic = null;
-      else {
-        dynamic = {
-          ...dynamic,
-          cells,
-          pending: [],
-          phase: "hold",
-          age: 0,
-          raise: BLUEPRINT_RAISE,
-        };
-      }
+    else if (staticCells.length + dynamic.cells.length > BLUEPRINT_MAX_COUNT) {
+      // 合计放不下时整组离开，不裁掉其中几格。
+      dynamic = null;
     }
   } else if (unitAt(seed, serial, 10) < BLUEPRINT_DYNAMIC_SPAWN) {
     trySpawnDynamic(goalsNow);
@@ -396,11 +368,10 @@ function applyGoalChange(goalsNow: number) {
 function beginDynamicCross() {
   if (!dynamic || !view) return;
   const ball = aimBall();
-  const blocked = staticKeySet();
   const order: BlueprintDir[] = [0, 1, 2, 3].map((i) => clampDir(dynamic!.dir + i));
   for (const dir of order) {
     const next = blueprintTranslateCells(dynamic.cells, dir);
-    if (groupHardBlocked(view, next, ball, blocked)) continue;
+    if (groupHardBlocked(view, next, ball)) continue;
     // 先整组同步缩回，再落到新格同步升起；全程同一线性进度。
     dynamic = {
       ...dynamic,
@@ -851,15 +822,13 @@ export function blueprintDynamicProgress(age: number, span = BLUEPRINT_RAISE) {
 /**
  * 动态格伸出量。同一 phase 里整组共用同一进度：
  * raise / cross_in 同步升起，cross_out 同步缩回。
- * 任一格压在静态上时整组贴平（挪移本身不会踩静态，进球换批后可能短暂重叠）。
+ * 与静态同格也不另算，重叠格跟组内其它格一样高。
  */
 export function blueprintDynamicCellExtend(
   dyn: BlueprintDynamic,
-  ref: BlueprintCellRef,
-  staticKeys: Set<string>,
+  _ref: BlueprintCellRef,
+  _staticKeys: Set<string>,
 ) {
-  if (dyn.cells.some((cell) => staticKeys.has(cellKey(cell)))) return 0;
-  if (staticKeys.has(cellKey(ref))) return 0;
   const raise = dyn.raise > 0 ? dyn.raise : BLUEPRINT_RAISE;
   if (dyn.phase === "hold") return 1;
   if (dyn.phase === "raise" || dyn.phase === "cross_in") return blueprintDynamicProgress(dyn.age, raise);
@@ -881,16 +850,17 @@ export function blueprintBlocks(world: View, clock = getBlueprintClock()): Bluep
   const staticAgeNow = Number.isFinite(clock.staticAge) ? clock.staticAge : clock.cycle;
   const staticExtend = blueprintExtend(staticAgeNow, staticSpan);
   const blocks: BlueprintBlock[] = [];
-  const occupied = new Set<string>();
+  const staticSeen = new Set<string>();
   for (const ref of staticList) {
-    pushBlock(blocks, world, grid, ref, staticExtend, false, occupied);
+    pushBlock(blocks, world, grid, ref, staticExtend, false, staticSeen);
   }
   const dyn = clock.dynamic;
   if (dyn?.cells?.length) {
+    const dynamicSeen = new Set<string>();
     for (const ref of blueprintDynamicDrawCells(dyn)) {
       const extend = blueprintDynamicCellExtend(dyn, ref, staticKeys);
       if (extend <= 0) continue;
-      pushBlock(blocks, world, grid, ref, extend, true, occupied);
+      pushBlock(blocks, world, grid, ref, extend, true, dynamicSeen);
     }
   }
   return blocks;
@@ -1270,6 +1240,12 @@ export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View) {
   ctx.fillRect(0, 0, world.w, world.h);
   strokeGrid(ctx, world);
   drawPerspectiveFloor(ctx, world);
-  const blocks = blueprintBlocks(world).slice().sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x);
-  for (const block of blocks) drawBlock(ctx, block, blocks);
+  const clock = getBlueprintClock();
+  const blocks = blueprintBlocks(world, clock);
+  const covered = new Set((clock.dynamic?.cells ?? []).map((cell) => `${cell.col}:${cell.row}`));
+  // 重叠格只按动态组的高度画。静态那一层仍参与碰撞（取较高的），但不把组内几格衬得高低不齐。
+  const visible = blocks
+    .filter((block) => block.dynamic || !covered.has(`${block.col}:${block.row}`))
+    .sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x || Number(a.dynamic) - Number(b.dynamic));
+  for (const block of visible) drawBlock(ctx, block, visible);
 }

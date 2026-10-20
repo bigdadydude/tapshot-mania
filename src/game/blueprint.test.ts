@@ -217,49 +217,117 @@ test("进球前空场；每次进球换批并保持到下一次进球", () => {
   assert.ok(next.staticCells.length >= 1);
 });
 
-test("动态刚体平移；与静态同格时整组贴平，静态不变", () => {
+test("动态可以踩在静态上，重叠格仍跟整组一起伸缩", () => {
   assert.deepEqual(blueprintTranslateCells([{ col: 3, row: 4 }], 0), [{ col: 4, row: 4 }]);
   assert.deepEqual(blueprintTranslateCells([{ col: 3, row: 4 }], 3), [{ col: 3, row: 3 }]);
   assert.equal(BLUEPRINT_CROSS_RAISE, 0.2);
   assert.ok(Math.abs(blueprintDynamicProgress(BLUEPRINT_CROSS_RAISE / 2, BLUEPRINT_CROSS_RAISE) - 0.5) < 1e-9);
   const legal = blueprintLegalCells(world, null);
-  const staticSpot = legal.find((cell, _, all) => all.some((other) => other.row === cell.row && other.col === cell.col - 1));
-  assert.ok(staticSpot);
-  const staticCell = { col: staticSpot.col, row: staticSpot.row };
-  const neighbor = { col: staticSpot.col - 1, row: staticSpot.row };
-  // 与静态重叠：整组动态贴平，同格只留静态。
-  const full = clock({
-    goals: 3,
-    staticCells: [staticCell],
-    staticAge: BLUEPRINT_RAISE,
-    staticRaise: BLUEPRINT_RAISE,
-    dynamic: dyn({
-      cells: [staticCell, neighbor],
-      pending: [],
-      dir: 0,
-      phase: "hold",
-      age: 0,
-    }),
-  });
-  const blocks = blueprintBlocks(world, full);
-  const atStatic = blocks.filter((b) => b.col === staticCell.col && b.row === staticCell.row);
-  assert.equal(atStatic.length, 1);
-  assert.equal(atStatic[0]!.dynamic, false);
-  assert.ok(atStatic[0]!.extend > 0.95);
-  assert.equal(blocks.some((b) => b.dynamic), false);
-
-  // cross_out：线性同步缩回。
-  const leaving = dyn({
-    cells: [neighbor],
-    pending: [staticCell],
+  const keys = new Set(legal.map((cell) => `${cell.col}:${cell.row}`));
+  const line = legal
+    .map((cell) => [0, 1, 2, 3].map((i) => ({ col: cell.col + i, row: cell.row })))
+    .find((cells) => cells.every((cell) => keys.has(`${cell.col}:${cell.row}`)));
+  assert.ok(line);
+  const [left, mid, landed] = line!;
+  const staticKeys = new Set([`${landed!.col}:${landed!.row}`]);
+  const sinking = dyn({
+    cells: [left!, mid!],
+    pending: [mid!, landed!],
     dir: 0,
     phase: "cross_out",
     age: BLUEPRINT_CROSS_RAISE / 2,
     raise: BLUEPRINT_CROSS_RAISE,
   });
-  const empty = new Set<string>();
-  const leave = blueprintDynamicCellExtend(leaving, neighbor, empty);
-  assert.ok(Math.abs(leave - 0.5) < 1e-9, `leave=${leave}`);
+  const onStatic = blueprintDynamicCellExtend(sinking, mid!, staticKeys);
+  const beside = blueprintDynamicCellExtend(sinking, left!, staticKeys);
+  assert.ok(Math.abs(onStatic - beside) < 1e-9);
+  assert.ok(Math.abs(onStatic - 0.5) < 1e-9);
+
+  const stacked = clock({
+    goals: 3,
+    staticCells: [landed!],
+    staticAge: BLUEPRINT_RAISE,
+    staticRaise: BLUEPRINT_RAISE,
+    dynamic: dyn({
+      cells: [mid!, landed!],
+      phase: "cross_in",
+      age: BLUEPRINT_CROSS_RAISE / 2,
+      raise: BLUEPRINT_CROSS_RAISE,
+    }),
+  });
+  const blocks = blueprintBlocks(world, stacked);
+  const dynBlocks = blocks.filter((block) => block.dynamic);
+  assert.equal(dynBlocks.length, 2);
+  assert.ok(dynBlocks.every((block) => Math.abs(block.extend - dynBlocks[0]!.extend) < 1e-9));
+  assert.ok(Math.abs(dynBlocks[0]!.extend - 0.5) < 1e-9);
+  const overlap = dynBlocks.find((block) => block.col === landed!.col && block.row === landed!.row);
+  assert.ok(overlap);
+  const under = blocks.find((block) => !block.dynamic && block.col === landed!.col && block.row === landed!.row);
+  assert.ok(under && under.extend > 0.95);
+  assert.ok(Math.max(overlap!.extend, under!.extend) > 0.95);
+
+  const aim = { goals: 4, ballX: -400, ballY: -400, hoopX: world.w * 0.2, hoopY: world.h * 0.3 };
+  restoreBlueprintClock(clock({
+    goals: 4,
+    seed: 3,
+    staticCells: [landed!],
+    staticAge: BLUEPRINT_RAISE,
+    dynamic: dyn({
+      cells: [left!, mid!],
+      dir: 0,
+      phase: "hold",
+      age: 0.49,
+      stepSpan: 0.5,
+    }),
+  }));
+  stepBlueprint(0.02, true, aim, world);
+  const moving = getBlueprintClock();
+  assert.ok(moving.dynamic);
+  assert.equal(moving.dynamic!.phase, "cross_out");
+  assert.equal(moving.dynamic!.dir, 0);
+  assert.equal(moving.dynamic!.cells.length, 2);
+  assert.deepEqual(moving.dynamic!.pending, [mid!, landed!]);
+  stepBlueprint(BLUEPRINT_CROSS_RAISE, true, aim, world);
+  const arrived = getBlueprintClock();
+  assert.equal(arrived.dynamic?.phase, "cross_in");
+  assert.deepEqual(arrived.dynamic?.cells, [mid!, landed!]);
+  stepBlueprint(BLUEPRINT_CROSS_RAISE / 2, true, aim, world);
+  const rising = blueprintBlocks(world).filter((block) => block.dynamic);
+  assert.equal(rising.length, 2);
+  assert.ok(rising.every((block) => Math.abs(block.extend - rising[0]!.extend) < 1e-9));
+  assert.ok(rising.some((block) => block.col === landed!.col && block.row === landed!.row));
+});
+
+test("进球换静态不裁掉踩在上面的动态格", () => {
+  const aim = aimAt(1);
+  let saw = false;
+  for (let s = 1; s < 40 && !saw; s++) {
+    resetBlueprint(s);
+    stepBlueprint(0, true, aim, world);
+    const before = getBlueprintClock();
+    const next = rollBlueprintBatch(world, {
+      seed: before.seed,
+      serial: before.serial + 1,
+      goals: 2,
+      ball: { x: aim.ballX, y: aim.ballY },
+      hoop: { x: aim.hoopX, y: aim.hoopY },
+    });
+    const hit = next.cells[0];
+    if (!hit) continue;
+    const group = [hit, { col: hit.col + 1, row: hit.row }];
+    restoreBlueprintClock({
+      ...before,
+      dynamic: dyn({ cells: group, phase: "hold", age: 0.2 }),
+    });
+    stepBlueprint(0, true, aimAt(2), world);
+    const after = getBlueprintClock();
+    if (!after.dynamic) continue;
+    const staticKeys = new Set(after.staticCells.map((cell) => `${cell.col}:${cell.row}`));
+    if (!staticKeys.has(`${hit.col}:${hit.row}`)) continue;
+    assert.deepEqual(after.dynamic.cells, group);
+    saw = true;
+  }
+  assert.equal(saw, true);
 });
 
 test("动态挪移整组同步：先一起缩回，再一起升起", () => {
