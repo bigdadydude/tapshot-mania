@@ -38,7 +38,6 @@ import {
   blueprintColClears,
   blueprintRowClears,
   blueprintSampleCount,
-  blueprintPendingChipY,
   blueprintShadowAlpha,
   blueprintShadowBox,
   clipBlueprintPaintBox,
@@ -1253,10 +1252,59 @@ test("pending=N 时实体结算返回 N 并归零，分身结算不改待领", (
   assert.equal(getBlueprintClock().pendingBonus, 0);
 });
 
-test("待领筹码和凸块投影不进入倒计时条", () => {
+test("进球换静态后新静态全暗，留下的动态保持点亮", () => {
+  const aim = aimAt(2);
+  const ball = { x: aim.ballX, y: aim.ballY };
+  const hoop = { x: aim.hoopX, y: aim.hoopY };
+  let sawReuse = false;
+  let sawKeptDynamic = false;
+  for (let seed = 1; seed < 240; seed++) {
+    const batch = rollBlueprintBatch(world, { seed, serial: 2, goals: 2, ball, hoop });
+    const next = batch.cells[0];
+    if (!next) continue;
+    const legal = blueprintLegalCells(world, ball);
+    const mover = legal.find((cell) => cell.col !== next.col || cell.row !== next.row);
+    if (!mover) continue;
+    resetBlueprint(seed);
+    restoreBlueprintClock(clock({
+      seed,
+      goals: 1,
+      serial: 1,
+      staticCells: [{ col: next.col, row: next.row }],
+      staticAge: BLUEPRINT_RAISE,
+      lit: [`${next.col}:${next.row}`, `${mover.col}:${mover.row}`],
+      dynamic: dyn({
+        cells: [{ col: mover.col, row: mover.row }],
+        phase: "hold",
+        age: 0.1,
+        stepSpan: 10,
+      }),
+    }));
+    stepBlueprint(0.02, true, aim, world);
+    const after = getBlueprintClock();
+    const dynKeys = new Set((after.dynamic?.cells ?? []).map((cell) => `${cell.col}:${cell.row}`));
+    for (const cell of after.staticCells) {
+      const key = `${cell.col}:${cell.row}`;
+      if (dynKeys.has(key)) continue;
+      assert.equal(after.lit.includes(key), false);
+    }
+    if (after.staticCells.some((cell) => cell.col === next.col && cell.row === next.row) && !dynKeys.has(`${next.col}:${next.row}`)) {
+      sawReuse = true;
+    }
+    if (after.dynamic?.cells.some((cell) => cell.col === mover.col && cell.row === mover.row)) {
+      assert.equal(after.lit.includes(`${mover.col}:${mover.row}`), true);
+      sawKeptDynamic = true;
+    } else {
+      assert.equal(after.lit.includes(`${mover.col}:${mover.row}`), false);
+    }
+    if (sawReuse && sawKeptDynamic) break;
+  }
+  assert.equal(sawReuse, true);
+  assert.equal(sawKeptDynamic, true);
+});
+
+test("凸块投影不进入倒计时条", () => {
   const hudBottom = 159;
-  assert.ok(blueprintPendingChipY(844, hudBottom) >= hudBottom + 8);
-  assert.equal(blueprintPendingChipY(844, 0), Math.min(844 * 0.16, 132));
   const through = clipBlueprintPaintBox({ x: 40, y: 140, w: 28, h: 80, keep: 1 }, hudBottom);
   if (!through) throw new Error("穿过倒计时条的投影应留下条下的一段");
   assert.equal(through.y, hudBottom);

@@ -306,12 +306,35 @@ function finiteBonus(value: number | undefined) {
   return Math.max(0, Math.floor(value ?? 0));
 }
 
-/** 点亮只保留还在场上的格。挪走或换批后的新格从暗开始。 */
+/** 点亮只保留还在场上的格。已经离开的坐标删掉。 */
 function pruneLit() {
   const live = new Set<string>();
   for (const cell of staticCells) live.add(cellKey(cell));
   if (dynamic) for (const cell of dynamic.cells) live.add(cellKey(cell));
   for (const key of lit) if (!live.has(key)) lit.delete(key);
+}
+
+/** 换批前记下还在场上的动态格里，哪些已经点亮。 */
+function dynamicLitKeys() {
+  const keep = new Set<string>();
+  if (!dynamic) return keep;
+  for (const cell of dynamic.cells) {
+    const key = cellKey(cell);
+    if (lit.has(key)) keep.add(key);
+  }
+  return keep;
+}
+
+/** 新静态一律未点亮。只有换批后仍在的动态格沿用进球前的亮。 */
+function keepOnlyDynamicLit(keep: Set<string>) {
+  const next = new Set<string>();
+  if (dynamic) {
+    for (const cell of dynamic.cells) {
+      const key = cellKey(cell);
+      if (keep.has(key)) next.add(key);
+    }
+  }
+  lit = next;
 }
 
 export function blueprintDespawnChance(made: number) {
@@ -394,6 +417,7 @@ function trySpawnDynamic(goalsNow: number) {
 function applyGoalChange(goalsNow: number) {
   // 还没收到 world 时先别落批，等下一帧。
   if (goalsNow > 0 && !view) return;
+  const carriedLit = dynamicLitKeys();
   if (hasBatch && goalsNow !== goals) serial += 1;
   goals = goalsNow;
   staticAge = 0;
@@ -402,6 +426,7 @@ function applyGoalChange(goalsNow: number) {
     staticCells = [];
     dynamic = null;
     hasBatch = true;
+    lit = new Set();
     return;
   }
   const ball = aimBall();
@@ -418,6 +443,7 @@ function applyGoalChange(goalsNow: number) {
     trySpawnDynamic(goalsNow);
   }
   hasBatch = true;
+  keepOnlyDynamicLit(carriedLit);
 }
 
 function beginDynamicCross() {
@@ -1150,8 +1176,8 @@ export function claimBlueprintBonus() {
 }
 
 /**
- * 只有实体进球才领走待领。分身 / 幽灵进球返回 0，待领保持原数。
- * 画面上的「待领 +N」读的是同一份 pendingBonus。
+ * 只有实体进球才领走清格分。分身 / 幽灵进球返回 0，累计保持原数。
+ * 画面不单独提示这笔分，它只加进下一次实体进球的总分和主飘字。
  */
 export function claimBlueprintBonusForBasket(real: boolean) {
   if (!real) return 0;
@@ -1479,13 +1505,6 @@ export function clipBlueprintPaintBox<T extends BlueprintShadowBox>(box: T, top:
   return { ...box, y, h };
 }
 
-/** 待领筹码的纵坐标。有倒计时条时放在条下面，避免深色底透出条上的透明像素。 */
-export function blueprintPendingChipY(worldH: number, hudBottom: number) {
-  const fallback = Math.min(worldH * 0.16, 132);
-  if (!(hudBottom > 0)) return fallback;
-  return Math.min(Math.max(0, worldH - 40), hudBottom + 10);
-}
-
 /** 从底边下一像素开始的直边阴影。 */
 export function blueprintShadowBox(cell: Rect, extend: number): BlueprintShadowBox {
   const { left, right, bottom } = blueprintCellPixels(cell);
@@ -1614,19 +1633,4 @@ export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View, hudBot
     .filter((block) => block.dynamic || !covered.has(`${block.col}:${block.row}`))
     .sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x || Number(a.dynamic) - Number(b.dynamic));
   for (const block of visible) drawBlock(ctx, block, visible, hudBottom);
-  if (clock.pendingBonus > 0) {
-    const label = `待领 +${clock.pendingBonus}`;
-    ctx.save();
-    ctx.font = "700 15px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    const width = ctx.measureText(label).width + 22;
-    const y = blueprintPendingChipY(world.h, hudBottom);
-    const x = world.w * 0.5 - width / 2;
-    ctx.fillStyle = "rgba(8, 24, 58, 0.78)";
-    ctx.fillRect(x, y, width, 26);
-    ctx.fillStyle = "#ffd56a";
-    ctx.fillText(label, world.w * 0.5, y + 13);
-    ctx.restore();
-  }
 }
