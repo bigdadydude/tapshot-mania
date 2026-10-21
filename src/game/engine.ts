@@ -6592,7 +6592,7 @@ export function createGame(
       if (rowBonus > 0) {
         score += rowBonus;
         callouts.push({
-          text: `清排 +${rowBonus}`,
+          text: `清格 +${rowBonus}`,
           x: ball.x,
           y: Math.max(48, ball.y - ball.r * 2.4),
           life: 0.9,

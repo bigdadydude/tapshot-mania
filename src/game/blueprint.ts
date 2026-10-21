@@ -124,9 +124,9 @@ export type BlueprintClock = {
   duration: number;
   /** 已点亮的格子，`col:row`。只增不减，格离开场上后丢掉。 */
   lit: string[];
-  /** 清排后挂着的加分。下一次进球加进得分再清零。 */
+  /** 清排或清列后挂着的加分。下一次进球加进得分再清零。 */
   pendingBonus: number;
-  /** 正在缩回、尚未离场的清排格。 */
+  /** 正在缩回、尚未离场的清格。 */
   clearing: BlueprintClearingCell[];
 };
 
@@ -169,9 +169,9 @@ let staticRaise = BLUEPRINT_RAISE;
 let dynamic: BlueprintDynamic | null = null;
 /** 已点亮的 `col:row`。 */
 let lit = new Set<string>();
-/** 清排累计、尚未进球结算的加分。 */
+/** 清排 / 清列累计、尚未进球结算的加分。 */
 let pendingBonus = 0;
-/** 正在播放缩回的清排格。 */
+/** 正在播放缩回的清格。 */
 let clearing: BlueprintClearingCell[] = [];
 /** 是否已按当前进球数落定（含进球前的空场）。 */
 let hasBatch = false;
@@ -943,7 +943,7 @@ export function blueprintBlocks(world: View, clock = getBlueprintClock()): Bluep
   return blocks;
 }
 
-/** 清排缩回：从开始时的高度线性收到 0，时长与动态组缩回相同。 */
+/** 清排 / 清列缩回：从开始时的高度线性收到 0，时长与动态组缩回相同。 */
 export function blueprintClearExtend(age: number, span = BLUEPRINT_CROSS_RAISE, from = 1) {
   const dur = span > 1e-6 ? span : BLUEPRINT_CROSS_RAISE;
   const start = Math.max(0, Number.isFinite(from) ? from : 1);
@@ -967,7 +967,7 @@ export function blueprintFieldCells(clock: Pick<BlueprintClock, "staticCells" | 
   return cells;
 }
 
-/** 仍凸出到撞得到的格。只用于能不能踩亮，不用于清排。 */
+/** 仍凸出到撞得到的格。只用于能不能踩亮，不用于清排或清列。 */
 export function blueprintProtrudingCells(blocks: readonly BlueprintBlock[]) {
   const seen = new Set<string>();
   const cells: BlueprintCellRef[] = [];
@@ -981,15 +981,43 @@ export function blueprintProtrudingCells(blocks: readonly BlueprintBlock[]) {
   return cells;
 }
 
+function lineClears(
+  field: readonly BlueprintCellRef[],
+  litKeys: ReadonlySet<string>,
+  match: (cell: BlueprintCellRef) => boolean,
+) {
+  const inLine = field.filter(match);
+  if (inLine.length === 0) return [];
+  if (!inLine.every((cell) => litKeys.has(cellKey(cell)))) return [];
+  return inLine.map((cell) => ({ col: cell.col, row: cell.row }));
+}
+
 /**
  * 这一排当前还在场上的格若全部点亮，返回这些格。
  * 空排，或这一排没有格子，则不触发。高度暂时接近 0 的格仍然算在场上。
  */
 export function blueprintRowClears(row: number, field: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
-  const inRow = field.filter((cell) => cell.row === row);
-  if (inRow.length === 0) return [];
-  if (!inRow.every((cell) => litKeys.has(cellKey(cell)))) return [];
-  return inRow.map((cell) => ({ col: cell.col, row: cell.row }));
+  return lineClears(field, litKeys, (cell) => cell.row === row);
+}
+
+/**
+ * 这一列当前还在场上的格若全部点亮，返回这些格。
+ * 空列不触发。高度暂时接近 0 的格仍然算在场上。
+ */
+export function blueprintColClears(col: number, field: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
+  return lineClears(field, litKeys, (cell) => cell.col === col);
+}
+
+function uniqueCells(cells: readonly BlueprintCellRef[]) {
+  const seen = new Set<string>();
+  const out: BlueprintCellRef[] = [];
+  for (const cell of cells) {
+    const key = cellKey(cell);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ col: cell.col, row: cell.row });
+  }
+  return out;
 }
 
 function extendAt(ref: BlueprintCellRef) {
@@ -1004,7 +1032,7 @@ function extendAt(ref: BlueprintCellRef) {
   return Math.max(0, ...heights);
 }
 
-/** 清排格离开静态/动态名单，改由缩回动画接管。高度接近 0 的格也算被清走。 */
+/** 清掉的格离开静态/动态名单，改由缩回动画接管。高度接近 0 的格也算被清走。 */
 function dropClearedCells(keys: Set<string>) {
   staticCells = staticCells.filter((cell) => !keys.has(cellKey(cell)));
   if (dynamic) {
@@ -1021,22 +1049,26 @@ function dropClearedCells(keys: Set<string>) {
   for (const key of keys) lit.delete(key);
 }
 
-function beginRowClear(cells: readonly BlueprintCellRef[]) {
-  const started = cells.map((cell) => ({
+function beginLineClear(cells: readonly BlueprintCellRef[]) {
+  const fresh = uniqueCells(cells).filter((cell) => !clearing.some((item) => item.col === cell.col && item.row === cell.row));
+  if (!fresh.length) return 0;
+  const started = fresh.map((cell) => ({
     col: cell.col,
     row: cell.row,
     age: 0,
     span: BLUEPRINT_CROSS_RAISE,
     from: extendAt(cell),
   }));
-  dropClearedCells(new Set(cells.map(cellKey)));
+  dropClearedCells(new Set(started.map(cellKey)));
   clearing = clearing.concat(started);
   pendingBonus += started.length;
+  return started.length;
 }
 
 /**
  * 篮球踩到已凸出的格就点亮。已亮再踩无事。
- * 这一排还在场上的格都亮了，才开始整排缩回，并立刻把格数挂上待领分。
+ * 这一排或这一列还在场上的格都亮了，就整行或整列缩回。
+ * 同一格同时属于刚触发的行和列时只缩一次、只计一次。
  * 返回本次开始缩回的格数。
  */
 export function touchBlueprintCell(world: View, col: number, row: number) {
@@ -1046,10 +1078,12 @@ export function touchBlueprintCell(world: View, col: number, row: number) {
   const solid = blueprintBlocks(world).some((block) => block.col === col && block.row === row && block.solid);
   if (!solid) return 0;
   lit.add(key);
-  const cleared = blueprintRowClears(row, field, lit);
+  const cleared = uniqueCells([
+    ...blueprintRowClears(row, field, lit),
+    ...blueprintColClears(col, field, lit),
+  ]);
   if (!cleared.length) return 0;
-  beginRowClear(cleared);
-  return cleared.length;
+  return beginLineClear(cleared);
 }
 
 /** 进球时拿走待领分并清零。没有挂分时返回 0。 */

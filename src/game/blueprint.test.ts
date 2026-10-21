@@ -35,6 +35,7 @@ import {
   blueprintOnShotPath,
   blueprintProtrudingCells,
   blueprintQuota,
+  blueprintColClears,
   blueprintRowClears,
   blueprintSampleCount,
   blueprintShadowAlpha,
@@ -782,6 +783,7 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   const b = { col: 6, row: 8 };
   const other = { col: 4, row: 9 };
   const flat = { col: 7, row: 8 };
+  const hold = { col: 6, row: 9 };
   const field = [a, b, flat, other];
   assert.deepEqual(blueprintRowClears(8, field, new Set()), []);
   assert.deepEqual(blueprintRowClears(8, field, new Set(["4:8", "6:8"])), []);
@@ -797,7 +799,7 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   resetBlueprint(3);
   restoreBlueprintClock(clock({
     goals: 3,
-    staticCells: [a, b, other],
+    staticCells: [a, b, other, hold],
     staticAge: BLUEPRINT_RAISE,
     dynamic: dyn({
       cells: [flat],
@@ -821,7 +823,8 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   assert.deepEqual(blocked.lit, ["4:8", "6:8"]);
   assert.equal(blocked.pendingBonus, 0);
   assert.equal(blocked.clearing.length, 0);
-  assert.equal(blocked.staticCells.length, 3);
+  assert.equal(blocked.staticCells.length, 4);
+  assert.ok(blocked.staticCells.some((cell) => cell.col === b.col && cell.row === b.row));
   assert.deepEqual(blocked.dynamic?.cells, [flat]);
   assert.equal(blueprintBlocks(world).some((block) => block.col === a.col && block.lit), true);
   assert.equal(blueprintBlocks(world).some((block) => block.col === flat.col && !block.lit), true);
@@ -878,6 +881,98 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   assert.equal(getBlueprintClock().clearing.length, 0);
   assert.ok(blueprintBlocks(world).every((block) => block.lit === false));
   assert.equal(claimBlueprintBonus(), 4);
+});
+
+test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", () => {
+  const up = { col: 4, row: 8 };
+  const down = { col: 4, row: 9 };
+  const side = { col: 6, row: 8 };
+  const sideDown = { col: 6, row: 9 };
+  const low = { col: 4, row: 10 };
+  const lines = [up, down, side, low];
+  assert.deepEqual(blueprintColClears(4, lines, new Set()), []);
+  assert.deepEqual(blueprintColClears(4, lines, new Set(["4:8", "4:9"])), []);
+  assert.deepEqual(blueprintColClears(2, lines, new Set(["4:8", "4:9", "4:10"])), []);
+  assert.deepEqual(blueprintColClears(4, lines, new Set(["4:8", "4:9", "4:10"])), [up, down, low]);
+
+  const lowAge = BLUEPRINT_CROSS_RAISE * (1 - 0.05);
+  resetBlueprint(5);
+  restoreBlueprintClock(clock({
+    goals: 3,
+    staticCells: [up, side],
+    staticAge: BLUEPRINT_RAISE,
+    dynamic: dyn({
+      cells: [low],
+      phase: "cross_out",
+      age: lowAge,
+      raise: BLUEPRINT_CROSS_RAISE,
+    }),
+  }));
+  assert.equal(touchBlueprintCell(world, up.col, up.row), 0);
+  const blocked = getBlueprintClock();
+  assert.equal(blocked.pendingBonus, 0);
+  assert.equal(blocked.clearing.length, 0);
+  assert.equal(blocked.staticCells.length, 2);
+  assert.deepEqual(blocked.dynamic?.cells, [low]);
+  assert.equal(blocked.lit.includes("4:8"), true);
+
+  resetBlueprint(5);
+  restoreBlueprintClock(clock({
+    goals: 3,
+    staticCells: [up, down, side, sideDown],
+    staticAge: BLUEPRINT_RAISE,
+  }));
+  assert.equal(touchBlueprintCell(world, up.col, up.row), 0);
+  assert.equal(touchBlueprintCell(world, down.col, down.row), 2);
+  const started = getBlueprintClock();
+  assert.equal(started.pendingBonus, 2);
+  assert.equal(started.clearing.length, 2);
+  assert.deepEqual(started.staticCells.map((cell) => `${cell.col}:${cell.row}`).sort(), ["6:8", "6:9"]);
+  const sinking = blueprintBlocks(world).filter((block) => block.col === up.col);
+  assert.equal(sinking.length, 2);
+  for (const block of sinking) {
+    assert.ok(block.extend > 0.9, `清列开始时高度应接近满格，实际 ${block.extend}`);
+    assert.equal(block.lit, true);
+    assert.ok(block.solid);
+  }
+  const aim = aimAt(3);
+  stepBlueprint(BLUEPRINT_CROSS_RAISE / 2, true, aim, world);
+  const mid = blueprintBlocks(world).filter((block) => block.col === up.col);
+  assert.equal(mid.length, 2);
+  for (const block of mid) assert.ok(Math.abs(block.extend - 0.5) < 1e-6, `缩到一半应约 0.5，实际 ${block.extend}`);
+  assert.equal(getBlueprintClock().pendingBonus, 2);
+  assert.equal(getBlueprintClock().staticCells.length, 2);
+  stepBlueprint(BLUEPRINT_CROSS_RAISE / 2, true, aim, world);
+  assert.equal(blueprintBlocks(world).some((block) => block.col === up.col), false);
+  assert.equal(getBlueprintClock().pendingBonus, 2);
+  assert.equal(touchBlueprintCell(world, side.col, side.row), 1);
+  assert.equal(getBlueprintClock().pendingBonus, 3);
+  assert.deepEqual(getBlueprintClock().staticCells, [sideDown]);
+  assert.equal(claimBlueprintBonus(), 3);
+  assert.equal(claimBlueprintBonus(), 0);
+
+  const joint = { col: 6, row: 8 };
+  const rowMate = { col: 4, row: 8 };
+  const colMate = { col: 6, row: 10 };
+  const leftover = { col: 8, row: 10 };
+  const anchor = { col: 4, row: 11 };
+  resetBlueprint(7);
+  restoreBlueprintClock(clock({
+    goals: 3,
+    staticCells: [joint, rowMate, colMate, leftover, anchor],
+    staticAge: BLUEPRINT_RAISE,
+  }));
+  assert.equal(touchBlueprintCell(world, rowMate.col, rowMate.row), 0);
+  assert.equal(touchBlueprintCell(world, colMate.col, colMate.row), 0);
+  assert.equal(touchBlueprintCell(world, joint.col, joint.row), 3);
+  const crossed = getBlueprintClock();
+  assert.equal(crossed.pendingBonus, 3);
+  assert.equal(crossed.clearing.length, 3);
+  assert.deepEqual(crossed.clearing.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:8", "6:10", "6:8"]);
+  assert.deepEqual(crossed.staticCells.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:11", "8:10"]);
+  const stillUp = blueprintBlocks(world).filter((block) => block.row === 8 || block.row === 10 && block.col === 6);
+  assert.equal(stillUp.length, 3);
+  for (const block of stillUp) assert.ok(block.extend > 0.9);
 });
 
 test("标题和开发者场景条都有蓝图，其它场景配色不动", () => {
