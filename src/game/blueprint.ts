@@ -1223,6 +1223,27 @@ function circleHits(x: number, y: number, r: number, box: Rect) {
   return Math.hypot(x - qx, y - qy) < r - 1e-3;
 }
 
+function centerDist(block: BlueprintBlock, ball: MovingBall) {
+  const cx = block.cell.x + block.cell.w / 2;
+  const cy = block.cell.y + block.cell.h / 2;
+  return Math.hypot(ball.x - cx, ball.y - cy);
+}
+
+/** 同时擦到多格时，点亮球心更靠近的那一格，不把邻格一起点亮。 */
+function nearestLitTarget(world: View, ball: MovingBall, hitBlock: BlueprintBlock, clock?: BlueprintClock) {
+  let best = hitBlock;
+  let bestD = centerDist(hitBlock, ball);
+  for (const block of blueprintBlocks(world, clock)) {
+    if (!block.solid || !circleHits(ball.x, ball.y, ball.r, block.solid)) continue;
+    const dist = centerDist(block, ball);
+    if (dist < bestD - 1e-4) {
+      best = block;
+      bestD = dist;
+    }
+  }
+  return best;
+}
+
 /** 顶面反弹至少要盖过一帧重力，否则球会被按在格子上不动。 */
 function topEscapeSpeed(world: View) {
   const g = world.h * 3.1;
@@ -1251,7 +1272,11 @@ export function collideBlueprint(
     }
   }
   if (!hit || !hitBlock) return false;
-  if (!clock) touchBlueprintCell(world, hitBlock.col, hitBlock.row);
+  // 球比格子宽，踩在一格上也会擦到邻格。只点亮球心更靠近的那一格。
+  if (!clock) {
+    const stepped = nearestLitTarget(world, ball, hitBlock, clock);
+    touchBlueprintCell(world, stepped.col, stepped.row);
+  }
   if (blockImpact?.(hit.nx, hit.ny)) return false;
   const skin = 0.35;
   const remain = 1 - hit.t;

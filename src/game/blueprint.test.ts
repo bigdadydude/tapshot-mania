@@ -1088,6 +1088,59 @@ test("单格点亮即清，两格必须全亮，动态亮格落地才凑排", ()
   assert.ok(sinking && sinking.extend > 0.8);
 });
 
+test("相邻两格只踩一格不会把邻格点亮", () => {
+  const a = { col: 4, row: 8 };
+  const b = { col: 5, row: 8 };
+  resetBlueprint(2);
+  restoreBlueprintClock(clock({
+    goals: 2,
+    staticCells: [a, b],
+    staticAge: BLUEPRINT_RAISE,
+  }));
+  assert.equal(touchBlueprintCell(world, a.col, a.row), 0);
+  assert.deepEqual(getBlueprintClock().lit, ["4:8"]);
+  assert.equal(getBlueprintClock().pendingBonus, 0);
+  assert.equal(getBlueprintClock().clearing.length, 0);
+  assert.equal(getBlueprintClock().staticCells.length, 2);
+  assert.equal(blueprintBlocks(world).find((block) => block.col === b.col)?.lit, false);
+  assert.equal(touchBlueprintCell(world, b.col, b.row), 2);
+  assert.equal(getBlueprintClock().pendingBonus, 2);
+  assert.equal(getBlueprintClock().clearing.length, 2);
+
+  resetBlueprint(2);
+  restoreBlueprintClock(clock({
+    goals: 2,
+    staticCells: [a, b],
+    staticAge: BLUEPRINT_RAISE,
+  }));
+  const blockA = blueprintBlocks(world).find((block) => block.col === a.col)!;
+  const blockB = blueprintBlocks(world).find((block) => block.col === b.col)!;
+  const onA = {
+    x: blockA.cell.x + blockA.cell.w / 2,
+    y: blockA.cell.y + blockA.cell.h / 2,
+    vx: 0,
+    vy: 40,
+    r: world.ballR,
+  };
+  assert.ok(onA.r > blockA.cell.w / 2);
+  assert.equal(collideBlueprint(world, onA, onA.x, onA.y - 24), true);
+  assert.deepEqual(getBlueprintClock().lit, ["4:8"]);
+  assert.equal(getBlueprintClock().pendingBonus, 0);
+  assert.equal(getBlueprintClock().staticCells.length, 2);
+  assert.equal(blueprintBlocks(world).find((block) => block.col === b.col)?.lit, false);
+  const onB = {
+    x: blockB.cell.x + blockB.cell.w / 2,
+    y: blockB.cell.y + blockB.cell.h / 2,
+    vx: 0,
+    vy: 40,
+    r: world.ballR,
+  };
+  assert.equal(collideBlueprint(world, onB, onB.x, onB.y - 24), true);
+  assert.equal(getBlueprintClock().pendingBonus, 2);
+  assert.equal(getBlueprintClock().clearing.length, 2);
+  assert.deepEqual(getBlueprintClock().staticCells, []);
+});
+
 test("十字中心有邻块不清，横段或竖段亮齐才消", () => {
   const crossA = { col: 5, row: 8 };
   const crossB = { col: 4, row: 9 };
