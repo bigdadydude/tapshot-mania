@@ -521,11 +521,18 @@ function stepClearing(dt: number) {
   clearing = stay;
 }
 
-export function stepBlueprint(dt: number, playing: boolean, next?: BlueprintAim, world?: View) {
+export function stepBlueprint(
+  dt: number,
+  playing: boolean,
+  next?: BlueprintAim,
+  world?: View,
+  opts?: { generationHold?: boolean },
+) {
   if (next) aim = next;
   if (world) view = { w: world.w, h: world.h, floorY: world.floorY, ballR: world.ballR, hoopInner: world.hoopInner };
   const goalsNow = aim ? finiteGoals(aim.goals) : goals;
-  if (!hasBatch || goalsNow !== goals) applyGoalChange(goalsNow);
+  // 黑洞存在时不换静态、不新生成动态。已在场上的照常伸缩。洞结束后进球数若已变，再按当前数补一批。
+  if (!opts?.generationHold && (!hasBatch || goalsNow !== goals)) applyGoalChange(goalsNow);
   pruneLit();
   if (!(dt > 0)) return;
   if (playing) {
@@ -1140,7 +1147,7 @@ function dropClearedCells(keys: Set<string>) {
   for (const key of keys) lit.delete(key);
 }
 
-function beginLineClear(cells: readonly BlueprintCellRef[]) {
+function beginLineClear(cells: readonly BlueprintCellRef[], payPending = true) {
   const fresh = uniqueCells(cells).filter((cell) => !clearing.some((item) => item.col === cell.col && item.row === cell.row));
   if (!fresh.length) return 0;
   const started = fresh.map((cell) => ({
@@ -1152,8 +1159,18 @@ function beginLineClear(cells: readonly BlueprintCellRef[]) {
   }));
   dropClearedCells(new Set(started.map(cellKey)));
   clearing = clearing.concat(started);
-  pendingBonus += started.length;
+  if (payPending) pendingBonus += started.length;
   return started.length;
+}
+
+/**
+ * 反物质开黑洞：场上已点亮的凸块全部缩回。
+ * 返回格数，调用方立刻加进基础分。不挂待领。未点亮的留下。同格只计一次。
+ * 再调一次时亮格已经不在，返回 0。
+ */
+export function consumeBlueprintLitForHole() {
+  const litCells = blueprintFieldCells(getBlueprintClock()).filter((cell) => lit.has(cellKey(cell)));
+  return beginLineClear(litCells, false);
 }
 
 /** 落地或点亮之后，把当前在场的每一行、每一列再判一次。未亮的静态格也算在场。 */

@@ -55,6 +55,7 @@ import {
   clipBlueprintCells,
   claimBlueprintBonus,
   claimBlueprintBonusForBasket,
+  consumeBlueprintLitForHole,
   settleBlueprintBasket,
   collideBlueprint,
   getBlueprintClock,
@@ -1340,6 +1341,55 @@ test("凸块投影不进入倒计时条", () => {
   assert.equal(clipBlueprintPaintBox({ x: 40, y: 100, w: 28, h: 40 }, hudBottom), null);
   const court = blueprintShadowBox({ x: 100, y: 200, w: 28, h: 28 }, 1);
   assert.deepEqual(clipBlueprintPaintBox(court, hudBottom), court);
+});
+
+test("开黑洞清掉全部已亮格，加成只算一次，未亮留下且不挂待领", () => {
+  const litStatic = { col: 4, row: 8 };
+  const darkStatic = { col: 5, row: 8 };
+  const litMover = { col: 6, row: 8 };
+  const darkMover = { col: 6, row: 9 };
+  const overlap = { col: 7, row: 9 };
+  resetBlueprint(4);
+  restoreBlueprintClock(clock({
+    goals: 2,
+    staticCells: [litStatic, darkStatic, overlap],
+    staticAge: BLUEPRINT_RAISE,
+    lit: ["4:8", "6:8", "7:9"],
+    pendingBonus: 3,
+    dynamic: dyn({ cells: [litMover, darkMover, overlap], phase: "hold", stepSpan: 10 }),
+  }));
+  assert.equal(consumeBlueprintLitForHole(), 3);
+  const after = getBlueprintClock();
+  assert.equal(after.pendingBonus, 3);
+  assert.deepEqual(after.lit, []);
+  assert.deepEqual(after.staticCells.map((cell) => `${cell.col}:${cell.row}`), ["5:8"]);
+  assert.deepEqual(after.dynamic?.cells.map((cell) => `${cell.col}:${cell.row}`), ["6:9"]);
+  assert.equal(after.dynamic?.phase, "hold");
+  assert.deepEqual(after.clearing.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:8", "6:8", "7:9"]);
+  assert.equal(consumeBlueprintLitForHole(), 0);
+  assert.equal(getBlueprintClock().pendingBonus, 3);
+  assert.equal(getBlueprintClock().staticCells.length, 1);
+});
+
+test("黑洞期间不换批不生成动态，结束后按当前进球数恢复", () => {
+  resetBlueprint(8);
+  stepBlueprint(0.02, true, aimAt(1), world);
+  const before = getBlueprintClock();
+  assert.equal(before.goals, 1);
+  assert.equal(before.staticCells.length, 1);
+  const kept = before.staticCells.map((cell) => `${cell.col}:${cell.row}`);
+  const keptDynamic = (before.dynamic?.cells ?? []).map((cell) => `${cell.col}:${cell.row}`);
+  stepBlueprint(0.4, true, aimAt(3), world, { generationHold: true });
+  const held = getBlueprintClock();
+  assert.equal(held.goals, 1);
+  assert.deepEqual(held.staticCells.map((cell) => `${cell.col}:${cell.row}`), kept);
+  assert.deepEqual((held.dynamic?.cells ?? []).map((cell) => `${cell.col}:${cell.row}`), keptDynamic);
+  assert.ok(held.staticAge > before.staticAge);
+  stepBlueprint(0.02, true, aimAt(3), world);
+  const resumed = getBlueprintClock();
+  assert.equal(resumed.goals, 3);
+  assert.ok(resumed.staticCells.length >= 1);
+  assert.ok(resumed.staticAge < 0.05);
 });
 
 test("靠近倒计时条的格子整格在条下，不会被切成半截", () => {

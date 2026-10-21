@@ -33,7 +33,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
-import { collideBlueprint, getBlueprintClock, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, type BlueprintClock } from "./blueprint";
+import { collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
@@ -1965,6 +1965,22 @@ export function createGame(
       max: 1,
       kind: "tag",
     });
+    if (blueprintOn()) {
+      const bonus = consumeBlueprintLitForHole();
+      if (bonus > 0) {
+        // 开洞当下加进得分。不进待领，不等下一次进球，不乘冠军时刻。
+        score += bonus;
+        noteBest();
+        callouts.push({
+          text: `基础 +${bonus}`,
+          x: holeX,
+          y: holeY,
+          life: 1.1,
+          max: 1.1,
+          kind: "base",
+        });
+      }
+    }
     emitHud();
   }
 
@@ -4921,7 +4937,7 @@ export function createGame(
         ballY: ball.y,
         hoopX: hoop.x,
         hoopY: hoop.y,
-      }, world);
+      }, world, { generationHold: holeOn });
     }
     if (trafficEnabled() && madeCount > 0) {
       stepTraffic(traffic, world, dt);
