@@ -126,6 +126,17 @@ export type BlueprintClock = {
   lit: string[];
   /** 清排后挂着的加分。下一次进球加进得分再清零。 */
   pendingBonus: number;
+  /** 正在缩回、尚未离场的清排格。 */
+  clearing: BlueprintClearingCell[];
+};
+
+export type BlueprintClearingCell = {
+  col: number;
+  row: number;
+  age: number;
+  span: number;
+  /** 开始缩回时的高度，从这里收到 0。 */
+  from: number;
 };
 export type BlueprintBlock = {
   id: string;
@@ -160,6 +171,8 @@ let dynamic: BlueprintDynamic | null = null;
 let lit = new Set<string>();
 /** 清排累计、尚未进球结算的加分。 */
 let pendingBonus = 0;
+/** 正在播放缩回的清排格。 */
+let clearing: BlueprintClearingCell[] = [];
 /** 是否已按当前进球数落定（含进球前的空场）。 */
 let hasBatch = false;
 let aim: BlueprintAim | null = null;
@@ -225,6 +238,7 @@ export function getBlueprintClock(): BlueprintClock {
     duration: staticRaise,
     lit: [...lit],
     pendingBonus,
+    clearing: clearing.map((cell) => ({ ...cell })),
   };
 }
 
@@ -240,6 +254,13 @@ export function restoreBlueprintClock(next: BlueprintClock) {
   dynamic = next.dynamic ? copyDynamic(next.dynamic) : null;
   lit = new Set((next.lit ?? []).filter((key) => typeof key === "string" && key.includes(":")));
   pendingBonus = finiteBonus(next.pendingBonus);
+  clearing = (next.clearing ?? []).map((cell) => ({
+    col: cell.col,
+    row: cell.row,
+    age: Number.isFinite(cell.age) ? Math.max(0, cell.age) : 0,
+    span: cell.span > 0 ? cell.span : BLUEPRINT_CROSS_RAISE,
+    from: Number.isFinite(cell.from) ? Math.max(0, cell.from) : 1,
+  }));
   hasBatch = true;
   pruneLit();
 }
@@ -256,6 +277,7 @@ export function resetBlueprint(nextSeed = Math.random() * 1e6) {
   dynamic = null;
   lit = new Set();
   pendingBonus = 0;
+  clearing = [];
   hasBatch = false;
   aim = null;
 }
@@ -270,6 +292,7 @@ export function resetBlueprintProgress() {
   dynamic = null;
   lit = new Set();
   pendingBonus = 0;
+  clearing = [];
   hasBatch = false;
 }
 
@@ -445,6 +468,16 @@ function stepDynamic(dt: number) {
   dynamic = d;
 }
 
+function stepClearing(dt: number) {
+  if (!clearing.length || !(dt > 0)) return;
+  const stay: BlueprintClearingCell[] = [];
+  for (const cell of clearing) {
+    const age = cell.age + dt;
+    if (age < cell.span) stay.push({ ...cell, age });
+  }
+  clearing = stay;
+}
+
 export function stepBlueprint(dt: number, playing: boolean, next?: BlueprintAim, world?: View) {
   if (next) aim = next;
   if (world) view = { w: world.w, h: world.h, floorY: world.floorY, ballR: world.ballR, hoopInner: world.hoopInner };
@@ -456,6 +489,7 @@ export function stepBlueprint(dt: number, playing: boolean, next?: BlueprintAim,
     elapsed += dt;
     staticAge += dt;
     stepDynamic(dt);
+    stepClearing(dt);
     pruneLit();
   }
 }
@@ -818,8 +852,9 @@ function pushBlock(
   isDynamic: boolean,
   occupied: Set<string>,
   isLit: boolean,
+  force = false,
 ) {
-  if (blocks.length >= BLUEPRINT_MAX_COUNT) return;
+  if (!force && blocks.length >= BLUEPRINT_MAX_COUNT) return;
   const key = cellKey(ref);
   if (occupied.has(key)) return;
   if (ref.col < 0 || ref.row < 0 || ref.col >= grid.cols || ref.row >= grid.rows) return;
@@ -900,10 +935,39 @@ export function blueprintBlocks(world: View, clock = getBlueprintClock()): Bluep
       pushBlock(blocks, world, grid, ref, extend, true, dynamicSeen, litKeys.has(cellKey(ref)));
     }
   }
+  for (const cell of clock.clearing ?? []) {
+    const extend = blueprintClearExtend(cell.age, cell.span, cell.from);
+    if (extend <= 0) continue;
+    pushBlock(blocks, world, grid, cell, extend, false, new Set(), true, true);
+  }
   return blocks;
 }
 
-/** 仍凸出的格：缩到撞得到的高度以上，同格只算一格。 */
+/** 清排缩回：从开始时的高度线性收到 0，时长与动态组缩回相同。 */
+export function blueprintClearExtend(age: number, span = BLUEPRINT_CROSS_RAISE, from = 1) {
+  const dur = span > 1e-6 ? span : BLUEPRINT_CROSS_RAISE;
+  const start = Math.max(0, Number.isFinite(from) ? from : 1);
+  if (!(age > 0)) return start;
+  if (age >= dur) return 0;
+  return start * (1 - age / dur);
+}
+
+/** 仍占着这一排的格。动态缩平过程中高度接近 0 也算在场，避免误清。 */
+export function blueprintFieldCells(clock: Pick<BlueprintClock, "staticCells" | "cells" | "dynamic">) {
+  const seen = new Set<string>();
+  const cells: BlueprintCellRef[] = [];
+  const add = (cell: BlueprintCellRef) => {
+    const key = cellKey(cell);
+    if (seen.has(key)) return;
+    seen.add(key);
+    cells.push({ col: cell.col, row: cell.row });
+  };
+  for (const cell of clock.staticCells ?? clock.cells ?? []) add(cell);
+  for (const cell of clock.dynamic?.cells ?? []) add(cell);
+  return cells;
+}
+
+/** 仍凸出到撞得到的格。只用于能不能踩亮，不用于清排。 */
 export function blueprintProtrudingCells(blocks: readonly BlueprintBlock[]) {
   const seen = new Set<string>();
   const cells: BlueprintCellRef[] = [];
@@ -918,43 +982,73 @@ export function blueprintProtrudingCells(blocks: readonly BlueprintBlock[]) {
 }
 
 /**
- * 这一排当前仍凸出的格若全部点亮，返回这些格。
- * 空排或这一排没有凸出格则不触发。
+ * 这一排当前还在场上的格若全部点亮，返回这些格。
+ * 空排，或这一排没有格子，则不触发。高度暂时接近 0 的格仍然算在场上。
  */
-export function blueprintRowClears(row: number, protruding: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
-  const inRow = protruding.filter((cell) => cell.row === row);
+export function blueprintRowClears(row: number, field: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
+  const inRow = field.filter((cell) => cell.row === row);
   if (inRow.length === 0) return [];
   if (!inRow.every((cell) => litKeys.has(cellKey(cell)))) return [];
   return inRow.map((cell) => ({ col: cell.col, row: cell.row }));
 }
 
+function extendAt(ref: BlueprintCellRef) {
+  const heights: number[] = [];
+  if (staticCells.some((cell) => cell.col === ref.col && cell.row === ref.row)) {
+    heights.push(blueprintExtend(staticAge, staticRaise));
+  }
+  if (dynamic?.cells.some((cell) => cell.col === ref.col && cell.row === ref.row)) {
+    heights.push(blueprintDynamicCellExtend(dynamic, ref, staticKeySet()));
+  }
+  if (!heights.length) return 0;
+  return Math.max(0, ...heights);
+}
+
+/** 清排格离开静态/动态名单，改由缩回动画接管。高度接近 0 的格也算被清走。 */
 function dropClearedCells(keys: Set<string>) {
   staticCells = staticCells.filter((cell) => !keys.has(cellKey(cell)));
   if (dynamic) {
     const cells = dynamic.cells.filter((cell) => !keys.has(cellKey(cell)));
-    if (!cells.length) dynamic = null;
-    else {
-      const pending = dynamic.phase === "cross_out" ? blueprintTranslateCells(cells, dynamic.dir) : dynamic.pending.filter((cell) => !keys.has(cellKey(cell)));
+    if (!cells.length) {
+      dynamic = null;
+    } else if (cells.length !== dynamic.cells.length) {
+      const pending = dynamic.phase === "cross_out"
+        ? blueprintTranslateCells(cells, dynamic.dir)
+        : dynamic.pending.filter((cell) => !keys.has(cellKey(cell)));
       dynamic = { ...dynamic, cells, pending };
     }
   }
   for (const key of keys) lit.delete(key);
 }
 
+function beginRowClear(cells: readonly BlueprintCellRef[]) {
+  const started = cells.map((cell) => ({
+    col: cell.col,
+    row: cell.row,
+    age: 0,
+    span: BLUEPRINT_CROSS_RAISE,
+    from: extendAt(cell),
+  }));
+  dropClearedCells(new Set(cells.map(cellKey)));
+  clearing = clearing.concat(started);
+  pendingBonus += started.length;
+}
+
 /**
  * 篮球踩到已凸出的格就点亮。已亮再踩无事。
- * 这一排仍凸出的格都亮了，就整排缩回，并把格数加进待领分。
- * 返回本次清掉的格数。
+ * 这一排还在场上的格都亮了，才开始整排缩回，并立刻把格数挂上待领分。
+ * 返回本次开始缩回的格数。
  */
 export function touchBlueprintCell(world: View, col: number, row: number) {
-  const protruding = blueprintProtrudingCells(blueprintBlocks(world));
+  const field = blueprintFieldCells(getBlueprintClock());
   const key = `${col}:${row}`;
-  if (!protruding.some((cell) => cellKey(cell) === key)) return 0;
+  if (!field.some((cell) => cellKey(cell) === key)) return 0;
+  const solid = blueprintBlocks(world).some((block) => block.col === col && block.row === row && block.solid);
+  if (!solid) return 0;
   lit.add(key);
-  const cleared = blueprintRowClears(row, protruding, lit);
+  const cleared = blueprintRowClears(row, field, lit);
   if (!cleared.length) return 0;
-  dropClearedCells(new Set(cleared.map(cellKey)));
-  pendingBonus += cleared.length;
+  beginRowClear(cleared);
   return cleared.length;
 }
 

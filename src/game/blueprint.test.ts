@@ -22,7 +22,9 @@ import {
   blueprintDespawnChance,
   blueprintDynamicCellExtend,
   blueprintDynamicProgress,
+  blueprintClearExtend,
   blueprintExtend,
+  blueprintFieldCells,
   blueprintFillAlpha,
   blueprintFloorDepthX,
   blueprintFloorRowY,
@@ -76,6 +78,7 @@ function clock(partial: Partial<BlueprintClock> & { cells?: BlueprintCellRef[]; 
     staticRaise: staticRaiseOpt,
     lit: litOpt,
     pendingBonus: bonusOpt,
+    clearing: clearingOpt,
     ...rest
   } = partial;
   const staticCells = staticCellsOpt ?? legacyCells ?? [];
@@ -96,6 +99,7 @@ function clock(partial: Partial<BlueprintClock> & { cells?: BlueprintCellRef[]; 
     duration: staticRaise,
     lit: litOpt ?? [],
     pendingBonus: bonusOpt ?? 0,
+    clearing: clearingOpt ?? [],
   };
 }
 
@@ -773,18 +777,23 @@ test("凸出填色贴住网格线", () => {
   }
 });
 
-test("踩亮不灭，齐排缩回并累计待领分，进球后清零", () => {
+test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除", () => {
   const a = { col: 4, row: 8 };
   const b = { col: 6, row: 8 };
   const other = { col: 4, row: 9 };
-  const protruding = [a, b, other];
-  assert.deepEqual(blueprintRowClears(8, protruding, new Set()), []);
-  assert.deepEqual(blueprintRowClears(8, protruding, new Set(["4:8"])), []);
-  assert.deepEqual(blueprintRowClears(3, protruding, new Set(["4:8", "6:8"])), []);
-  assert.deepEqual(blueprintRowClears(8, protruding, new Set(["4:8", "6:8"])), [a, b]);
-  assert.deepEqual(blueprintRowClears(9, protruding, new Set(["4:9"])), [other]);
-
   const flat = { col: 7, row: 8 };
+  const field = [a, b, flat, other];
+  assert.deepEqual(blueprintRowClears(8, field, new Set()), []);
+  assert.deepEqual(blueprintRowClears(8, field, new Set(["4:8", "6:8"])), []);
+  assert.deepEqual(blueprintRowClears(3, field, new Set(["4:8", "6:8", "7:8"])), []);
+  assert.deepEqual(blueprintRowClears(8, field, new Set(["4:8", "6:8", "7:8"])), [a, b, flat]);
+  assert.deepEqual(blueprintRowClears(9, field, new Set(["4:9"])), [other]);
+  assert.equal(blueprintClearExtend(0, BLUEPRINT_CROSS_RAISE, 1), 1);
+  assert.equal(blueprintClearExtend(BLUEPRINT_CROSS_RAISE / 2, BLUEPRINT_CROSS_RAISE, 1), 0.5);
+  assert.equal(blueprintClearExtend(BLUEPRINT_CROSS_RAISE, BLUEPRINT_CROSS_RAISE, 1), 0);
+
+  // 动态组缩到撞不到球，格子还在。不能把它剔出这一排，否则剩下的亮格会误清。
+  const lowAge = BLUEPRINT_CROSS_RAISE * (1 - 0.05);
   resetBlueprint(3);
   restoreBlueprintClock(clock({
     goals: 3,
@@ -793,35 +802,69 @@ test("踩亮不灭，齐排缩回并累计待领分，进球后清零", () => {
     dynamic: dyn({
       cells: [flat],
       phase: "cross_out",
-      age: BLUEPRINT_CROSS_RAISE,
+      age: lowAge,
       raise: BLUEPRINT_CROSS_RAISE,
     }),
   }));
-  const up = blueprintProtrudingCells(blueprintBlocks(world));
-  assert.equal(up.some((cell) => cell.col === flat.col && cell.row === flat.row), false);
-  assert.equal(up.length, 3);
+  const blocks = blueprintBlocks(world);
+  const low = blocks.find((block) => block.col === flat.col && block.row === flat.row);
+  assert.ok(low && low.extend < BLUEPRINT_HIT_EXTEND && low.extend > 0);
+  assert.equal(blueprintProtrudingCells(blocks).some((cell) => cell.col === flat.col), false);
+  assert.equal(blueprintFieldCells(getBlueprintClock()).some((cell) => cell.col === flat.col && cell.row === flat.row), true);
   assert.equal(touchBlueprintCell(world, flat.col, flat.row), 0);
   assert.deepEqual(getBlueprintClock().lit, []);
   assert.equal(touchBlueprintCell(world, a.col, a.row), 0);
-  assert.deepEqual(getBlueprintClock().lit, ["4:8"]);
-  assert.equal(getBlueprintClock().pendingBonus, 0);
-  assert.equal(blueprintBlocks(world).find((block) => block.col === a.col && block.row === a.row)?.lit, true);
   assert.equal(touchBlueprintCell(world, a.col, a.row), 0);
   assert.deepEqual(getBlueprintClock().lit, ["4:8"]);
-  assert.equal(getBlueprintClock().staticCells.length, 3);
+  assert.equal(touchBlueprintCell(world, b.col, b.row), 0);
+  const blocked = getBlueprintClock();
+  assert.deepEqual(blocked.lit, ["4:8", "6:8"]);
+  assert.equal(blocked.pendingBonus, 0);
+  assert.equal(blocked.clearing.length, 0);
+  assert.equal(blocked.staticCells.length, 3);
+  assert.deepEqual(blocked.dynamic?.cells, [flat]);
+  assert.equal(blueprintBlocks(world).some((block) => block.col === a.col && block.lit), true);
+  assert.equal(blueprintBlocks(world).some((block) => block.col === flat.col && !block.lit), true);
+
+  resetBlueprint(3);
+  restoreBlueprintClock(clock({
+    goals: 3,
+    staticCells: [a, b, other],
+    staticAge: BLUEPRINT_RAISE,
+  }));
+  assert.equal(touchBlueprintCell(world, a.col, a.row), 0);
   assert.equal(touchBlueprintCell(world, b.col, b.row), 2);
-  const mid = getBlueprintClock();
-  assert.equal(mid.pendingBonus, 2);
-  assert.deepEqual(mid.staticCells, [other]);
-  assert.deepEqual(mid.dynamic?.cells, [flat]);
-  assert.equal(mid.dynamic?.phase, "cross_out");
-  assert.equal(mid.lit.includes("4:8"), false);
-  assert.equal(touchBlueprintCell(world, other.col, other.row), 1);
-  assert.equal(getBlueprintClock().pendingBonus, 3);
-  assert.deepEqual(getBlueprintClock().staticCells, []);
-  assert.equal(claimBlueprintBonus(), 3);
+  const started = getBlueprintClock();
+  assert.equal(started.pendingBonus, 2);
+  assert.equal(started.clearing.length, 2);
+  assert.deepEqual(started.staticCells, [other]);
+  assert.equal(started.lit.includes("4:8"), false);
+  const sinking = blueprintBlocks(world).filter((block) => block.row === 8);
+  assert.equal(sinking.length, 2);
+  for (const block of sinking) {
+    assert.ok(block.extend > 0.9, `清排开始时高度应接近满格，实际 ${block.extend}`);
+    assert.equal(block.lit, true);
+    assert.ok(block.solid);
+  }
+  const aim = aimAt(3);
+  stepBlueprint(BLUEPRINT_CROSS_RAISE / 2, true, aim, world);
+  const halfway = getBlueprintClock();
+  assert.equal(halfway.pendingBonus, 2);
+  assert.equal(halfway.clearing.length, 2);
+  assert.deepEqual(halfway.staticCells, [other]);
+  const midBlocks = blueprintBlocks(world).filter((block) => block.row === 8);
+  assert.equal(midBlocks.length, 2);
+  for (const block of midBlocks) {
+    assert.ok(Math.abs(block.extend - 0.5) < 1e-6, `缩到一半应约 0.5，实际 ${block.extend}`);
+  }
+  stepBlueprint(BLUEPRINT_CROSS_RAISE / 2, true, aim, world);
+  const done = getBlueprintClock();
+  assert.equal(done.clearing.length, 0);
+  assert.equal(blueprintBlocks(world).some((block) => block.row === 8), false);
+  assert.deepEqual(done.staticCells, [other]);
+  assert.equal(done.pendingBonus, 2);
+  assert.equal(claimBlueprintBonus(), 2);
   assert.equal(claimBlueprintBonus(), 0);
-  assert.equal(getBlueprintClock().pendingBonus, 0);
 
   restoreBlueprintClock(clock({
     goals: 4,
@@ -832,6 +875,7 @@ test("踩亮不灭，齐排缩回并累计待领分，进球后清零", () => {
   }));
   assert.deepEqual(getBlueprintClock().lit, []);
   assert.equal(getBlueprintClock().pendingBonus, 4);
+  assert.equal(getBlueprintClock().clearing.length, 0);
   assert.ok(blueprintBlocks(world).every((block) => block.lit === false));
   assert.equal(claimBlueprintBonus(), 4);
 });
