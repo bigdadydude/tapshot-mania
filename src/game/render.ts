@@ -324,7 +324,10 @@ export function drawScene(
 	else if (backdrop === "overpass") drawCity(ctx, world, time, () => {
 		if (gfx.clouds !== "off") drawSkyClouds(ctx, world, cloudT, 0, world.floorY * 0.4, cloudSx, cloudSy);
 	});
-	else if (backdrop === "blueprint") drawBlueprint(ctx, world);
+	else if (backdrop === "blueprint") {
+		const hud = hudGeom(world);
+		drawBlueprint(ctx, world, hud.barY + hud.barH);
+	}
 	else if (backdrop === "train") {
 		// Street sky sheet. Cloud size uses the street band. Trees still paint after both cloud passes.
 		drawOpenSky(ctx, world, cloudT, cloudSx, cloudSy, false, 0, world.floorY, world.floorY);

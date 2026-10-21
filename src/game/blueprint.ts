@@ -1466,6 +1466,26 @@ export function blueprintShadowKeep(lowerExtend: number) {
   return 1 - Math.min(1, Math.max(0, lowerExtend));
 }
 
+/**
+ * 把一块绘制裁到倒计时条底边以下。整块都在条内则不画。
+ * top ≤ 0 时不裁。
+ */
+export function clipBlueprintPaintBox<T extends BlueprintShadowBox>(box: T, top: number): T | null {
+  if (!(top > 0)) return box;
+  const y1 = box.y + box.h;
+  const y = Math.max(box.y, top);
+  const h = y1 - y;
+  if (!(h > 0) || !(box.w > 0)) return null;
+  return { ...box, y, h };
+}
+
+/** 待领筹码的纵坐标。有倒计时条时放在条下面，避免深色底透出条上的透明像素。 */
+export function blueprintPendingChipY(worldH: number, hudBottom: number) {
+  const fallback = Math.min(worldH * 0.16, 132);
+  if (!(hudBottom > 0)) return fallback;
+  return Math.min(Math.max(0, worldH - 40), hudBottom + 10);
+}
+
 /** 从底边下一像素开始的直边阴影。 */
 export function blueprintShadowBox(cell: Rect, extend: number): BlueprintShadowBox {
   const { left, right, bottom } = blueprintCellPixels(cell);
@@ -1554,7 +1574,7 @@ function paintShadow(ctx: CanvasRenderingContext2D, full: BlueprintShadowBox, pi
   ctx.fillRect(piece.x, piece.y, piece.w, piece.h);
 }
 
-function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock, others: readonly BlueprintBlock[]) {
+function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock, others: readonly BlueprintBlock[], hudBottom = 0) {
   const extend = block.extend;
   if (extend < 0.04) return;
   const { fill } = blueprintCellPixels(block.cell);
@@ -1562,20 +1582,26 @@ function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock, others:
   const lowers = others
     .filter((other) => other !== block && other.extend > 0)
     .map((other) => ({ box: blueprintCellCover(other.cell), extend: other.extend }));
-  for (const piece of blueprintShadowPieces(shadow, lowers)) paintShadow(ctx, shadow, piece, extend);
+  for (const piece of blueprintShadowPieces(shadow, lowers)) {
+    const clipped = clipBlueprintPaintBox(piece, hudBottom);
+    if (!clipped) continue;
+    paintShadow(ctx, shadow, clipped, extend);
+  }
+  const fillBox = clipBlueprintPaintBox(fill, hudBottom);
+  if (!fillBox) return;
   if (block.lit) {
     ctx.fillStyle = `rgba(255, 186, 46, ${0.55 + 0.4 * Math.min(1, extend)})`;
-    ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
+    ctx.fillRect(fillBox.x, fillBox.y, fillBox.w, fillBox.h);
     ctx.strokeStyle = "rgba(255, 248, 214, 0.96)";
     ctx.lineWidth = 2;
-    ctx.strokeRect(fill.x + 1.5, fill.y + 1.5, Math.max(0, fill.w - 3), Math.max(0, fill.h - 3));
+    ctx.strokeRect(fillBox.x + 1.5, fillBox.y + 1.5, Math.max(0, fillBox.w - 3), Math.max(0, fillBox.h - 3));
   } else {
     ctx.fillStyle = `rgba(236, 244, 255, ${blueprintFillAlpha(extend)})`;
-    ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
+    ctx.fillRect(fillBox.x, fillBox.y, fillBox.w, fillBox.h);
   }
 }
 
-export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View) {
+export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View, hudBottom = 0) {
   ctx.fillStyle = BLUEPRINT_BLUE;
   ctx.fillRect(0, 0, world.w, world.h);
   strokeGrid(ctx, world);
@@ -1587,7 +1613,7 @@ export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View) {
   const visible = blocks
     .filter((block) => block.dynamic || !covered.has(`${block.col}:${block.row}`))
     .sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x || Number(a.dynamic) - Number(b.dynamic));
-  for (const block of visible) drawBlock(ctx, block, visible);
+  for (const block of visible) drawBlock(ctx, block, visible, hudBottom);
   if (clock.pendingBonus > 0) {
     const label = `待领 +${clock.pendingBonus}`;
     ctx.save();
@@ -1595,7 +1621,7 @@ export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View) {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     const width = ctx.measureText(label).width + 22;
-    const y = Math.min(world.h * 0.16, 132);
+    const y = blueprintPendingChipY(world.h, hudBottom);
     const x = world.w * 0.5 - width / 2;
     ctx.fillStyle = "rgba(8, 24, 58, 0.78)";
     ctx.fillRect(x, y, width, 26);

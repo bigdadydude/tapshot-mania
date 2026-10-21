@@ -38,8 +38,10 @@ import {
   blueprintColClears,
   blueprintRowClears,
   blueprintSampleCount,
+  blueprintPendingChipY,
   blueprintShadowAlpha,
   blueprintShadowBox,
+  clipBlueprintPaintBox,
   blueprintShadowCast,
   blueprintShadowHead,
   blueprintShadowKeep,
@@ -1249,6 +1251,20 @@ test("pending=N 时实体结算返回 N 并归零，分身结算不改待领", (
   assert.equal(again.bonus, 0);
   assert.equal(again.shown, gain);
   assert.equal(getBlueprintClock().pendingBonus, 0);
+});
+
+test("待领筹码和凸块投影不进入倒计时条", () => {
+  const hudBottom = 159;
+  assert.ok(blueprintPendingChipY(844, hudBottom) >= hudBottom + 8);
+  assert.equal(blueprintPendingChipY(844, 0), Math.min(844 * 0.16, 132));
+  const through = clipBlueprintPaintBox({ x: 40, y: 140, w: 28, h: 80, keep: 1 }, hudBottom);
+  if (!through) throw new Error("穿过倒计时条的投影应留下条下的一段");
+  assert.equal(through.y, hudBottom);
+  assert.equal(through.h, 140 + 80 - hudBottom);
+  assert.equal(through.keep, 1);
+  assert.equal(clipBlueprintPaintBox({ x: 40, y: 100, w: 28, h: 40 }, hudBottom), null);
+  const court = blueprintShadowBox({ x: 100, y: 200, w: 28, h: 28 }, 1);
+  assert.deepEqual(clipBlueprintPaintBox(court, hudBottom), court);
 });
 
 test("标题和开发者场景条都有蓝图，其它场景配色不动", () => {
