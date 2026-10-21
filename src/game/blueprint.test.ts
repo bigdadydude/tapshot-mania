@@ -29,8 +29,10 @@ import {
   blueprintFloorDepthX,
   blueprintFloorRowY,
   blueprintGrid,
+  blueprintHudBar,
   blueprintJumpClearY,
   blueprintLegalCells,
+  blueprintPlayfieldTop,
   blueprintNearBall,
   blueprintOnShotPath,
   blueprintProtrudingCells,
@@ -1313,6 +1315,39 @@ test("凸块投影不进入倒计时条", () => {
   assert.equal(clipBlueprintPaintBox({ x: 40, y: 100, w: 28, h: 40 }, hudBottom), null);
   const court = blueprintShadowBox({ x: 100, y: 200, w: 28, h: 28 }, 1);
   assert.deepEqual(clipBlueprintPaintBox(court, hudBottom), court);
+});
+
+test("靠近倒计时条的格子整格在条下，不会被切成半截", () => {
+  const wide = makeWorld(450, 800);
+  const bar = blueprintHudBar(wide);
+  const top = blueprintPlayfieldTop(wide);
+  assert.ok(bar.bottom > wide.h * 0.2, "宽画面上计时条底边低于上方两成");
+  assert.equal(top, bar.bottom);
+  const grid = blueprintGrid(wide);
+  let straddling = 0;
+  for (let row = 0; row < grid.rows; row++) {
+    const y = grid.oy + row * grid.size;
+    if (y < bar.bottom && y + grid.size > bar.bottom) {
+      straddling += 1;
+      assert.equal(blueprintLegalCells(wide, null).some((cell) => cell.row === row), false);
+    }
+  }
+  assert.ok(straddling > 0, "应存在横跨计时条底边的网格行");
+  const legal = blueprintLegalCells(wide, null);
+  assert.ok(legal.length > 0);
+  for (const cell of legal) {
+    assert.ok(cell.y >= bar.bottom);
+    assert.equal(cell.h, grid.size);
+    assert.ok(cell.y + cell.h > bar.bottom);
+  }
+  const phone = makeWorld();
+  const phoneBar = blueprintHudBar(phone);
+  assert.ok(phoneBar.bottom <= phone.h * 0.2);
+  assert.equal(blueprintPlayfieldTop(phone), phone.h * 0.2);
+  for (const cell of blueprintLegalCells(phone, null)) {
+    assert.ok(cell.y >= phone.h * 0.2);
+    assert.ok(cell.y >= phoneBar.bottom);
+  }
 });
 
 test("标题和开发者场景条都有蓝图，其它场景配色不动", () => {

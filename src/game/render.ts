@@ -1,7 +1,7 @@
 import { drawTrainSmoke, sootFilter } from "./train-smoke";
 import { drawBlackHole } from "./black-hole-render";
 import { drawCity } from "./city-render";
-import { drawBlueprint } from "./blueprint";
+import { blueprintHudBar, drawBlueprint } from "./blueprint";
 import { drawTrainBackdrop, getTrainScroll } from "./train-bg";
 import { drawTrainGantryWarnings } from "./train-gantry";
 import { birdOwnsBall, drawBirds, drawEagleWarnings, type BirdState } from "./birds";
@@ -324,10 +324,7 @@ export function drawScene(
 	else if (backdrop === "overpass") drawCity(ctx, world, time, () => {
 		if (gfx.clouds !== "off") drawSkyClouds(ctx, world, cloudT, 0, world.floorY * 0.4, cloudSx, cloudSy);
 	});
-	else if (backdrop === "blueprint") {
-		const hud = hudGeom(world);
-		drawBlueprint(ctx, world, hud.barY + hud.barH);
-	}
+	else if (backdrop === "blueprint") drawBlueprint(ctx, world, blueprintHudBar(world).bottom);
 	else if (backdrop === "train") {
 		// Street sky sheet. Cloud size uses the street band. Trees still paint after both cloud passes.
 		drawOpenSky(ctx, world, cloudT, cloudSx, cloudSy, false, 0, world.floorY, world.floorY);
@@ -2819,24 +2816,20 @@ function drawScorePops(ctx: CanvasRenderingContext2D, callouts: Callout[], world
 	}
 }
 function hudGeom(world: World) {
-	const scoreSize = Math.floor(world.w * .15);
+	const bar = blueprintHudBar(world);
 	const scoreY = 14;
-	const comboSlot = Math.max(34, Math.floor(world.w * .09));
 	const comboSize = Math.max(16, Math.floor(world.w * .048));
-	const comboY = scoreY + scoreSize + Math.floor((comboSlot - comboSize) / 2);
-	const barW = Math.floor(world.w * 0.64);
-	const barH = Math.floor(barW * 367 / 1817);
-	const barY = scoreY + scoreSize + comboSlot + 2;
+	const comboY = scoreY + bar.scoreSize + Math.floor((bar.comboSlot - comboSize) / 2);
 	return {
-		scoreSize,
+		scoreSize: bar.scoreSize,
 		scoreY,
-		comboSlot,
+		comboSlot: bar.comboSlot,
 		comboSize,
 		comboY,
-		barH,
-		barY,
-		barW,
-		tagY: barY + barH + 8
+		barH: bar.barH,
+		barY: bar.barY,
+		barW: bar.barW,
+		tagY: bar.bottom + 8
 	};
 }
 

@@ -601,9 +601,27 @@ export function blueprintJumpClearY(world: View) {
   return world.floorY - world.h * 0.185;
 }
 
+/**
+ * 倒计时条所占的竖向范围。尺寸和画面上的计时条一致。
+ * 格子顶不得高于条的底边，否则条会把方块上半盖住或裁掉。
+ */
+export function blueprintHudBar(world: { w: number }) {
+  const scoreSize = Math.floor(world.w * 0.15);
+  const comboSlot = Math.max(34, Math.floor(world.w * 0.09));
+  const barW = Math.floor(world.w * 0.64);
+  const barH = Math.floor((barW * 367) / 1817);
+  const barY = 14 + scoreSize + comboSlot + 2;
+  return { scoreSize, comboSlot, barW, barH, barY, bottom: barY + barH };
+}
+
+/** 凸块顶边的最低位置：既要离开画面顶部两成，也要整格落在倒计时条下面。 */
+export function blueprintPlayfieldTop(world: View) {
+  return Math.max(world.h * 0.2, blueprintHudBar(world).bottom);
+}
+
 function cellAllowed(world: View, rect: Rect) {
   if (rect.w < 8 || rect.h < 8) return false;
-  if (rect.y < world.h * 0.2) return false;
+  if (rect.y < blueprintPlayfieldTop(world)) return false;
   if (rect.y + rect.h > world.floorY - world.ballR * 2.35) return false;
   return !overlapsCorridor(world, rect);
 }
@@ -1606,17 +1624,15 @@ function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock, others:
     if (!clipped) continue;
     paintShadow(ctx, shadow, clipped, extend);
   }
-  const fillBox = clipBlueprintPaintBox(fill, hudBottom);
-  if (!fillBox) return;
   if (block.lit) {
     ctx.fillStyle = `rgba(255, 186, 46, ${0.55 + 0.4 * Math.min(1, extend)})`;
-    ctx.fillRect(fillBox.x, fillBox.y, fillBox.w, fillBox.h);
+    ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
     ctx.strokeStyle = "rgba(255, 248, 214, 0.96)";
     ctx.lineWidth = 2;
-    ctx.strokeRect(fillBox.x + 1.5, fillBox.y + 1.5, Math.max(0, fillBox.w - 3), Math.max(0, fillBox.h - 3));
+    ctx.strokeRect(fill.x + 1.5, fill.y + 1.5, Math.max(0, fill.w - 3), Math.max(0, fill.h - 3));
   } else {
     ctx.fillStyle = `rgba(236, 244, 255, ${blueprintFillAlpha(extend)})`;
-    ctx.fillRect(fillBox.x, fillBox.y, fillBox.w, fillBox.h);
+    ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
   }
 }
 
