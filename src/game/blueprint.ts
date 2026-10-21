@@ -997,31 +997,40 @@ export function blueprintProtrudingCells(blocks: readonly BlueprintBlock[]) {
   return cells;
 }
 
-function lineClears(
-  field: readonly BlueprintCellRef[],
-  litKeys: ReadonlySet<string>,
-  match: (cell: BlueprintCellRef) => boolean,
-) {
-  const inLine = field.filter(match);
-  if (inLine.length === 0) return [];
-  if (!inLine.every((cell) => litKeys.has(cellKey(cell)))) return [];
-  return inLine.map((cell) => ({ col: cell.col, row: cell.row }));
+/** 同一行或同一列里，只把索引相差 1 的格子连成一段。空挡两侧互不影响。 */
+function contiguousClears(cells: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>, axis: "col" | "row") {
+  const ordered = cells.slice().sort((a, b) => a[axis] - b[axis]);
+  const cleared: BlueprintCellRef[] = [];
+  let segment: BlueprintCellRef[] = [];
+  const flush = () => {
+    if (segment.length > 0 && segment.every((cell) => litKeys.has(cellKey(cell)))) {
+      for (const cell of segment) cleared.push({ col: cell.col, row: cell.row });
+    }
+    segment = [];
+  };
+  for (const cell of ordered) {
+    const prev = segment[segment.length - 1];
+    if (prev && cell[axis] - prev[axis] > 1) flush();
+    segment.push(cell);
+  }
+  flush();
+  return cleared;
 }
 
 /**
- * 这一排当前还在场上的格若全部点亮，返回这些格。
- * 只剩一格且已亮，也算清排。空排不触发。高度暂时接近 0 的格仍然算在场上。
+ * 这一排上每一段相邻格子若全部点亮，返回这些段。
+ * 段长为 1 且已亮，也缩回。中间有空挡的另一段不跟着清。高度暂时接近 0 的格仍然算在场上。
  */
 export function blueprintRowClears(row: number, field: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
-  return lineClears(field, litKeys, (cell) => cell.row === row);
+  return contiguousClears(field.filter((cell) => cell.row === row), litKeys, "col");
 }
 
 /**
- * 这一列当前还在场上的格若全部点亮，返回这些格。
- * 只剩一格且已亮，也算清列。空列不触发。高度暂时接近 0 的格仍然算在场上。
+ * 这一列上每一段相邻格子若全部点亮，返回这些段。
+ * 段长为 1 且已亮，也缩回。中间有空挡的另一段不跟着清。高度暂时接近 0 的格仍然算在场上。
  */
 export function blueprintColClears(col: number, field: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
-  return lineClears(field, litKeys, (cell) => cell.col === col);
+  return contiguousClears(field.filter((cell) => cell.col === col), litKeys, "row");
 }
 
 function uniqueCells(cells: readonly BlueprintCellRef[]) {
@@ -1094,7 +1103,7 @@ function recheckFieldLines() {
 
 /**
  * 篮球踩到已凸出的格就点亮。已亮再踩无事。
- * 这一排或这一列里还在场上的格都亮了（只剩一格也算），就整行或整列缩回。
+ * 所在的相邻段都亮了（只剩一格也算），就缩回这一段。空挡另一边不跟着清。
  * 同一格同时属于刚触发的行和列时只缩一次、只计一次。
  * 返回本次开始缩回的格数。
  */

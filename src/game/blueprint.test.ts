@@ -780,15 +780,15 @@ test("凸出填色贴住网格线", () => {
 
 test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除", () => {
   const a = { col: 4, row: 8 };
-  const b = { col: 6, row: 8 };
+  const b = { col: 5, row: 8 };
   const other = { col: 4, row: 9 };
-  const flat = { col: 7, row: 8 };
-  const hold = { col: 6, row: 9 };
+  const flat = { col: 6, row: 8 };
+  const hold = { col: 5, row: 9 };
   const field = [a, b, flat, other];
   assert.deepEqual(blueprintRowClears(8, field, new Set()), []);
-  assert.deepEqual(blueprintRowClears(8, field, new Set(["4:8", "6:8"])), []);
-  assert.deepEqual(blueprintRowClears(3, field, new Set(["4:8", "6:8", "7:8"])), []);
-  assert.deepEqual(blueprintRowClears(8, field, new Set(["4:8", "6:8", "7:8"])), [a, b, flat]);
+  assert.deepEqual(blueprintRowClears(8, field, new Set(["4:8", "5:8"])), []);
+  assert.deepEqual(blueprintRowClears(3, field, new Set(["4:8", "5:8", "6:8"])), []);
+  assert.deepEqual(blueprintRowClears(8, field, new Set(["4:8", "5:8", "6:8"])), [a, b, flat]);
   assert.deepEqual(blueprintRowClears(9, field, new Set(["4:9"])), [other]);
   assert.equal(blueprintClearExtend(0, BLUEPRINT_CROSS_RAISE, 1), 1);
   assert.equal(blueprintClearExtend(BLUEPRINT_CROSS_RAISE / 2, BLUEPRINT_CROSS_RAISE, 1), 0.5);
@@ -820,7 +820,7 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   assert.deepEqual(getBlueprintClock().lit, ["4:8"]);
   assert.equal(touchBlueprintCell(world, b.col, b.row), 0);
   const blocked = getBlueprintClock();
-  assert.deepEqual(blocked.lit, ["4:8", "6:8"]);
+  assert.deepEqual(blocked.lit, ["4:8", "5:8"]);
   assert.equal(blocked.pendingBonus, 0);
   assert.equal(blocked.clearing.length, 0);
   assert.equal(blocked.staticCells.length, 4);
@@ -886,8 +886,8 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
 test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", () => {
   const up = { col: 4, row: 8 };
   const down = { col: 4, row: 9 };
-  const side = { col: 6, row: 8 };
-  const sideDown = { col: 6, row: 9 };
+  const side = { col: 5, row: 8 };
+  const sideDown = { col: 5, row: 9 };
   const low = { col: 4, row: 10 };
   const lines = [up, down, side, low];
   assert.deepEqual(blueprintColClears(4, lines, new Set()), []);
@@ -902,7 +902,7 @@ test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", ()
     staticCells: [up, side],
     staticAge: BLUEPRINT_RAISE,
     dynamic: dyn({
-      cells: [low],
+      cells: [down],
       phase: "cross_out",
       age: lowAge,
       raise: BLUEPRINT_CROSS_RAISE,
@@ -913,7 +913,7 @@ test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", ()
   assert.equal(blocked.pendingBonus, 0);
   assert.equal(blocked.clearing.length, 0);
   assert.equal(blocked.staticCells.length, 2);
-  assert.deepEqual(blocked.dynamic?.cells, [low]);
+  assert.deepEqual(blocked.dynamic?.cells, [down]);
   assert.equal(blocked.lit.includes("4:8"), true);
 
   resetBlueprint(5);
@@ -927,7 +927,7 @@ test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", ()
   const started = getBlueprintClock();
   assert.equal(started.pendingBonus, 2);
   assert.equal(started.clearing.length, 2);
-  assert.deepEqual(started.staticCells.map((cell) => `${cell.col}:${cell.row}`).sort(), ["6:8", "6:9"]);
+  assert.deepEqual(started.staticCells.map((cell) => `${cell.col}:${cell.row}`).sort(), ["5:8", "5:9"]);
   const sinking = blueprintBlocks(world).filter((block) => block.col === up.col);
   assert.equal(sinking.length, 2);
   for (const block of sinking) {
@@ -954,10 +954,10 @@ test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", ()
   assert.equal(claimBlueprintBonus(), 0);
 
   const joint = { col: 6, row: 8 };
-  const rowMate = { col: 4, row: 8 };
-  const colMate = { col: 6, row: 10 };
-  const leftover = { col: 8, row: 10 };
-  const anchor = { col: 4, row: 11 };
+  const rowMate = { col: 5, row: 8 };
+  const colMate = { col: 6, row: 9 };
+  const leftover = { col: 7, row: 9 };
+  const anchor = { col: 5, row: 9 };
   resetBlueprint(7);
   restoreBlueprintClock(clock({
     goals: 3,
@@ -970,20 +970,35 @@ test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", ()
   const crossed = getBlueprintClock();
   assert.equal(crossed.pendingBonus, 3);
   assert.equal(crossed.clearing.length, 3);
-  assert.deepEqual(crossed.clearing.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:8", "6:10", "6:8"]);
-  assert.deepEqual(crossed.staticCells.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:11", "8:10"]);
-  const stillUp = blueprintBlocks(world).filter((block) => block.row === 8 || block.row === 10 && block.col === 6);
+  assert.deepEqual(crossed.clearing.map((cell) => `${cell.col}:${cell.row}`).sort(), ["5:8", "6:8", "6:9"]);
+  assert.deepEqual(crossed.staticCells.map((cell) => `${cell.col}:${cell.row}`).sort(), ["5:9", "7:9"]);
+  const stillUp = blueprintBlocks(world).filter((block) => block.row === 8 || (block.col === 6 && block.row === 9));
   assert.equal(stillUp.length, 3);
   for (const block of stillUp) assert.ok(block.extend > 0.9);
 });
 
 test("单格点亮即清，两格必须全亮，动态亮格落地才凑排", () => {
   const only = { col: 4, row: 8 };
-  const mate = { col: 6, row: 8 };
+  const mate = { col: 5, row: 8 };
+  const apart = { col: 7, row: 8 };
+  const gap = [only, mate, apart];
   assert.deepEqual(blueprintRowClears(only.row, [only], new Set(["4:8"])), [only]);
   assert.deepEqual(blueprintColClears(only.col, [only], new Set(["4:8"])), [only]);
   assert.deepEqual(blueprintRowClears(8, [only, mate], new Set(["4:8"])), []);
-  assert.deepEqual(blueprintRowClears(8, [only, mate], new Set(["4:8", "6:8"])), [only, mate]);
+  assert.deepEqual(blueprintRowClears(8, [only, mate], new Set(["4:8", "5:8"])), [only, mate]);
+  const c1 = { col: 1, row: 3 };
+  const c2 = { col: 2, row: 3 };
+  const c4 = { col: 4, row: 3 };
+  assert.deepEqual(blueprintRowClears(3, [c4, c1, c2], new Set(["1:3"])), []);
+  assert.deepEqual(blueprintRowClears(3, [c4, c1, c2], new Set(["1:3", "2:3"])), [c1, c2]);
+  assert.deepEqual(blueprintRowClears(3, [c4, c1, c2], new Set(["4:3"])), [c4]);
+  assert.deepEqual(blueprintRowClears(3, [c4, c1, c2], new Set(["1:3", "2:3", "4:3"])), [c1, c2, c4]);
+  const r8 = { col: 4, row: 8 };
+  const r9 = { col: 4, row: 9 };
+  const r11 = { col: 4, row: 11 };
+  assert.deepEqual(blueprintColClears(4, [r11, r8, r9], new Set(["4:8", "4:9"])), [r8, r9]);
+  assert.deepEqual(blueprintColClears(4, [r11, r8, r9], new Set(["4:11"])), [r11]);
+  assert.deepEqual(blueprintRowClears(8, gap, new Set(["4:8", "5:8"])), [only, mate]);
 
   resetBlueprint(1);
   restoreBlueprintClock(clock({
@@ -1008,20 +1023,44 @@ test("单格点亮即清，两格必须全亮，动态亮格落地才凑排", ()
   assert.equal(blueprintBlocks(world).some((item) => item.col === only.col), false);
   assert.equal(claimBlueprintBonus(), 1);
 
+  const left = { col: 4, row: 8 };
+  const beside = { col: 5, row: 8 };
+  const lone = { col: 7, row: 8 };
+  const underLeft = { col: 4, row: 9 };
+  const underMid = { col: 5, row: 9 };
+  const underLone = { col: 7, row: 9 };
+  resetBlueprint(9);
+  restoreBlueprintClock(clock({
+    goals: 3,
+    staticCells: [left, beside, lone, underLeft, underMid, underLone],
+    staticAge: BLUEPRINT_RAISE,
+  }));
+  assert.equal(touchBlueprintCell(world, left.col, left.row), 0);
+  assert.equal(touchBlueprintCell(world, beside.col, beside.row), 2);
+  const paired = getBlueprintClock();
+  assert.equal(paired.pendingBonus, 2);
+  assert.deepEqual(paired.clearing.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:8", "5:8"]);
+  assert.ok(paired.staticCells.some((cell) => cell.col === lone.col && cell.row === lone.row));
+  assert.equal(touchBlueprintCell(world, lone.col, lone.row), 1);
+  const separated = getBlueprintClock();
+  assert.equal(separated.pendingBonus, 3);
+  assert.ok(separated.clearing.some((cell) => cell.col === lone.col && cell.row === lone.row));
+  assert.ok(separated.staticCells.some((cell) => cell.col === underLone.col && cell.row === underLone.row));
+  assert.equal(separated.staticCells.some((cell) => cell.row === 8), false);
+
   const staticA = { col: 4, row: 8 };
   const anchor = { col: 4, row: 9 };
-  const sibRow = { col: 8, row: 7 };
-  const sibCol = { col: 6, row: 10 };
+  const far = { col: 7, row: 8 };
   const blocker = { col: 5, row: 8 };
-  const mover = { col: 6, row: 7 };
-  const landed = { col: 6, row: 8 };
+  const mover = { col: 5, row: 7 };
+  const landed = { col: 5, row: 8 };
   const blockerNext = { col: 5, row: 9 };
   resetBlueprint(11);
   restoreBlueprintClock(clock({
     goals: 3,
-    staticCells: [staticA, anchor, sibRow, sibCol],
+    staticCells: [staticA, anchor, far],
     staticAge: BLUEPRINT_RAISE,
-    lit: ["4:8", "6:7"],
+    lit: ["4:8", "5:7"],
     dynamic: dyn({
       cells: [blocker, mover],
       pending: [blockerNext, landed],
@@ -1041,10 +1080,10 @@ test("单格点亮即清，两格必须全亮，动态亮格落地才凑排", ()
   stepBlueprint(0.02, true, aimAt(3), world);
   const after = getBlueprintClock();
   assert.equal(after.pendingBonus, 2);
-  assert.deepEqual(after.clearing.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:8", "6:8"]);
+  assert.deepEqual(after.clearing.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:8", "5:8"]);
   assert.deepEqual(after.dynamic?.cells, [blockerNext]);
   assert.equal(after.dynamic?.phase, "cross_in");
-  assert.deepEqual(after.staticCells.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:9", "6:10", "8:7"]);
+  assert.deepEqual(after.staticCells.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:9", "7:8"]);
   const sinking = blueprintBlocks(world).find((item) => item.col === staticA.col && item.row === staticA.row);
   assert.ok(sinking && sinking.extend > 0.8);
 });
