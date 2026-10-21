@@ -456,16 +456,32 @@ function stepDynamic(dt: number) {
     }
   } else if (d.phase === "cross_out") {
     if (d.age >= d.raise) {
-      d = {
-        ...d,
-        cells: copyCells(d.pending),
-        pending: [],
-        phase: "cross_in",
-        age: 0,
-      };
+      const from = copyCells(d.cells);
+      const to = copyCells(d.pending);
+      if (!to.length) {
+        dynamic = null;
+        return;
+      }
+      dynamic = { ...d, cells: to, pending: [], phase: "cross_in", age: 0 };
+      carryDynamicLit(from, to);
+      recheckFieldLines();
+      return;
     }
   }
   dynamic = d;
+}
+
+/** 动态格挪走时，亮跟着这块走。底下还压着的静态保持亮，不算踩灭。 */
+function carryDynamicLit(from: readonly BlueprintCellRef[], to: readonly BlueprintCellRef[]) {
+  const staying = staticKeySet();
+  const n = Math.min(from.length, to.length);
+  for (let i = 0; i < n; i++) {
+    const src = cellKey(from[i]!);
+    const dst = cellKey(to[i]!);
+    if (src === dst || !lit.has(src)) continue;
+    lit.add(dst);
+    if (!staying.has(src)) lit.delete(src);
+  }
 }
 
 function stepClearing(dt: number) {
@@ -987,22 +1003,22 @@ function lineClears(
   match: (cell: BlueprintCellRef) => boolean,
 ) {
   const inLine = field.filter(match);
-  if (inLine.length < 2) return [];
+  if (inLine.length === 0) return [];
   if (!inLine.every((cell) => litKeys.has(cellKey(cell)))) return [];
   return inLine.map((cell) => ({ col: cell.col, row: cell.row }));
 }
 
 /**
- * 这一排当前还在场上的格至少两格、且全部点亮时，返回这些格。
- * 空排，或只剩一格，不触发。高度暂时接近 0 的格仍然算在场上。
+ * 这一排当前还在场上的格若全部点亮，返回这些格。
+ * 只剩一格且已亮，也算清排。空排不触发。高度暂时接近 0 的格仍然算在场上。
  */
 export function blueprintRowClears(row: number, field: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
   return lineClears(field, litKeys, (cell) => cell.row === row);
 }
 
 /**
- * 这一列当前还在场上的格至少两格、且全部点亮时，返回这些格。
- * 空列，或只剩一格，不触发。高度暂时接近 0 的格仍然算在场上。
+ * 这一列当前还在场上的格若全部点亮，返回这些格。
+ * 只剩一格且已亮，也算清列。空列不触发。高度暂时接近 0 的格仍然算在场上。
  */
 export function blueprintColClears(col: number, field: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
   return lineClears(field, litKeys, (cell) => cell.col === col);
@@ -1065,9 +1081,20 @@ function beginLineClear(cells: readonly BlueprintCellRef[]) {
   return started.length;
 }
 
+/** 落地或点亮之后，把当前在场的每一行、每一列再判一次。未亮的静态格也算在场。 */
+function recheckFieldLines() {
+  const field = blueprintFieldCells(getBlueprintClock());
+  const cleared: BlueprintCellRef[] = [];
+  for (const row of new Set(field.map((cell) => cell.row))) cleared.push(...blueprintRowClears(row, field, lit));
+  for (const col of new Set(field.map((cell) => cell.col))) cleared.push(...blueprintColClears(col, field, lit));
+  const unique = uniqueCells(cleared);
+  if (!unique.length) return 0;
+  return beginLineClear(unique);
+}
+
 /**
  * 篮球踩到已凸出的格就点亮。已亮再踩无事。
- * 这一排或这一列至少还有两格、并且都亮了，才整行或整列缩回。单独一格只亮着。
+ * 这一排或这一列里还在场上的格都亮了（只剩一格也算），就整行或整列缩回。
  * 同一格同时属于刚触发的行和列时只缩一次、只计一次。
  * 返回本次开始缩回的格数。
  */
