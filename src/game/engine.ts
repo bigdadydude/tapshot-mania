@@ -33,7 +33,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
-import { collideBlueprint, claimBlueprintBonusForBasket, getBlueprintClock, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, stepBlueprint, type BlueprintClock } from "./blueprint";
+import { collideBlueprint, getBlueprintClock, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
@@ -6587,20 +6587,12 @@ export function createGame(
       }
     }
     score += gain;
-    // 分身先于实体过框（同帧 stepNinjaGhosts 在 checkScore 之前）。只有实体进球领走待领。
+    // 黄标签只保留最后一条，单独的「清格 +N」会被同帧「空心球」盖掉。清格分并进主飘字。
+    let rowBonus = 0;
     if (blueprintOn() && !ghost) {
-      const rowBonus = claimBlueprintBonusForBasket(true);
-      if (rowBonus > 0) {
-        score += rowBonus;
-        callouts.push({
-          text: `清格 +${rowBonus}`,
-          x: ball.x,
-          y: Math.max(48, ball.y - ball.r * 2.4),
-          life: 0.9,
-          max: 0.9,
-          kind: "tag",
-        });
-      }
+      const settled = settleBlueprintBasket(gain, true);
+      rowBonus = settled.bonus;
+      score += rowBonus;
     }
     if(!ghost && isSuper()) superScore(superBall,gain,superShieldScore);
     if (!ghost && balanceSession) {
@@ -6707,7 +6699,7 @@ export function createGame(
     const hideMakeScore = (isAnti() && holeOn) || (ninjaGhost && gain <= 0);
     if (!hideMakeScore) {
       callouts.push({
-        text: `+${gain}`,
+        text: `+${gain + rowBonus}`,
         x: popX,
         y: popY - popInner * RIM_RY - 14,
         capY: boardTop + 8,
@@ -6741,9 +6733,11 @@ export function createGame(
         kind: "base",
       });
     }
-    if (tag && !hideMakeScore) {
+    const clearNote = rowBonus > 0 ? `清格 +${rowBonus}` : "";
+    const tagLine = [tag, clearNote].filter(Boolean).join("  ");
+    if (tagLine && !hideMakeScore) {
       callouts.push({
-        text: tag,
+        text: tagLine,
         x: popX,
         y: popY - 70,
         life: 0.95,

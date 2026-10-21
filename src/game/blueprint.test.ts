@@ -51,6 +51,7 @@ import {
   clipBlueprintCells,
   claimBlueprintBonus,
   claimBlueprintBonusForBasket,
+  settleBlueprintBasket,
   collideBlueprint,
   getBlueprintClock,
   resetBlueprint,
@@ -1214,6 +1215,40 @@ test("待领在缩回开始就挂上，分身不领走，换批不清掉，实�
   assert.equal(getBlueprintClock().pendingBonus, 0);
   assert.equal(claimBlueprintBonusForBasket(false), 0);
   assert.equal(claimBlueprintBonusForBasket(true), 0);
+});
+
+test("pending=N 时实体结算返回 N 并归零，分身结算不改待领", () => {
+  const only = { col: 4, row: 8 };
+  resetBlueprint(31);
+  restoreBlueprintClock(clock({
+    goals: 2,
+    staticCells: [only],
+    staticAge: BLUEPRINT_RAISE,
+  }));
+  assert.equal(touchBlueprintCell(world, only.col, only.row), 1);
+  const pending = getBlueprintClock().pendingBonus;
+  assert.equal(pending, 1);
+
+  const gain = 4;
+  let score = 10;
+  const ghost = settleBlueprintBasket(gain, false);
+  assert.equal(ghost.bonus, 0);
+  assert.equal(ghost.shown, gain);
+  assert.equal(getBlueprintClock().pendingBonus, pending);
+  score += ghost.bonus;
+  assert.equal(score, 10);
+
+  const real = settleBlueprintBasket(gain, true);
+  assert.equal(real.bonus, pending);
+  assert.equal(real.shown, gain + pending);
+  score += gain + real.bonus;
+  assert.equal(score, 10 + gain + pending);
+  assert.equal(getBlueprintClock().pendingBonus, 0);
+
+  const again = settleBlueprintBasket(gain, true);
+  assert.equal(again.bonus, 0);
+  assert.equal(again.shown, gain);
+  assert.equal(getBlueprintClock().pendingBonus, 0);
 });
 
 test("标题和开发者场景条都有蓝图，其它场景配色不动", () => {

@@ -1158,6 +1158,16 @@ export function claimBlueprintBonusForBasket(real: boolean) {
   return claimBlueprintBonus();
 }
 
+/**
+ * 实体进球的得分路径：领走待领，主飘字用基础分 + 这笔。
+ * 分身返回 bonus 0、shown 仍是基础分，pending 不动。
+ */
+export function settleBlueprintBasket(gain: number, real: boolean) {
+  const bonus = claimBlueprintBonusForBasket(real);
+  const base = Number.isFinite(gain) ? gain : 0;
+  return { bonus, shown: base + bonus };
+}
+
 type Sweep = { t: number; nx: number; ny: number; depth: number };
 
 /** 连续圆-矩形扫掠，避免高速投篮穿透方块。 */
