@@ -997,13 +997,33 @@ export function blueprintProtrudingCells(blocks: readonly BlueprintBlock[]) {
   return cells;
 }
 
-/** 同一行或同一列里，只把索引相差 1 的格子连成一段。空挡两侧互不影响。 */
-function contiguousClears(cells: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>, axis: "col" | "row") {
-  const ordered = cells.slice().sort((a, b) => a[axis] - b[axis]);
+/** 上下左右、序号相差 1。对角线不算。 */
+function hasOrthogonalNeighbor(cell: BlueprintCellRef, field: readonly BlueprintCellRef[]) {
+  return field.some((other) => {
+    if (other.col === cell.col && other.row === cell.row) return false;
+    const sameCol = other.col === cell.col && Math.abs(other.row - cell.row) === 1;
+    const sameRow = other.row === cell.row && Math.abs(other.col - cell.col) === 1;
+    return sameCol || sameRow;
+  });
+}
+
+/**
+ * 同一行或同一列里，序号相差 1 连成一段，空挡拆开。
+ * 整段都亮才收这一段。段里只有一格时，四向都没有邻块才单格消；有邻块则留下。
+ */
+function contiguousClears(
+  line: readonly BlueprintCellRef[],
+  litKeys: ReadonlySet<string>,
+  axis: "col" | "row",
+  field: readonly BlueprintCellRef[],
+) {
+  const ordered = line.slice().sort((a, b) => a[axis] - b[axis]);
   const cleared: BlueprintCellRef[] = [];
   let segment: BlueprintCellRef[] = [];
   const flush = () => {
-    if (segment.length > 0 && segment.every((cell) => litKeys.has(cellKey(cell)))) {
+    const ready = segment.length > 0 && segment.every((cell) => litKeys.has(cellKey(cell)));
+    const soloBlocked = segment.length === 1 && hasOrthogonalNeighbor(segment[0]!, field);
+    if (ready && !soloBlocked) {
       for (const cell of segment) cleared.push({ col: cell.col, row: cell.row });
     }
     segment = [];
@@ -1019,18 +1039,18 @@ function contiguousClears(cells: readonly BlueprintCellRef[], litKeys: ReadonlyS
 
 /**
  * 这一排上每一段相邻格子若全部点亮，返回这些段。
- * 段长为 1 且已亮，也缩回。中间有空挡的另一段不跟着清。高度暂时接近 0 的格仍然算在场上。
+ * 段长为 1 时，只有四向都没有邻块才缩回。空挡另一边不跟着清。高度暂时接近 0 的格仍然算在场上。
  */
 export function blueprintRowClears(row: number, field: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
-  return contiguousClears(field.filter((cell) => cell.row === row), litKeys, "col");
+  return contiguousClears(field.filter((cell) => cell.row === row), litKeys, "col", field);
 }
 
 /**
  * 这一列上每一段相邻格子若全部点亮，返回这些段。
- * 段长为 1 且已亮，也缩回。中间有空挡的另一段不跟着清。高度暂时接近 0 的格仍然算在场上。
+ * 段长为 1 时，只有四向都没有邻块才缩回。空挡另一边不跟着清。高度暂时接近 0 的格仍然算在场上。
  */
 export function blueprintColClears(col: number, field: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
-  return contiguousClears(field.filter((cell) => cell.col === col), litKeys, "row");
+  return contiguousClears(field.filter((cell) => cell.col === col), litKeys, "row", field);
 }
 
 function uniqueCells(cells: readonly BlueprintCellRef[]) {
@@ -1103,7 +1123,7 @@ function recheckFieldLines() {
 
 /**
  * 篮球踩到已凸出的格就点亮。已亮再踩无事。
- * 所在的相邻段都亮了（只剩一格也算），就缩回这一段。空挡另一边不跟着清。
+ * 四向都没有邻块时，点亮就缩回这一格。有邻块则要所在横段或竖段全部点亮，才整段缩回。
  * 同一格同时属于刚触发的行和列时只缩一次、只计一次。
  * 返回本次开始缩回的格数。
  */
