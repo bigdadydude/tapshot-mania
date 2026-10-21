@@ -1164,13 +1164,16 @@ function beginLineClear(cells: readonly BlueprintCellRef[], payPending = true) {
 }
 
 /**
- * 反物质开黑洞：场上已点亮的凸块全部缩回。
- * 返回格数，调用方立刻加进基础分。不挂待领。未点亮的留下。同格只计一次。
- * 再调一次时亮格已经不在，返回 0。
+ * 反物质开黑洞：场上凸块立刻全部消失，静态、动态、正在缩回的都算。
+ * 只返回其中仍算已点亮的格数，调用方立刻加进基础分。未亮的也消失，但不给分。
+ * 不挂待领。同格只计一次。再调一次时场上已空，返回 0。
  */
 export function consumeBlueprintLitForHole() {
-  const litCells = blueprintFieldCells(getBlueprintClock()).filter((cell) => lit.has(cellKey(cell)));
-  return beginLineClear(litCells, false);
+  const field = blueprintFieldCells(getBlueprintClock());
+  const litCount = field.filter((cell) => lit.has(cellKey(cell))).length;
+  dropClearedCells(new Set(field.map(cellKey)));
+  clearing = [];
+  return litCount;
 }
 
 /** 落地或点亮之后，把当前在场的每一行、每一列再判一次。未亮的静态格也算在场。 */

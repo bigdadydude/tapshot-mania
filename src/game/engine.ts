@@ -1022,7 +1022,7 @@ export function createGame(
       pathClock,
       time, cloudT, cloudShift, cloudHop, cloudMode, cloudSx, cloudSy,
       stageState: stageMod.rewindState?.(),
-      trainRoute: getTrainScroll(), tunnel: getTrainTunnel(), blueprint: getBlueprintClock(),
+      trainRoute: getTrainScroll(), tunnel: getTrainTunnel(), blueprint: structuredClone(getBlueprintClock()),
       birds: structuredClone(birds),
       birdBaseBonus, frostBonus, glassBase, holeLived, holeScoreAcc, holeTick,
       overRim, otherOverRim, scoredLock, rimHitLock, boardHitLock,

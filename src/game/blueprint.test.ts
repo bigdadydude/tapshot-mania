@@ -1343,7 +1343,7 @@ test("凸块投影不进入倒计时条", () => {
   assert.deepEqual(clipBlueprintPaintBox(court, hudBottom), court);
 });
 
-test("开黑洞清掉全部已亮格，加成只算一次，未亮留下且不挂待领", () => {
+test("开黑洞清掉全部凸块，基础分只按已亮格数加一次", () => {
   const litStatic = { col: 4, row: 8 };
   const darkStatic = { col: 5, row: 8 };
   const litMover = { col: 6, row: 8 };
@@ -1356,19 +1356,70 @@ test("开黑洞清掉全部已亮格，加成只算一次，未亮留下且不�
     staticAge: BLUEPRINT_RAISE,
     lit: ["4:8", "6:8", "7:9"],
     pendingBonus: 3,
+    clearing: [{ col: 8, row: 9, age: 0.05, span: BLUEPRINT_CROSS_RAISE, from: 1 }],
     dynamic: dyn({ cells: [litMover, darkMover, overlap], phase: "hold", stepSpan: 10 }),
   }));
   assert.equal(consumeBlueprintLitForHole(), 3);
   const after = getBlueprintClock();
   assert.equal(after.pendingBonus, 3);
   assert.deepEqual(after.lit, []);
-  assert.deepEqual(after.staticCells.map((cell) => `${cell.col}:${cell.row}`), ["5:8"]);
-  assert.deepEqual(after.dynamic?.cells.map((cell) => `${cell.col}:${cell.row}`), ["6:9"]);
-  assert.equal(after.dynamic?.phase, "hold");
-  assert.deepEqual(after.clearing.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:8", "6:8", "7:9"]);
+  assert.deepEqual(after.staticCells, []);
+  assert.equal(after.dynamic, null);
+  assert.deepEqual(after.clearing, []);
+  assert.equal(blueprintBlocks(world, after).length, 0);
   assert.equal(consumeBlueprintLitForHole(), 0);
   assert.equal(getBlueprintClock().pendingBonus, 3);
-  assert.equal(getBlueprintClock().staticCells.length, 1);
+});
+
+test("时间球快退把凸块、点亮、伸缩和待领退回取样", () => {
+  resetBlueprint(3);
+  restoreBlueprintClock(clock({
+    goals: 2,
+    seed: 3,
+    serial: 4,
+    elapsed: 1.5,
+    staticCells: [{ col: 4, row: 8 }, { col: 5, row: 8 }],
+    staticAge: 0.2,
+    staticRaise: BLUEPRINT_RAISE,
+    lit: ["4:8"],
+    pendingBonus: 2,
+    clearing: [{ col: 6, row: 8, age: 0.05, span: BLUEPRINT_CROSS_RAISE, from: 0.8 }],
+    dynamic: dyn({ cells: [{ col: 7, row: 9 }, { col: 7, row: 10 }], phase: "cross_out", age: 0.04, stepSpan: 0.6, pending: [{ col: 8, row: 9 }, { col: 8, row: 10 }], dir: 0 }),
+  }));
+  const shot = getBlueprintClock();
+  shot.staticCells.push({ col: 1, row: 1 });
+  shot.lit.push("9:9");
+  if (shot.dynamic) shot.dynamic.age = 999;
+  const live = getBlueprintClock();
+  assert.deepEqual(live.staticCells.map((cell) => `${cell.col}:${cell.row}`), ["4:8", "5:8"]);
+  assert.deepEqual(live.lit, ["4:8"]);
+  assert.equal(live.dynamic?.age, 0.04);
+  stepBlueprint(0.16, true, aimAt(4), world);
+  consumeBlueprintLitForHole();
+  const ahead = getBlueprintClock();
+  assert.equal(ahead.goals, 4);
+  assert.notDeepEqual(ahead.staticCells, live.staticCells);
+  restoreBlueprintClock(live);
+  const back = getBlueprintClock();
+  assert.equal(back.goals, live.goals);
+  assert.equal(back.serial, live.serial);
+  assert.equal(back.elapsed, live.elapsed);
+  assert.equal(back.staticAge, live.staticAge);
+  assert.deepEqual(back.staticCells, live.staticCells);
+  assert.deepEqual(back.lit, live.lit);
+  assert.equal(back.pendingBonus, live.pendingBonus);
+  assert.deepEqual(back.clearing, live.clearing);
+  assert.equal(back.dynamic?.phase, "cross_out");
+  assert.equal(back.dynamic?.age, live.dynamic?.age);
+  assert.deepEqual(back.dynamic?.cells, live.dynamic?.cells);
+  assert.deepEqual(back.dynamic?.pending, live.dynamic?.pending);
+  stepBlueprint(0.02, true, aimAt(live.goals), world);
+  const stayed = getBlueprintClock();
+  assert.deepEqual(stayed.staticCells, live.staticCells);
+  assert.deepEqual(stayed.lit, live.lit);
+  assert.equal(stayed.pendingBonus, live.pendingBonus);
+  assert.equal(stayed.dynamic?.phase, "cross_out");
+  assert.ok(Math.abs((stayed.staticAge ?? 0) - (live.staticAge + 0.02)) < 1e-9);
 });
 
 test("黑洞期间不换批不生成动态，结束后按当前进球数恢复", () => {
