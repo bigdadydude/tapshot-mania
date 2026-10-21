@@ -33,7 +33,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
-import { collideBlueprint, getBlueprintClock, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, stepBlueprint, type BlueprintClock } from "./blueprint";
+import { collideBlueprint, claimBlueprintBonus, getBlueprintClock, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, stepBlueprint, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
@@ -6587,6 +6587,20 @@ export function createGame(
       }
     }
     score += gain;
+    if (blueprintOn()) {
+      const rowBonus = claimBlueprintBonus();
+      if (rowBonus > 0) {
+        score += rowBonus;
+        callouts.push({
+          text: `清排 +${rowBonus}`,
+          x: ball.x,
+          y: Math.max(48, ball.y - ball.r * 2.4),
+          life: 0.9,
+          max: 0.9,
+          kind: "tag",
+        });
+      }
+    }
     if(!ghost && isSuper()) superScore(superBall,gain,superShieldScore);
     if (!ghost && balanceSession) {
       const plainCore = bunshinGhost || ninjaGhost ? 0 : basePart + streakPart + extra + (freed ? prisonBonus : 0) + (clutch && !ninjaGhost ? 5 : 0);

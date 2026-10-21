@@ -31,7 +31,9 @@ import {
   blueprintLegalCells,
   blueprintNearBall,
   blueprintOnShotPath,
+  blueprintProtrudingCells,
   blueprintQuota,
+  blueprintRowClears,
   blueprintSampleCount,
   blueprintShadowAlpha,
   blueprintShadowBox,
@@ -44,12 +46,14 @@ import {
   blueprintTranslateCells,
   blueprintVanishingPoint,
   clipBlueprintCells,
+  claimBlueprintBonus,
   collideBlueprint,
   getBlueprintClock,
   resetBlueprint,
   restoreBlueprintClock,
   rollBlueprintBatch,
   stepBlueprint,
+  touchBlueprintCell,
   type BlueprintCellRef,
   type BlueprintClock,
   type BlueprintDynamic,
@@ -70,6 +74,8 @@ function clock(partial: Partial<BlueprintClock> & { cells?: BlueprintCellRef[]; 
     staticCells: staticCellsOpt,
     staticAge: staticAgeOpt,
     staticRaise: staticRaiseOpt,
+    lit: litOpt,
+    pendingBonus: bonusOpt,
     ...rest
   } = partial;
   const staticCells = staticCellsOpt ?? legacyCells ?? [];
@@ -88,6 +94,8 @@ function clock(partial: Partial<BlueprintClock> & { cells?: BlueprintCellRef[]; 
     cells: staticCells,
     cycle: staticAge,
     duration: staticRaise,
+    lit: litOpt ?? [],
+    pendingBonus: bonusOpt ?? 0,
   };
 }
 
@@ -763,6 +771,69 @@ test("凸出填色贴住网格线", () => {
     assert.equal(px.fill.x + px.fill.w, px.right);
     assert.equal(px.fill.y + px.fill.h, px.bottom);
   }
+});
+
+test("踩亮不灭，齐排缩回并累计待领分，进球后清零", () => {
+  const a = { col: 4, row: 8 };
+  const b = { col: 6, row: 8 };
+  const other = { col: 4, row: 9 };
+  const protruding = [a, b, other];
+  assert.deepEqual(blueprintRowClears(8, protruding, new Set()), []);
+  assert.deepEqual(blueprintRowClears(8, protruding, new Set(["4:8"])), []);
+  assert.deepEqual(blueprintRowClears(3, protruding, new Set(["4:8", "6:8"])), []);
+  assert.deepEqual(blueprintRowClears(8, protruding, new Set(["4:8", "6:8"])), [a, b]);
+  assert.deepEqual(blueprintRowClears(9, protruding, new Set(["4:9"])), [other]);
+
+  const flat = { col: 7, row: 8 };
+  resetBlueprint(3);
+  restoreBlueprintClock(clock({
+    goals: 3,
+    staticCells: [a, b, other],
+    staticAge: BLUEPRINT_RAISE,
+    dynamic: dyn({
+      cells: [flat],
+      phase: "cross_out",
+      age: BLUEPRINT_CROSS_RAISE,
+      raise: BLUEPRINT_CROSS_RAISE,
+    }),
+  }));
+  const up = blueprintProtrudingCells(blueprintBlocks(world));
+  assert.equal(up.some((cell) => cell.col === flat.col && cell.row === flat.row), false);
+  assert.equal(up.length, 3);
+  assert.equal(touchBlueprintCell(world, flat.col, flat.row), 0);
+  assert.deepEqual(getBlueprintClock().lit, []);
+  assert.equal(touchBlueprintCell(world, a.col, a.row), 0);
+  assert.deepEqual(getBlueprintClock().lit, ["4:8"]);
+  assert.equal(getBlueprintClock().pendingBonus, 0);
+  assert.equal(blueprintBlocks(world).find((block) => block.col === a.col && block.row === a.row)?.lit, true);
+  assert.equal(touchBlueprintCell(world, a.col, a.row), 0);
+  assert.deepEqual(getBlueprintClock().lit, ["4:8"]);
+  assert.equal(getBlueprintClock().staticCells.length, 3);
+  assert.equal(touchBlueprintCell(world, b.col, b.row), 2);
+  const mid = getBlueprintClock();
+  assert.equal(mid.pendingBonus, 2);
+  assert.deepEqual(mid.staticCells, [other]);
+  assert.deepEqual(mid.dynamic?.cells, [flat]);
+  assert.equal(mid.dynamic?.phase, "cross_out");
+  assert.equal(mid.lit.includes("4:8"), false);
+  assert.equal(touchBlueprintCell(world, other.col, other.row), 1);
+  assert.equal(getBlueprintClock().pendingBonus, 3);
+  assert.deepEqual(getBlueprintClock().staticCells, []);
+  assert.equal(claimBlueprintBonus(), 3);
+  assert.equal(claimBlueprintBonus(), 0);
+  assert.equal(getBlueprintClock().pendingBonus, 0);
+
+  restoreBlueprintClock(clock({
+    goals: 4,
+    staticCells: [{ col: 2, row: 5 }],
+    staticAge: BLUEPRINT_RAISE,
+    lit: ["4:8"],
+    pendingBonus: 4,
+  }));
+  assert.deepEqual(getBlueprintClock().lit, []);
+  assert.equal(getBlueprintClock().pendingBonus, 4);
+  assert.ok(blueprintBlocks(world).every((block) => block.lit === false));
+  assert.equal(claimBlueprintBonus(), 4);
 });
 
 test("标题和开发者场景条都有蓝图，其它场景配色不动", () => {

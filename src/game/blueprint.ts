@@ -122,6 +122,10 @@ export type BlueprintClock = {
   cycle: number;
   /** @deprecated 等同 staticRaise。 */
   duration: number;
+  /** 已点亮的格子，`col:row`。只增不减，格离开场上后丢掉。 */
+  lit: string[];
+  /** 清排后挂着的加分。下一次进球加进得分再清零。 */
+  pendingBonus: number;
 };
 export type BlueprintBlock = {
   id: string;
@@ -129,6 +133,8 @@ export type BlueprintBlock = {
   col: number;
   row: number;
   dynamic: boolean;
+  /** 篮球踩亮后为 true。只亮不灭。 */
+  lit: boolean;
   extend: number;
   /** 格子满尺寸。中心不随伸缩移动。 */
   cell: Rect;
@@ -150,6 +156,10 @@ let staticCells: BlueprintCellRef[] = [];
 let staticAge = 0;
 let staticRaise = BLUEPRINT_RAISE;
 let dynamic: BlueprintDynamic | null = null;
+/** 已点亮的 `col:row`。 */
+let lit = new Set<string>();
+/** 清排累计、尚未进球结算的加分。 */
+let pendingBonus = 0;
 /** 是否已按当前进球数落定（含进球前的空场）。 */
 let hasBatch = false;
 let aim: BlueprintAim | null = null;
@@ -213,6 +223,8 @@ export function getBlueprintClock(): BlueprintClock {
     cells,
     cycle: staticAge,
     duration: staticRaise,
+    lit: [...lit],
+    pendingBonus,
   };
 }
 
@@ -226,7 +238,10 @@ export function restoreBlueprintClock(next: BlueprintClock) {
   staticAge = Number.isFinite(next.staticAge) ? next.staticAge : Number.isFinite(next.cycle) ? next.cycle : 0;
   staticRaise = next.staticRaise > 0 ? next.staticRaise : next.duration > 0 ? next.duration : BLUEPRINT_RAISE;
   dynamic = next.dynamic ? copyDynamic(next.dynamic) : null;
+  lit = new Set((next.lit ?? []).filter((key) => typeof key === "string" && key.includes(":")));
+  pendingBonus = finiteBonus(next.pendingBonus);
   hasBatch = true;
+  pruneLit();
 }
 
 /** 换场景或回到标题时清空凸出。 */
@@ -239,6 +254,8 @@ export function resetBlueprint(nextSeed = Math.random() * 1e6) {
   staticAge = 0;
   staticRaise = BLUEPRINT_RAISE;
   dynamic = null;
+  lit = new Set();
+  pendingBonus = 0;
   hasBatch = false;
   aim = null;
 }
@@ -251,12 +268,27 @@ export function resetBlueprintProgress() {
   staticAge = 0;
   staticRaise = BLUEPRINT_RAISE;
   dynamic = null;
+  lit = new Set();
+  pendingBonus = 0;
   hasBatch = false;
 }
 
 function finiteGoals(value: number) {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.floor(value));
+}
+
+function finiteBonus(value: number | undefined) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value ?? 0));
+}
+
+/** 点亮只保留还在场上的格。挪走或换批后的新格从暗开始。 */
+function pruneLit() {
+  const live = new Set<string>();
+  for (const cell of staticCells) live.add(cellKey(cell));
+  if (dynamic) for (const cell of dynamic.cells) live.add(cellKey(cell));
+  for (const key of lit) if (!live.has(key)) lit.delete(key);
 }
 
 export function blueprintDespawnChance(made: number) {
@@ -418,11 +450,13 @@ export function stepBlueprint(dt: number, playing: boolean, next?: BlueprintAim,
   if (world) view = { w: world.w, h: world.h, floorY: world.floorY, ballR: world.ballR, hoopInner: world.hoopInner };
   const goalsNow = aim ? finiteGoals(aim.goals) : goals;
   if (!hasBatch || goalsNow !== goals) applyGoalChange(goalsNow);
+  pruneLit();
   if (!(dt > 0)) return;
   if (playing) {
     elapsed += dt;
     staticAge += dt;
     stepDynamic(dt);
+    pruneLit();
   }
 }
 
@@ -783,6 +817,7 @@ function pushBlock(
   extend: number,
   isDynamic: boolean,
   occupied: Set<string>,
+  isLit: boolean,
 ) {
   if (blocks.length >= BLUEPRINT_MAX_COUNT) return;
   const key = cellKey(ref);
@@ -805,6 +840,7 @@ function pushBlock(
     col: ref.col,
     row: ref.row,
     dynamic: isDynamic,
+    lit: isLit,
     extend,
     cell: base,
     solid: solidFromCell(base, extend),
@@ -850,9 +886,10 @@ export function blueprintBlocks(world: View, clock = getBlueprintClock()): Bluep
   const staticAgeNow = Number.isFinite(clock.staticAge) ? clock.staticAge : clock.cycle;
   const staticExtend = blueprintExtend(staticAgeNow, staticSpan);
   const blocks: BlueprintBlock[] = [];
+  const litKeys = new Set(clock.lit ?? []);
   const staticSeen = new Set<string>();
   for (const ref of staticList) {
-    pushBlock(blocks, world, grid, ref, staticExtend, false, staticSeen);
+    pushBlock(blocks, world, grid, ref, staticExtend, false, staticSeen, litKeys.has(cellKey(ref)));
   }
   const dyn = clock.dynamic;
   if (dyn?.cells?.length) {
@@ -860,10 +897,72 @@ export function blueprintBlocks(world: View, clock = getBlueprintClock()): Bluep
     for (const ref of blueprintDynamicDrawCells(dyn)) {
       const extend = blueprintDynamicCellExtend(dyn, ref, staticKeys);
       if (extend <= 0) continue;
-      pushBlock(blocks, world, grid, ref, extend, true, dynamicSeen);
+      pushBlock(blocks, world, grid, ref, extend, true, dynamicSeen, litKeys.has(cellKey(ref)));
     }
   }
   return blocks;
+}
+
+/** 仍凸出的格：缩到撞得到的高度以上，同格只算一格。 */
+export function blueprintProtrudingCells(blocks: readonly BlueprintBlock[]) {
+  const seen = new Set<string>();
+  const cells: BlueprintCellRef[] = [];
+  for (const block of blocks) {
+    if (block.extend < BLUEPRINT_HIT_EXTEND) continue;
+    const key = cellKey(block);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cells.push({ col: block.col, row: block.row });
+  }
+  return cells;
+}
+
+/**
+ * 这一排当前仍凸出的格若全部点亮，返回这些格。
+ * 空排或这一排没有凸出格则不触发。
+ */
+export function blueprintRowClears(row: number, protruding: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
+  const inRow = protruding.filter((cell) => cell.row === row);
+  if (inRow.length === 0) return [];
+  if (!inRow.every((cell) => litKeys.has(cellKey(cell)))) return [];
+  return inRow.map((cell) => ({ col: cell.col, row: cell.row }));
+}
+
+function dropClearedCells(keys: Set<string>) {
+  staticCells = staticCells.filter((cell) => !keys.has(cellKey(cell)));
+  if (dynamic) {
+    const cells = dynamic.cells.filter((cell) => !keys.has(cellKey(cell)));
+    if (!cells.length) dynamic = null;
+    else {
+      const pending = dynamic.phase === "cross_out" ? blueprintTranslateCells(cells, dynamic.dir) : dynamic.pending.filter((cell) => !keys.has(cellKey(cell)));
+      dynamic = { ...dynamic, cells, pending };
+    }
+  }
+  for (const key of keys) lit.delete(key);
+}
+
+/**
+ * 篮球踩到已凸出的格就点亮。已亮再踩无事。
+ * 这一排仍凸出的格都亮了，就整排缩回，并把格数加进待领分。
+ * 返回本次清掉的格数。
+ */
+export function touchBlueprintCell(world: View, col: number, row: number) {
+  const protruding = blueprintProtrudingCells(blueprintBlocks(world));
+  const key = `${col}:${row}`;
+  if (!protruding.some((cell) => cellKey(cell) === key)) return 0;
+  lit.add(key);
+  const cleared = blueprintRowClears(row, protruding, lit);
+  if (!cleared.length) return 0;
+  dropClearedCells(new Set(cleared.map(cellKey)));
+  pendingBonus += cleared.length;
+  return cleared.length;
+}
+
+/** 进球时拿走待领分并清零。没有挂分时返回 0。 */
+export function claimBlueprintBonus() {
+  const bonus = pendingBonus;
+  pendingBonus = 0;
+  return bonus;
 }
 
 type Sweep = { t: number; nx: number; ny: number; depth: number };
@@ -958,12 +1057,17 @@ export function collideBlueprint(
   const dx = ball.x - prevX;
   const dy = ball.y - prevY;
   let hit: (Sweep & { box: Rect }) | null = null;
+  let hitBlock: BlueprintBlock | null = null;
   for (const block of blueprintBlocks(world, clock)) {
     if (!block.solid) continue;
     const found = sweepBlueprintCircle(prevX, prevY, dx, dy, ball.r, block.solid);
-    if (found && (!hit || found.t < hit.t)) hit = { ...found, box: block.solid };
+    if (found && (!hit || found.t < hit.t)) {
+      hit = { ...found, box: block.solid };
+      hitBlock = block;
+    }
   }
-  if (!hit) return false;
+  if (!hit || !hitBlock) return false;
+  if (!clock) touchBlueprintCell(world, hitBlock.col, hitBlock.row);
   if (blockImpact?.(hit.nx, hit.ny)) return false;
   const skin = 0.35;
   const remain = 1 - hit.t;
@@ -1231,8 +1335,16 @@ function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock, others:
     .filter((other) => other !== block && other.extend > 0)
     .map((other) => ({ box: blueprintCellCover(other.cell), extend: other.extend }));
   for (const piece of blueprintShadowPieces(shadow, lowers)) paintShadow(ctx, shadow, piece, extend);
-  ctx.fillStyle = `rgba(236, 244, 255, ${blueprintFillAlpha(extend)})`;
-  ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
+  if (block.lit) {
+    ctx.fillStyle = `rgba(255, 186, 46, ${0.55 + 0.4 * Math.min(1, extend)})`;
+    ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
+    ctx.strokeStyle = "rgba(255, 248, 214, 0.96)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(fill.x + 1.5, fill.y + 1.5, Math.max(0, fill.w - 3), Math.max(0, fill.h - 3));
+  } else {
+    ctx.fillStyle = `rgba(236, 244, 255, ${blueprintFillAlpha(extend)})`;
+    ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
+  }
 }
 
 export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View) {
@@ -1248,4 +1360,19 @@ export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View) {
     .filter((block) => block.dynamic || !covered.has(`${block.col}:${block.row}`))
     .sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x || Number(a.dynamic) - Number(b.dynamic));
   for (const block of visible) drawBlock(ctx, block, visible);
+  if (clock.pendingBonus > 0) {
+    const label = `待领 +${clock.pendingBonus}`;
+    ctx.save();
+    ctx.font = "700 15px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const width = ctx.measureText(label).width + 22;
+    const y = Math.min(world.h * 0.16, 132);
+    const x = world.w * 0.5 - width / 2;
+    ctx.fillStyle = "rgba(8, 24, 58, 0.78)";
+    ctx.fillRect(x, y, width, 26);
+    ctx.fillStyle = "#ffd56a";
+    ctx.fillText(label, world.w * 0.5, y + 13);
+    ctx.restore();
+  }
 }
