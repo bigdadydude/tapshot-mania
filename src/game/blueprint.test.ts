@@ -50,6 +50,7 @@ import {
   blueprintVanishingPoint,
   clipBlueprintCells,
   claimBlueprintBonus,
+  claimBlueprintBonusForBasket,
   collideBlueprint,
   getBlueprintClock,
   resetBlueprint,
@@ -1187,6 +1188,32 @@ test("十字中心有邻块不清，横段或竖段亮齐才消", () => {
   const still = blueprintBlocks(world).filter((block) => block.row === 9 && block.col !== 5);
   assert.equal(still.length, 2);
   for (const block of still) assert.equal(block.lit, false);
+});
+
+test("待领在缩回开始就挂上，分身不领走，换批不清掉，实体进球才结算", () => {
+  const only = { col: 4, row: 8 };
+  resetBlueprint(21);
+  restoreBlueprintClock(clock({
+    goals: 1,
+    staticCells: [only],
+    staticAge: BLUEPRINT_RAISE,
+  }));
+  assert.equal(touchBlueprintCell(world, only.col, only.row), 1);
+  assert.equal(getBlueprintClock().pendingBonus, 1);
+  assert.equal(getBlueprintClock().clearing.length, 1);
+
+  assert.equal(claimBlueprintBonusForBasket(false), 0);
+  assert.equal(getBlueprintClock().pendingBonus, 1);
+
+  stepBlueprint(0.016, true, aimAt(2), world);
+  const swapped = getBlueprintClock();
+  assert.equal(swapped.goals, 2);
+  assert.equal(swapped.pendingBonus, 1);
+
+  assert.equal(claimBlueprintBonusForBasket(true), 1);
+  assert.equal(getBlueprintClock().pendingBonus, 0);
+  assert.equal(claimBlueprintBonusForBasket(false), 0);
+  assert.equal(claimBlueprintBonusForBasket(true), 0);
 });
 
 test("标题和开发者场景条都有蓝图，其它场景配色不动", () => {

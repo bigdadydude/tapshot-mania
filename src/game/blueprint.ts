@@ -1142,11 +1142,20 @@ export function touchBlueprintCell(world: View, col: number, row: number) {
   return beginLineClear(cleared);
 }
 
-/** 进球时拿走待领分并清零。没有挂分时返回 0。 */
+/** 领走待领分并清零。没有挂分时返回 0。 */
 export function claimBlueprintBonus() {
   const bonus = pendingBonus;
   pendingBonus = 0;
   return bonus;
+}
+
+/**
+ * 只有实体进球才领走待领。分身 / 幽灵进球返回 0，待领保持原数。
+ * 画面上的「待领 +N」读的是同一份 pendingBonus。
+ */
+export function claimBlueprintBonusForBasket(real: boolean) {
+  if (!real) return 0;
+  return claimBlueprintBonus();
 }
 
 type Sweep = { t: number; nx: number; ny: number; depth: number };

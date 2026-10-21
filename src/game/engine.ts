@@ -33,7 +33,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
-import { collideBlueprint, claimBlueprintBonus, getBlueprintClock, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, stepBlueprint, type BlueprintClock } from "./blueprint";
+import { collideBlueprint, claimBlueprintBonusForBasket, getBlueprintClock, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, stepBlueprint, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
@@ -6587,8 +6587,9 @@ export function createGame(
       }
     }
     score += gain;
-    if (blueprintOn()) {
-      const rowBonus = claimBlueprintBonus();
+    // 分身先于实体过框（同帧 stepNinjaGhosts 在 checkScore 之前）。只有实体进球领走待领。
+    if (blueprintOn() && !ghost) {
+      const rowBonus = claimBlueprintBonusForBasket(true);
       if (rowBonus > 0) {
         score += rowBonus;
         callouts.push({
