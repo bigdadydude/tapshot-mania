@@ -987,22 +987,22 @@ function lineClears(
   match: (cell: BlueprintCellRef) => boolean,
 ) {
   const inLine = field.filter(match);
-  if (inLine.length === 0) return [];
+  if (inLine.length < 2) return [];
   if (!inLine.every((cell) => litKeys.has(cellKey(cell)))) return [];
   return inLine.map((cell) => ({ col: cell.col, row: cell.row }));
 }
 
 /**
- * 这一排当前还在场上的格若全部点亮，返回这些格。
- * 空排，或这一排没有格子，则不触发。高度暂时接近 0 的格仍然算在场上。
+ * 这一排当前还在场上的格至少两格、且全部点亮时，返回这些格。
+ * 空排，或只剩一格，不触发。高度暂时接近 0 的格仍然算在场上。
  */
 export function blueprintRowClears(row: number, field: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
   return lineClears(field, litKeys, (cell) => cell.row === row);
 }
 
 /**
- * 这一列当前还在场上的格若全部点亮，返回这些格。
- * 空列不触发。高度暂时接近 0 的格仍然算在场上。
+ * 这一列当前还在场上的格至少两格、且全部点亮时，返回这些格。
+ * 空列，或只剩一格，不触发。高度暂时接近 0 的格仍然算在场上。
  */
 export function blueprintColClears(col: number, field: readonly BlueprintCellRef[], litKeys: ReadonlySet<string>) {
   return lineClears(field, litKeys, (cell) => cell.col === col);
@@ -1067,7 +1067,7 @@ function beginLineClear(cells: readonly BlueprintCellRef[]) {
 
 /**
  * 篮球踩到已凸出的格就点亮。已亮再踩无事。
- * 这一排或这一列还在场上的格都亮了，就整行或整列缩回。
+ * 这一排或这一列至少还有两格、并且都亮了，才整行或整列缩回。单独一格只亮着。
  * 同一格同时属于刚触发的行和列时只缩一次、只计一次。
  * 返回本次开始缩回的格数。
  */

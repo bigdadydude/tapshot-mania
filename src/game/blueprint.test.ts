@@ -789,7 +789,7 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   assert.deepEqual(blueprintRowClears(8, field, new Set(["4:8", "6:8"])), []);
   assert.deepEqual(blueprintRowClears(3, field, new Set(["4:8", "6:8", "7:8"])), []);
   assert.deepEqual(blueprintRowClears(8, field, new Set(["4:8", "6:8", "7:8"])), [a, b, flat]);
-  assert.deepEqual(blueprintRowClears(9, field, new Set(["4:9"])), [other]);
+  assert.deepEqual(blueprintRowClears(9, field, new Set(["4:9"])), []);
   assert.equal(blueprintClearExtend(0, BLUEPRINT_CROSS_RAISE, 1), 1);
   assert.equal(blueprintClearExtend(BLUEPRINT_CROSS_RAISE / 2, BLUEPRINT_CROSS_RAISE, 1), 0.5);
   assert.equal(blueprintClearExtend(BLUEPRINT_CROSS_RAISE, BLUEPRINT_CROSS_RAISE, 1), 0);
@@ -945,10 +945,14 @@ test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", ()
   stepBlueprint(BLUEPRINT_CROSS_RAISE / 2, true, aim, world);
   assert.equal(blueprintBlocks(world).some((block) => block.col === up.col), false);
   assert.equal(getBlueprintClock().pendingBonus, 2);
-  assert.equal(touchBlueprintCell(world, side.col, side.row), 1);
-  assert.equal(getBlueprintClock().pendingBonus, 3);
-  assert.deepEqual(getBlueprintClock().staticCells, [sideDown]);
-  assert.equal(claimBlueprintBonus(), 3);
+  assert.equal(touchBlueprintCell(world, side.col, side.row), 0);
+  const left = getBlueprintClock();
+  assert.equal(left.pendingBonus, 2);
+  assert.equal(left.clearing.length, 0);
+  assert.deepEqual(left.lit, ["6:8"]);
+  assert.deepEqual(left.staticCells.map((cell) => `${cell.col}:${cell.row}`).sort(), ["6:8", "6:9"]);
+  assert.equal(blueprintBlocks(world).find((block) => block.col === side.col && block.row === side.row)?.lit, true);
+  assert.equal(claimBlueprintBonus(), 2);
   assert.equal(claimBlueprintBonus(), 0);
 
   const joint = { col: 6, row: 8 };
@@ -973,6 +977,32 @@ test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", ()
   const stillUp = blueprintBlocks(world).filter((block) => block.row === 8 || block.row === 10 && block.col === 6);
   assert.equal(stillUp.length, 3);
   for (const block of stillUp) assert.ok(block.extend > 0.9);
+});
+
+test("单格点亮不清排也不清列", () => {
+  const only = { col: 4, row: 8 };
+  assert.deepEqual(blueprintRowClears(only.row, [only], new Set(["4:8"])), []);
+  assert.deepEqual(blueprintColClears(only.col, [only], new Set(["4:8"])), []);
+  const pair = [only, { col: 6, row: 8 }];
+  assert.deepEqual(blueprintRowClears(8, pair, new Set(["4:8"])), []);
+  assert.deepEqual(blueprintRowClears(8, pair, new Set(["4:8", "6:8"])), pair);
+
+  resetBlueprint(1);
+  restoreBlueprintClock(clock({
+    goals: 2,
+    staticCells: [only],
+    staticAge: BLUEPRINT_RAISE,
+  }));
+  assert.equal(touchBlueprintCell(world, only.col, only.row), 0);
+  assert.equal(touchBlueprintCell(world, only.col, only.row), 0);
+  const stayed = getBlueprintClock();
+  assert.deepEqual(stayed.lit, ["4:8"]);
+  assert.equal(stayed.pendingBonus, 0);
+  assert.equal(stayed.clearing.length, 0);
+  assert.deepEqual(stayed.staticCells, [only]);
+  const block = blueprintBlocks(world).find((item) => item.col === only.col && item.row === only.row);
+  assert.equal(block?.lit, true);
+  assert.ok(block && block.extend > 0.9);
 });
 
 test("标题和开发者场景条都有蓝图，其它场景配色不动", () => {
