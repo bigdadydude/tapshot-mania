@@ -7,8 +7,9 @@ import type { World } from "./types";
  */
 
 /**
- * 方块边长，按画面宽 390 换算。
+ * 方块边长，按画面宽 390 换算后再取整。
  * 28 比原先的 44 更密：单格更小，篮筐走廊之间能放下更多列。
+ * 取整是为了墙面横竖落在同一像素间距上，屏幕上仍是正方形。
  */
 export const BLUEPRINT_BLOCK_SIZE = 28;
 /** 同时凸出的格子上限（静态 + 动态合计）。 */
@@ -536,8 +537,9 @@ export function stepBlueprint(dt: number, playing: boolean, next?: BlueprintAim,
   }
 }
 
+/** 墙面一格的屏幕边长。横竖共用这一个整数，避免分别取整后变成矩形。 */
 export function blueprintBlockSize(world: Pick<World, "w">) {
-  return BLUEPRINT_BLOCK_SIZE * (world.w / 390);
+  return Math.max(8, Math.round(BLUEPRINT_BLOCK_SIZE * (world.w / 390)));
 }
 
 export function blueprintGrid(world: View) {
@@ -1448,8 +1450,10 @@ function drawPerspectiveFloor(ctx: CanvasRenderingContext2D, world: View) {
       const y = blueprintFloorRowY(world, n);
       if (y > h - 1) break;
       if (y <= floorY + 0.5) continue;
-      ctx.moveTo(0, y + 0.5);
-      ctx.lineTo(w, y + 0.5);
+      // 和墙面同一套像素对齐。第一格高度因此等于墙面格子，而不是差半个像素。
+      const line = Math.round(y) + 0.5;
+      ctx.moveTo(0, line);
+      ctx.lineTo(w, line);
     }
     strokeWhite(ctx, major);
   };

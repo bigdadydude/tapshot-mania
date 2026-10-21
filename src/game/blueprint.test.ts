@@ -16,6 +16,7 @@ import {
   BLUEPRINT_CROSS_RAISE,
   BLUEPRINT_RAISE,
   BLUEPRINT_SHAPES,
+  blueprintBlockSize,
   blueprintBlocks,
   blueprintCellCover,
   blueprintCellPixels,
@@ -682,6 +683,30 @@ test("地面消失点在交线上方，交线处格子与墙面对齐", () => {
     assert.ok(Math.abs(block.cell.x - (grid.ox + col * grid.size)) < 1e-6);
     assert.ok(Math.abs(block.cell.y - (grid.oy + row * grid.size)) < 1e-6);
     assert.equal(block.cell.w, grid.size);
+    assert.equal(block.cell.h, grid.size);
+  }
+});
+
+test("墙面格子在屏幕上是正方形，地面透视格不是", () => {
+  for (const sample of [world, makeWorld(450, 800), makeWorld(360, 780), makeWorld(393, 852)]) {
+    const grid = blueprintGrid(sample);
+    assert.equal(grid.size, blueprintBlockSize(sample));
+    assert.equal(grid.size, Math.round(grid.size));
+    const pitch = (origin: number, steps: number) => {
+      const gaps: number[] = [];
+      for (let i = 0; i < steps; i++) {
+        gaps.push(Math.round(origin + (i + 1) * grid.size) - Math.round(origin + i * grid.size));
+      }
+      return gaps;
+    };
+    assert.deepEqual(pitch(grid.ox, grid.cols), Array(grid.cols).fill(grid.size));
+    assert.deepEqual(pitch(grid.oy, grid.rows), Array(grid.rows).fill(grid.size));
+    const y1 = blueprintFloorRowY(sample, 1);
+    assert.ok(Math.abs((y1 - sample.floorY) - grid.size) < 1e-4);
+    assert.equal(Math.round(y1) - Math.round(sample.floorY), grid.size);
+    const x0 = grid.ox + 2 * grid.size;
+    const near = blueprintFloorDepthX(sample, x0 + grid.size, y1) - blueprintFloorDepthX(sample, x0, y1);
+    assert.ok(near > grid.size + 0.5, `floor cell should widen in perspective, near ${near}`);
   }
 });
 
