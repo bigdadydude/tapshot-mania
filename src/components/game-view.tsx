@@ -875,7 +875,7 @@ function BallThumb({ kit, large = false }: { kit: (typeof BALLS)[number]; large?
       />
     );
   }
-  if (kit.id === "anti") {
+  if (kit.id === "anti" || kit.id === "anti2") {
     return (
       <span
         className={`${big} rounded-full shadow-inner`}

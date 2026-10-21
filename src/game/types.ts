@@ -105,6 +105,8 @@ export type Hoop = {
   fxScale?: number;
   /** When false, rim-plane scoring is ignored. */
   scoreable?: boolean;
+  /** A real-ball make retires this stand from combo contact tracking. */
+  comboScored?: boolean;
 };
 
 export type Callout = {

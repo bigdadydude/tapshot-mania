@@ -127,6 +127,7 @@ export function beginTrafficAbsorption(state: TrafficState, targetX: number, tar
 
 /** All clocks use the game's fixed simulation step, so pausing freezes warnings too. */
 export function stepTraffic(state: TrafficState, world: World, dt: number, random = Math.random) {
+  let absorbed = 0;
   state.clock += dt;
   state.safeLeft = Math.max(0, state.safeLeft - dt);
   state.hitLock = Math.max(0, state.hitLock - dt);
@@ -154,7 +155,11 @@ export function stepTraffic(state: TrafficState, world: World, dt: number, rando
     v.frozenLeft = Math.max(0, (v.frozenLeft ?? 0) - dt);
   }
   state.vehicles = state.vehicles.filter(v => {
-    if (v.absorbed) return v.absorbed.elapsed < TRAFFIC_ABSORB_SECONDS;
+    if (v.absorbed) {
+      if (v.absorbed.elapsed < TRAFFIC_ABSORB_SECONDS) return true;
+      absorbed += 1;
+      return false;
+    }
     if (v.burnt !== undefined) return v.burnt < TRAFFIC_BURN_SECONDS;
     const half = vehicleSize(v.kind, world).w / 2;
     return v.dir > 0 ? v.x - half < world.w + 8 : v.x + half > -8;
@@ -180,6 +185,7 @@ export function stepTraffic(state: TrafficState, world: World, dt: number, rando
       tint: Math.floor(random() * 3), left: TRAFFIC_WARNING_SECONDS,
     });
   }
+  return absorbed;
 }
 
 /** Swept circle against a box: slab face intersections + exact rounded corners. */

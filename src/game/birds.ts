@@ -179,7 +179,7 @@ export function stepBirds(s: BirdState, w: View, ball: Body, dt: number, allowSp
       const distance = Math.hypot(dx, dy), travel = Math.min(distance, w.w * 1.4 * dt);
       if (distance > 0) { b.x += dx / distance * travel; b.y += dy / distance * travel; }
       b.vx = (b.x - b.px) / dt; b.vy = (b.y - b.py) / dt;
-      if (distance - travel <= skills.hole.r * 0.5) { b.age = 1000; if (!b.rewarded) s.absorbed++; b.rewarded = true; }
+      if (distance - travel <= skills.hole.r * 0.5) { b.age = 1000; s.absorbed++; b.rewarded = true; }
       continue;
     }
     if (b.mode === "frozen") {
@@ -389,7 +389,7 @@ export function collideBirdGantries(s: BirdState, gantries: TrainGantry[], scrol
 
 /** Relative swept circles catch even a fast dive crossing the ball between frames. */
 export function collideBirds(s: BirdState, ball: Body, prevX: number, prevY: number, skills: BirdSkills = {}, rng = Math.random) {
-  if (birdOwnsBall(s) || s.safeLeft > 0 || skills.unobservable) return null;
+  if (birdOwnsBall(s) || s.safeLeft > 0 || skills.unobservable || skills.hole) return null;
   let nearest: { bird: Bird; t: number; nx: number; ny: number; x: number; y: number; r: number; claw: boolean } | null = null;
   for (const b of s.birds) {
     if (!canBeStunned(b) && b.mode !== "frozen") continue;

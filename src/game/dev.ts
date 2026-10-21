@@ -108,6 +108,7 @@ export const DEFAULT_DEV: DevHud = {
 export type DevCmd =
   | { t: "unlock" }
   | { t: "enter" }
+  | { t: "antiHole" }
   | { t: "exit" }
   | { t: "scene"; id: DevSceneId }
   | { t: "playMode"; mode: PlayMode }
