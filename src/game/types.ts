@@ -45,6 +45,19 @@ export type NetNode = {
   px: number;
   py: number;
   pinned: boolean;
+  /** Net 2 depth; y/py remain projected so moves and snapshots share the old format. */
+  depth?: number;
+  prevDepth?: number;
+  netDt?: number;
+  /** Stored on the first knot so rebuilding the mesh also resets its contact state. */
+  netState?: {
+    clock: number;
+    seed: number;
+    inside: boolean;
+    exited: boolean;
+    fromBelow: boolean;
+    impactUntil: number;
+  };
 };
 
 export type Ball = {
@@ -95,6 +108,7 @@ export type Hoop = {
   frostLeft: number;
   netPulse: number;
   jolt: number;
+  joltPower?: number;
   joltDir: number;
   net: NetNode[];
   /** Stage modifier: hide backboard + brace (ghost rings). */
@@ -122,6 +136,7 @@ export type Callout = {
 export type CloudMode = "dance" | "drift" | "off";
 
 export type Gfx = {
+  net2: boolean;
   clouds: CloudMode;
   ballShade: boolean;
   ballShadow: boolean;
@@ -133,6 +148,7 @@ export type Gfx = {
 };
 
 export const DEFAULT_GFX: Gfx = {
+  net2: true,
   clouds: "dance",
   ballShade: true,
   ballShadow: true,
