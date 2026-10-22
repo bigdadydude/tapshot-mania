@@ -780,6 +780,7 @@ export function createYardLights(): StageModifier {
   function joltHoop(host: ModifierHost, fromY: number) {
     const h = host.getHoop();
     h.jolt = 1;
+    h.joltPower = 1;
     h.joltDir = fromY < h.y ? -1 : 1;
     host.hit("bone");
   }

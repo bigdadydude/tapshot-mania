@@ -61,6 +61,7 @@ function parseScene(v: unknown): SceneId {
 
 function parseGfx(raw: Partial<Gfx> | undefined): Gfx {
   return {
+    net2: raw?.net2 !== false,
     clouds: parseClouds(raw?.clouds),
     ballShade: raw?.ballShade !== false,
     ballShadow: raw?.ballShadow !== false,
