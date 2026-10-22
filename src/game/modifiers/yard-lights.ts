@@ -761,9 +761,9 @@ export function createYardLights(): StageModifier {
       ball.vx += nx * power * 0.42;
       ball.vy += ny * power * 0.42;
     } else {
-      // Away from the laser's travel direction.
-      ball.vx = -nx * power;
-      ball.vy = -ny * power;
+      // Transfer the projectile's travel direction to the ball.
+      ball.vx = nx * power;
+      ball.vy = ny * power;
       // Extra launch so travel distance reads clearly.
       ball.vx *= 1.12;
       ball.vy *= 1.12;
@@ -1128,9 +1128,29 @@ export function createYardLights(): StageModifier {
       const layout = loadSearchlightLayout();
       const awaken = host.isHackerAwaken?.() === true;
       const nearR = ball.r * AWAKEN_NEAR;
+      const hole = host.getBlackHole?.();
 
       for (const b of bolts) {
         if (b.x < -9000) continue;
+        if (hole) {
+          // Suction takes precedence over every collision, bounce and retirement state.
+          const dx = hole.x - b.x, dy = hole.y - b.y;
+          const distance = Math.hypot(dx, dy);
+          const speed = Math.max(world.w * 1.8, BOLT_SPD);
+          const travel = Math.min(distance, speed * dt);
+          const scale = distance > 0 ? speed / distance : 0;
+          b.vx = dx * scale; b.vy = dy * scale;
+          b.faceAng = Math.atan2(b.vy, b.vx);
+          b.falling = false; b.fadeLeft = null;
+          if (distance > 0) { b.x += dx / distance * travel; b.y += dy / distance * travel; }
+          b.trail.push({ x: b.x, y: b.y });
+          if (b.trail.length > TRAIL_LEN) b.trail.shift();
+          if (distance - travel <= hole.r * 0.5) {
+            b.x = -9999;
+            host.onObjectAbsorbed?.(1);
+          }
+          continue;
+        }
         if (b.fadeLeft !== null) {
           b.fadeLeft = Math.max(0, b.fadeLeft - dt);
           if (b.fadeLeft <= 0) b.x = -9999;
@@ -1215,6 +1235,7 @@ export function createYardLights(): StageModifier {
 
       bolts = bolts.filter((b) => {
         if (b.x < -9000) return false;
+        if (hole) return true;
         if (b.fadeLeft !== null || b.falling) return true;
         if (b.elite) return true;
         return !outsidePlay(world, b.x, b.y);

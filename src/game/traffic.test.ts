@@ -465,6 +465,18 @@ test("discharge rewards one fresh contact, respects hitLock and cannot farm sust
   assert.equal(state.lightningHit, false);
 });
 
+test("black hole reports one reward per completed car, never for unrelated despawns", () => {
+  const state=createTraffic();
+  state.next={ground:100,bridge:100};
+  state.vehicles=[car("sedan",1),{...car("truck",-1,"bridge"),id:2,burnt:0.3}];
+  beginTrafficAbsorption(state,195,300);
+  assert.equal(stepTraffic(state,world,TRAFFIC_ABSORB_SECONDS/2),0);
+  assert.equal(stepTraffic(state,world,TRAFFIC_ABSORB_SECONDS/2),2);
+  assert.equal(stepTraffic(state,world,1),0);
+  state.vehicles=[{...car("sedan",1),x:world.w+300},{...car("truck",-1),id:3,burnt:TRAFFIC_BURN_SECONDS}];
+  assert.equal(stepTraffic(state,world,0.1),0);
+});
+
 test("black hole captures all cars immediately, advances fixed timers, absorbs new arrivals and clears", () => {
   const state = createTraffic();
   const ground = car("truck", 1), bridge = { ...car("sedan", -1, "bridge"), id: 2 };

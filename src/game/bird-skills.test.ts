@@ -100,11 +100,20 @@ test("non-stun contacts report relative impact for glass damage even when the ba
   assert.equal(collideBirds(s,ball,ball.x,ball.y,{contact:n=>{impact=n}}),"shattered");
   assert.equal(impact,700);assert.equal(s.kills,0);
 });
-test("black hole pulls birds in, awards absorption once, and does not reward an already rewarded stun twice", () => {
+test("black hole counts each absorbed bird once, including birds stunned before the hole opened", () => {
   for (const rewarded of [false,true]) {
     const {s,b,ball}=setup();b.rewarded=rewarded;
     for(let i=0;i<120;i++)stepBirds(s,world,ball,1/60,false,()=>0.3,0,0,{hole:{x:250,y:500,r:30}});
-    assert.equal(s.birds.length,0);assert.equal(s.absorbed,rewarded?0:1);assert.equal(s.kills,0);
+    assert.equal(s.birds.length,0);assert.equal(s.absorbed,1);assert.equal(s.kills,0);
+  }
+});
+test("black hole suppresses bird impacts and grabs immediately, even before suction steps", () => {
+  for (const kind of ["eagle", "silly", "dive"] as const) {
+    const {s,b,ball}=setup(kind), before={...ball};
+    const mode=b.mode;
+    assert.equal(collideBirds(s,ball,ball.x,ball.y,{hole:{x:250,y:500,r:30},burn:true,lethal:true}),null);
+    assert.deepEqual(ball,before);assert.equal(s.kills,0);assert.equal(s.carrier,null);assert.equal(b.mode,mode);
+    assert.notEqual(collideBirds(s,ball,ball.x,ball.y),null,"ordinary contacts resume after the hole closes");
   }
 });
 test("vector short press pays its existing cost and releases/stuns the carrier", () => {

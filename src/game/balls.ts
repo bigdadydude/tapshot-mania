@@ -7,7 +7,8 @@ export type BallId =
   | "lava"
   | "frost"
   | "champ"
-  | "anti"
+  | "anti" // Legacy save / balance-record identifier; resolves to anti2.
+  | "anti2"
   | "glass"
   | "prison"
   | "rubber"
@@ -30,6 +31,8 @@ export type BallKit = {
   champ?: boolean;
   /** Anti ball: collect antimatter → timed black hole. */
   anti?: boolean;
+  /** Assisted recovery, with player-controlled shots. */
+  anti2?: boolean;
   /** Lightning ball: charge on roll/bank, long-press chain swish. */
   bolt?: boolean;
   /** Maze ball: a floor joystick redirects gravity. */
@@ -241,18 +244,15 @@ export const BALLS: BallKit[] = [
     },
   },
   {
-    id: "anti",
-    name: "反重力球",
-    skill: "收集反物质开黑洞；洞时长20秒起，场上留存越久洞越短（不低于10秒）",
+    id: "anti2",
+    name: "反物质球",
+    skill: "收集反物质开黑洞：初始25秒减去平均收集时间×0.75，最低15秒；黑洞内每次进球以当前连击数×4%的概率续时1秒（最高100%）；每吸收一个非篮球物体+1分，子弹与鸟不再碰撞篮球；点击跳投，近筐下落轻微吸中，进球快回、失误柔和接回，途中可补跳，按进球得分",
     heat: false,
     anti: true,
+    anti2: true,
     wrap: "ground",
     score: "normal",
-    phys: {
-      jumpUp: 0.95,
-      jumpFwd: 0.95,
-      ball: 0.8,
-    },
+    phys: { jumpUp: 0.95, jumpFwd: 0.95, ball: 0.8 },
   },
   {
     id: "glass",
@@ -297,12 +297,13 @@ export function playableBalls(): BallKit[] {
 }
 
 export function parseBall(v: unknown): BallId {
+  if (v === "anti") return "anti2";
   if(v === "inflatable") return DEFAULT_BALL;
   const id =
     v === "lava" ||
     v === "frost" ||
     v === "champ" ||
-    v === "anti" ||
+    v === "anti2" ||
     v === "plain" ||
     v === "super" ||
     v === "rocket" ||
@@ -322,7 +323,8 @@ export function parseBall(v: unknown): BallId {
 }
 
 export function getBall(id: BallId): BallKit {
-  return BALLS.find((b) => b.id === id) ?? BALLS.find((b) => b.id === DEFAULT_BALL)!;
+  const resolved = id === "anti" ? "anti2" : id;
+  return BALLS.find((b) => b.id === resolved) ?? BALLS.find((b) => b.id === DEFAULT_BALL)!;
 }
 
 /** Playable ball radius for a kit (classic world.ballR × rScale). */
@@ -344,6 +346,7 @@ export type EffectiveBall = {
   frost: boolean;
   champ: boolean;
   anti: boolean;
+  anti2: boolean;
   bolt: boolean;
   chain: boolean;
   ninja: boolean;
@@ -386,7 +389,7 @@ export function effectiveBall(primaryId: BallId, fuseId: BallId | BallId[] | nul
   return {
     id: primaryId,
     fuseId: fuses[0]?.id ?? null,
-    name, skill, heat, frost, champ, anti, bolt, chain, ninja, glass, codeRain, vector, rocket, maze, quantum, time, super:any("super"),
+    name, skill, heat, frost, champ, anti, anti2: any("anti2"), bolt, chain, ninja, glass, codeRain, vector, rocket, maze, quantum, time, super:any("super"),
     wrap: primary.wrap,
     rScale: (primary.rScale ?? 1) * fuses.reduce((scale, fuse) => scale * (fuse.rScale ?? 1), 1),
     phys: primary.phys,

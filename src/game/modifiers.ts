@@ -62,6 +62,9 @@ export type ModifierHost = {
   onProjectileImpact?: (vx: number, vy: number) => boolean;
   /** Active Maze Ball hazard holes; projectiles are consumed by their cores. */
   getMazeHoles?: () => ReadonlyArray<{ x: number; y: number; r: number }>;
+  /** Active antimatter black hole: projectiles become non-solid and fly into it. */
+  getBlackHole?: () => { x: number; y: number; r: number } | null;
+  onObjectAbsorbed?: (count: number) => void;
 };
 
 export type YardLightsHud = {

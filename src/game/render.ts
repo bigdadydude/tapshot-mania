@@ -2354,7 +2354,7 @@ function drawBallBody(ctx: CanvasRenderingContext2D, ball: Ball, combo: number, 
 		drawChampBall(ctx, ball, lit);
 		return;
 	}
-	if (ballId === "anti") {
+	if (ballId === "anti" || ballId === "anti2") {
 		drawAntiBall(ctx, ball, lit, time);
 		return;
 	}
