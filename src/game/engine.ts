@@ -1,6 +1,7 @@
 import { stepTrainSmoke } from "./train-smoke";
 import { createAntiRecovery, launchAntiRecovery, scoreAntiRecovery, stepAntiRecovery, antiRecoveryIgnoresHoops, type AntiRecovery } from "./anti-recovery";
 import { BUZZER_WINDOW, BUZZER_SPEED, hasBuzzerChance } from "./buzzer";
+import { miniMeStreakPerStack, streakAfterMake } from "./make-streak";
 import { touchesAntimatter } from "./antimatter-pickup";
 import { getTrainTunnel, restoreTrainTunnel, stepTrainTunnel, tunnelPassing, tunnelReserved, tunnelHoopMin, tunnelGeometry, collideTunnel } from "./train-tunnel.ts";
 import { collideTrainGantries, getTrainGantries, getTrainGantryWarnings } from "./train-gantry.ts";
@@ -6432,21 +6433,12 @@ export function createGame(
     const bunshinGhost = ghost && bunshinActive() && !isNinja();
     const ninjaGhost = ghost && isNinja();
 
-    if (!clutch && comboCounting) {
-      const boost =
-        bunshinGhost
-          ? 1
-          : isRogueMode() && rogueRun && rogueRun.buffComboLeft > 0
-            ? (catalogOf("comboboost")?.comboBoostAdd ?? 3)
-            : 1;
-      streak += boost;
-    } else if (!clutch) {
-      streak = bunshinGhost
-        ? 1
-        : isRogueMode() && rogueRun && rogueRun.buffComboLeft > 0
-          ? (catalogOf("comboboost")?.comboBoostAdd ?? 3)
-          : 1;
-    }
+    // Clutch makes take the same streak step as any other make, then score with it.
+    const comboBoost =
+      !bunshinGhost && isRogueMode() && rogueRun && rogueRun.buffComboLeft > 0
+        ? (catalogOf("comboboost")?.comboBoostAdd ?? 3)
+        : null;
+    streak = streakAfterMake({ streak, comboCounting, bunshinGhost, comboBoost });
     comboCounting = true;
     comboClock = 0;
     if (!ghost) {
@@ -6667,11 +6659,11 @@ export function createGame(
       if (swish || bank || toilet || lucky || depth || needle || clutch) {
         rogueRun.specialMakes += 1;
       }
-      // 小小我：每层迷你分身 +1 连击、本体一半分
+      // 小小我：每层迷你分身 +1 连击（含绝杀）、本体一半分
       const minis = miniMeStacks(rogueRun);
       if (minis > 0) {
         for (let i = 0; i < minis; i++) {
-          if (!clutch) streak += 1;
+          streak += miniMeStreakPerStack();
           const half = Math.round(gain / 2);
           score += half;
           callouts.push({
