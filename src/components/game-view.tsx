@@ -361,6 +361,8 @@ export function GameView() {
       {showSettings ? (
         <SettingsHub
           showDev={hud.dev.unlocked}
+          net2={hud.gfx.net2}
+          onNetToggle={() => gameRef.current?.setGfx({ net2: !hud.gfx.net2 })}
           onGfx={() => setMenu("gfx")}
           onSound={() => setMenu("sound")}
           onDev={() => {
@@ -1961,12 +1963,16 @@ function MenuBtn({
 
 function SettingsHub({
   showDev,
+  net2,
+  onNetToggle,
   onGfx,
   onSound,
   onDev,
   onBack,
 }: {
   showDev: boolean;
+  net2: boolean;
+  onNetToggle: () => void;
   onGfx: () => void;
   onSound: () => void;
   onDev: () => void;
@@ -1979,6 +1985,12 @@ function SettingsHub({
         <div className="flex flex-col gap-2">
           <MenuBtn label="画面" onClick={onGfx} />
           <MenuBtn label="声音" onClick={onSound} />
+          <div className="mt-1">
+            <ToggleRow label="篮网2" on={net2} onToggle={onNetToggle} />
+            <p className="mt-2 px-1 text-xs leading-relaxed text-muted">
+              {net2 ? "柔软拉扯与自然回弹，关闭可对比旧版篮网。" : "当前使用旧版篮网，开启体验柔软拉扯。"}
+            </p>
+          </div>
           {showDev ? <MenuBtn label="开发者" onClick={onDev} /> : null}
         </div>
         <button
@@ -2055,6 +2067,9 @@ function ToggleRow({ label, on, onToggle }: { label: string; on: boolean; onTogg
   return (
     <button
       type="button"
+      role="switch"
+      aria-label={label}
+      aria-checked={on}
       onClick={onToggle}
       className="flex h-11 w-full items-center justify-between rounded-lg border border-border bg-bg-subtle px-3"
     >
