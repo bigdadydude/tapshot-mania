@@ -81,30 +81,21 @@ export type Net2Environment = {
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 // A make catches in the sleeve, then drops. The reference speed is 14× the rim.
-// The cut is a step, not a ramp: soft and medium entries lose down to ~34%
-// on the frame the center clears the rim, then the center hops up a few
-// pixels. Past ~1.5× reference the cut fades toward 92% and the hop disappears.
+// The cut is one frame: soft and medium entries lose down to ~34% the moment
+// the center clears the rim, then gravity takes them. Past ~1.5× reference
+// the cut fades toward 92%, so a hard make barely notices.
 const MAKE_REF = 14;
 function makeNorm(speed: number, inner: number) {
   return clamp(speed / (inner * MAKE_REF), 0.4, 5);
 }
 function makeWindow(speed: number, inner: number) {
-  // Covers the step frame and the rise frame. It is not a speed plateau.
+  // Holds the arm so a second score cannot restart the step. The cut itself
+  // does not last this long.
   return Math.max(0.045, 0.08 / makeNorm(speed, inner));
 }
 function makeFloor(speed: number, inner: number) {
   const keep = 0.34 + 0.58 * clamp((makeNorm(speed, inner) - 1.45) / 1.35, 0, 1);
   return Math.max(inner * 3.5, speed * keep);
-}
-function makeSoft(speed: number, inner: number) {
-  return clamp((2.6 - makeNorm(speed, inner)) / 1.5, 0, 1);
-}
-function makeHop(speed: number, inner: number) {
-  return inner * 0.27 * makeSoft(speed, inner);
-}
-function makePocket(speed: number, inner: number) {
-  // Sit this far under the rim before the hop, so the rise stays inside the mouth.
-  return makeHop(speed, inner) + inner * 0.18 * makeSoft(speed, inner);
 }
 function gust(t: number, seed: number) {
   const hash = (n: number) => {
@@ -132,12 +123,12 @@ function prepare(h: Hoop) {
   const state = h.net[0]!.netState ??= {
     clock: 0, seed: (h.baseY ?? h.y) * 0.173 + h.inner * 3.71 + (h.side ?? 1) * 7.13,
     inside: false, exited: false, fromBelow: false, impactUntil: 0,
-    entryVx: 0, entryVy: 0, dwellLeft: 0, hopLeft: 0, throughMake: false,
+    entryVx: 0, entryVy: 0, dwellLeft: 0, stepped: false, throughMake: false,
   };
   state.entryVx ??= 0;
   state.entryVy ??= 0;
   state.dwellLeft ??= 0;
-  state.hopLeft ??= 0;
+  state.stepped ??= false;
   state.throughMake ??= false;
   return state;
 }
@@ -203,7 +194,7 @@ export function tugNet2(h: Hoop, ball?: Pick<Ball, "x" | "y" | "vx" | "vy">, pro
       state.throughMake = true;
       const speed = Math.hypot(ball.vx, ball.vy);
       state.dwellLeft = makeWindow(speed, h.inner);
-      state.hopLeft = Math.max(makeHop(speed, h.inner), 1e-4);
+      state.stepped = false;
     }
   }
   h.netPulse = 0.7;
@@ -503,7 +494,7 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
   const canTouch = allowContact && !(h.burning && h.char > 0.45);
   if (!canTouch) {
     state.inside = false; state.fromBelow = false;
-    state.throughMake = false; state.dwellLeft = 0; state.hopLeft = 0;
+    state.throughMake = false; state.dwellLeft = 0; state.stepped = false;
   }
   h.netPulse = Math.max(0, h.netPulse - dt);
   const total = Math.min(dt, 1 / 15);
@@ -514,15 +505,10 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
   const toY = (x: number, y: number) => pivotY - (x - pivotX) * sin + (y - pivotY) * cos;
   const body = { ...ball, x: toX(ball.x, ball.y), y: toY(ball.x, ball.y),
     vx: ball.vx * cos + ball.vy * sin, vy: -ball.vx * sin + ball.vy * cos };
-  let rising = false;
   if (body.vy < 0) {
-    state.inside = false; state.throughMake = false; state.dwellLeft = 0; state.hopLeft = 0;
-  } else if (state.hopLeft < 0) {
-    state.hopLeft = -state.hopLeft;
-    rising = true;
+    state.inside = false; state.throughMake = false; state.dwellLeft = 0; state.stepped = false;
   }
   let bx = toX(prevX, prevY), by = toY(prevX, prevY);
-  const frameY = by;
   const travel = Math.hypot(body.x - bx, body.y - by);
   const steps = Math.min(96, Math.max(1, Math.ceil(total * 240),
     canTouch ? Math.ceil(travel / Math.max(2, ball.r * 0.28)) : 1));
@@ -597,7 +583,7 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
           state.entryVy = body.vx * sin + body.vy * cos;
           const speed = Math.hypot(state.entryVx, state.entryVy);
           state.dwellLeft = makeWindow(speed, h.inner);
-          state.hopLeft = Math.max(makeHop(speed, h.inner), 1e-4);
+          state.stepped = false;
           state.throughMake = true;
         }
       }
@@ -607,7 +593,7 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
         const throughHem = by - ball.r > bottom + 1;
         if (throughHem && state.throughMake) exitKick = { vx: state.entryVx, vy: state.entryVy };
         state.inside = false; state.fromBelow = false; state.exited = true;
-        state.dwellLeft = 0; state.hopLeft = 0; state.throughMake = false;
+        state.dwellLeft = 0; state.stepped = false; state.throughMake = false;
       }
       if (body.vy >= 0) state.fromBelow = false;
       if (by + ball.r < h.y - 1) state.fromBelow = false;
@@ -634,41 +620,20 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
         if (x !== bx) {
           bx = x; moveX = 0; body.vx = 0; corrected = true;
         }
-        // Step the downward speed on the frame the center clears the rim, then
-        // rise on the next frame. The step is immediate — no ease — and the
-        // rise is clamped so the center stays under the rim. Faster entries
-        // keep more speed and get a smaller hop.
-        if (by > h.y && body.vy > 0 && state.hopLeft !== 0) {
+        // One step, once the center is inside the rim. Later frames are just
+        // gravity — the ball is not pulled back up.
+        if (by > h.y && body.vy > 0 && state.dwellLeft > 0 && !state.stepped) {
           const entrySpeed = Math.hypot(state.entryVx, state.entryVy);
           const floor = makeFloor(entrySpeed, h.inner);
-          if (!rising && state.hopLeft > 0 && body.vy > floor) {
-            const hop = state.hopLeft;
-            if (hop > 0.4) {
-              const pocket = h.y + makePocket(entrySpeed, h.inner);
-              if (by < pocket) by = pocket;
-              moveY = 0;
-            } else {
-              const scale = floor / body.vy;
-              const below = Math.max(0, Math.min(moveY, by - Math.max(fromY, h.y)));
-              by -= below * (1 - scale);
-              moveY *= scale;
-            }
+          if (body.vy > floor) {
+            const scale = floor / body.vy;
+            const below = Math.max(0, Math.min(moveY, by - Math.max(fromY, h.y)));
+            by -= below * (1 - scale);
+            moveY *= scale;
             body.vy = floor;
-            state.hopLeft = -hop;
             corrected = true;
-          } else if (rising && state.hopLeft > 0.4) {
-            const lifted = Math.max(h.y + 2, frameY - state.hopLeft);
-            if (lifted < by) {
-              by = lifted;
-              moveY = 0;
-              body.vy = Math.min(body.vy, floor);
-              corrected = true;
-            }
-            state.hopLeft = 0;
-          } else if (rising) {
-            state.hopLeft = 0;
           }
-          state.dwellLeft = Math.max(0, state.dwellLeft - tick);
+          state.stepped = true;
         }
       }
       // Outside the sleeve the mesh itself resists. Inside, and on the way up

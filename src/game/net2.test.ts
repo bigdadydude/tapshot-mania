@@ -569,15 +569,14 @@ test("a slower make hesitates longer than a fast one and still falls through", (
       assert.ok(slow.minVy > 40 && mid.minVy > 40 && fast.minVy > 40, `${label} ${how} stalled in the sleeve`);
       assert.ok(slow.firstVy / slow.entryVy < 0.55, `${label} ${how} soft stepped to ${slow.firstVy} of ${slow.entryVy}`);
       assert.ok(slow.minVy / slow.entryVy < 0.55, `${label} ${how} soft held ${slow.minVy} of ${slow.entryVy}`);
-      assert.ok(slow.rise > 4, `${label} ${how} soft rise only ${slow.rise}px`);
+      assert.ok(slow.rise < 1, `${label} ${how} soft still rose ${slow.rise}px`);
       assert.ok(mid.firstVy / mid.entryVy < 0.6, `${label} ${how} medium stepped to ${mid.firstVy} of ${mid.entryVy}`);
       assert.ok(mid.minVy / mid.entryVy < 0.6, `${label} ${how} medium held ${mid.minVy} of ${mid.entryVy}`);
-      assert.ok(mid.rise > 3, `${label} ${how} medium rise only ${mid.rise}px`);
+      assert.ok(mid.rise < 1, `${label} ${how} medium still rose ${mid.rise}px`);
       assert.ok(fast.minVy / fast.entryVy > 0.84, `${label} ${how} hard slowed to ${fast.minVy} from ${fast.entryVy}`);
-      assert.ok(fast.rise < 2.5, `${label} ${how} hard rise ${fast.rise}px`);
+      assert.ok(fast.rise < 1, `${label} ${how} hard still rose ${fast.rise}px`);
       assert.ok(fast.dwell < 0.09, `${label} ${how} hard dwell ${fast.dwell}s`);
       assert.ok(slow.dwell > fast.dwell * 2.5, `${label} ${how} dwell slow ${slow.dwell}s vs fast ${fast.dwell}s`);
-      assert.ok(slow.rise > fast.rise + 3, `${label} ${how} rise slow ${slow.rise}px vs fast ${fast.rise}px`);
     }
   }
 });
