@@ -411,28 +411,54 @@ function settleCloth(profile: NetProfile) {
   return s;
 }
 
-test("a sideways shot cannot punch through the woven wall, but the hem mouth stays open", () => {
+test("side contact meets the weave, cups it, and does not punch through", () => {
   const dt = 1 / 60;
   for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
+    const label = profile === NET3_PROFILE ? "net3" : "net2";
     for (const y0 of [210, 222, 232]) for (const dir of [1, -1] as const) {
       for (const [speed, gravity] of [[650, 1400], [1600, 2500]] as const) {
         const s = settleCloth(profile);
+        const hem = Math.max(...s.hoop.net.map(n => n.y));
+        const rest = s.hoop.net.map(n => ({ x: n.x, y: n.y }));
         s.ball.x = s.hoop.x - dir * 110;
         s.ball.y = y0;
         s.ball.vx = dir * speed;
         s.ball.vy = 0;
-        let minDistance = Infinity;
-        for (let i = 0; i < 36; i++) {
-          const x = s.ball.x, y = s.ball.y;
+        let minOverlap = Infinity, crossed = false, brakedFar = false, slowed = false, touched = false;
+        let peakNear = 0, peakFar = 0, brakeDistance = Infinity;
+        for (let i = 0; i < 40; i++) {
+          const x = s.ball.x, y = s.ball.y, vx0 = s.ball.vx;
           s.ball.vy += gravity * dt;
           s.ball.x += s.ball.vx * dt;
           s.ball.y += s.ball.vy * dt;
           stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, { wind: 0, profile });
-          minDistance = Math.min(minDistance, screenRopeDistance(s));
-          assert.ok(dir * (s.ball.x - s.hoop.x) < 0, `side shot crossed the sleeve at y=${y0} v=${speed} ${profile === NET3_PROFILE ? "net3" : "net2"}`);
+          const distance = screenRopeDistance(s);
+          if (distance <= s.ball.r + 4) touched = true;
+          if (!touched && distance > s.ball.r + 8 && Math.abs(s.ball.vx) < Math.abs(speed) * 0.9) brakedFar = true;
+          if (Math.abs(s.ball.vx) < Math.abs(vx0) - 12) brakeDistance = Math.min(brakeDistance, distance);
+          if (s.ball.y > s.hoop.y - 4 && s.ball.y < hem + 6) {
+            minOverlap = Math.min(minOverlap, distance);
+            if (dir * (s.ball.x - s.hoop.x) >= 0) crossed = true;
+          }
+          if (Math.abs(s.ball.vx) < Math.abs(speed) * 0.72) slowed = true;
+          let near = 0, far = 0, nearCount = 0, farCount = 0;
+          for (let k = 0; k < rest.length; k++) {
+            const moved = Math.hypot(s.hoop.net[k]!.x - rest[k]!.x, s.hoop.net[k]!.y - rest[k]!.y);
+            const onHitSide = dir > 0 ? rest[k]!.x < s.hoop.x : rest[k]!.x > s.hoop.x;
+            if (onHitSide && Math.abs(rest[k]!.y - y0) < 36) { near += moved; nearCount++; }
+            else if (!onHitSide && Math.abs(rest[k]!.x - s.hoop.x) > 12) { far += moved; farCount++; }
+          }
+          if (nearCount) peakNear = Math.max(peakNear, near / nearCount);
+          if (farCount) peakFar = Math.max(peakFar, far / farCount);
+          if (s.ball.y > hem + 90) break;
         }
-        assert.ok(minDistance >= s.ball.r - 2, `side ropes cut the ball by ${s.ball.r - minDistance}px`);
-        assert.ok(dir * s.ball.vx < 0, "the wall should throw the shot back");
+        const where = `${label} y=${y0} v=${speed * dir}`;
+        assert.equal(brakedFar, false, `${where} slowed before reaching the weave`);
+        assert.equal(crossed, false, `${where} punched through the sleeve`);
+        assert.ok(brakeDistance <= s.ball.r + 4, `${where} first resistance at ${brakeDistance}px from the ropes`);
+        assert.ok(minOverlap >= s.ball.r - 8, `${where} ropes cut the ball by ${s.ball.r - minOverlap}px`);
+        assert.ok(peakNear > peakFar + 0.6, `${where} contact should be local, near ${peakNear} far ${peakFar}`);
+        if (minOverlap < s.ball.r + 1) assert.equal(slowed, true, `${where} should lose speed into the mesh`);
       }
     }
     const open = settleCloth(profile);

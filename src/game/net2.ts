@@ -334,38 +334,92 @@ function sideAt(h: Hoop, y: number, left: boolean) {
   return extent(row) * (1 - t) + extent(row + 1) * t;
 }
 
-/** Side-column knot: the woven wall, not the front or back lip of an opening. */
-function sideKnot(index: number) {
-  const rest = REST[index]!;
-  return Math.abs(rest.x) >= Math.abs(rest.z);
+/** Closest point on a drawn strand. Knots are unprojected while the solver runs. */
+function strandHit(h: Hoop, edge: { a: number; b: number }, px: number, py: number) {
+  const a = h.net[edge.a]!, b = h.net[edge.b]!;
+  const ax = a.x, ay = a.y + a.depth! * RIM_RY;
+  const bx = b.x, by = b.y + b.depth! * RIM_RY;
+  const abx = bx - ax, aby = by - ay;
+  const sq = abx * abx + aby * aby;
+  const t = sq > 1e-8 ? clamp(((px - ax) * abx + (py - ay) * aby) / sq, 0, 1) : 0;
+  const cx = ax + abx * t, cy = ay + aby * t;
+  return { t, cx, cy, dist: Math.hypot(px - cx, py - cy) };
 }
 
 /**
- * Left and right side walls in the plane the player sees.
- * Both columns have to be in range. A lone hem-lip knot is the mouth, not a wall.
+ * Soft contact with the strands the player can see.
+ * A hit exists only when the ball circle meets a side strand. That strand
+ * yields and takes part of the hit, and the ball stays on its outer side.
+ * Strands in the rim mouth and the hem mouth do not shove the ball.
  */
-function screenWalls(h: Hoop, y: number, reach: number) {
-  let left = Infinity, right = -Infinity;
-  for (let i = 0; i < h.net.length; i++) {
-    if (!sideKnot(i)) continue;
-    const n = h.net[i]!;
-    if (netRowReleased(h.char, REST[i]!.row)) continue;
-    const sy = n.y + n.depth! * RIM_RY;
-    if (sy < y - reach || sy > y + reach) continue;
-    left = Math.min(left, n.x);
-    right = Math.max(right, n.x);
+function resistSleeve(h: Hoop, ball: Ball, body: { vx: number; vy: number },
+  fromX: number, fromY: number, bx: number, by: number, tick: number) {
+  const radius = ball.r;
+  const mouth = h.inner * 0.22;
+  let hits = 0;
+  let sepX = 0, sepY = 0;
+  for (let pass = 0; pass < 3; pass++) {
+    for (const edge of NET2_EDGES) {
+      if (netRowReleased(h.char, REST[edge.a]!.row) || netRowReleased(h.char, REST[edge.b]!.row)) continue;
+      const now = strandHit(h, edge, bx, by);
+      const prev = strandHit(h, edge, fromX, fromY);
+      const usePrev = prev.dist < now.dist;
+      const cx = usePrev ? prev.cx : now.cx;
+      const cy = usePrev ? prev.cy : now.cy;
+      const t = usePrev ? prev.t : now.t;
+      const depth = h.net[edge.a]!.depth! * (1 - t) + h.net[edge.b]!.depth! * t;
+      // Front and back sheets sit off the court plane. The side wall is the
+      // silhouette, where the strand's depth is near the ball.
+      if (Math.abs(depth) > radius * 0.4) continue;
+      if (Math.abs(cx - h.x) < mouth) continue;
+      const beyond = (px: number) => Math.abs(px - h.x) > Math.abs(cx - h.x) + 0.75;
+      const fromOut = beyond(fromX), nowOut = beyond(bx);
+      if (!fromOut && !nowOut) continue;
+      const crossed = fromOut && !nowOut && prev.dist < radius && Math.abs(by - cy) < radius;
+      if (now.dist >= radius && !crossed) continue;
+      let nx = bx - cx, ny = by - cy;
+      let nlen = Math.hypot(nx, ny);
+      if (nlen < 1e-4) { nx = Math.sign(cx - h.x) || 1; ny = 0; nlen = 1; }
+      nx /= nlen; ny /= nlen;
+      // Keep the push pointing out of the hoop. A center in the mouth is not outside.
+      if (nx * (cx - h.x) + ny * (cy - h.y) < 0) continue;
+      const a = h.net[edge.a]!, b = h.net[edge.b]!;
+      const wa = a.pinned ? 0 : 1 - t, wb = b.pinned ? 0 : t;
+      const sum = wa + wb;
+      const pen = Math.max(radius - now.dist, crossed ? radius * 0.35 : 0);
+      const cloth = sum > 1e-6 ? Math.min(pen * 0.55, 3.2) : 0;
+      if (cloth > 0) {
+        const shareA = wa / sum, shareB = wb / sum;
+        const approach = Math.max(0, -(body.vx * nx + body.vy * ny));
+        const kick = Math.min(approach * 0.4, h.inner * 8);
+        const yieldX = -nx * cloth, yieldY = -ny * cloth;
+        a.x += yieldX * shareA; a.y += yieldY * shareA;
+        b.x += yieldX * shareB; b.y += yieldY * shareB;
+        a.px += yieldX * shareA * 0.4 + nx * kick * tick * shareA;
+        a.py += yieldY * shareA * 0.4 + ny * kick * tick * shareA;
+        b.px += yieldX * shareB * 0.4 + nx * kick * tick * shareB;
+        b.py += yieldY * shareB * 0.4 + ny * kick * tick * shareB;
+      }
+      const fix = Math.min(Math.max(pen - cloth, 0), radius * 0.55);
+      if (fix > 0) {
+        bx += nx * fix; by += ny * fix;
+        sepX += nx * fix; sepY += ny * fix;
+      }
+      hits++;
+    }
   }
-  if (!(left < h.x && right > h.x)) return null;
-  return { left, right };
-}
-
-function hemScreen(h: Hoop) {
-  let y = -Infinity;
-  for (let i = (NET_ROWS - 1) * NET_COLS; i < h.net.length; i++) {
-    const n = h.net[i]!;
-    y = Math.max(y, n.y + n.depth! * RIM_RY);
+  if (hits && (sepX !== 0 || sepY !== 0)) {
+    const len = Math.hypot(sepX, sepY) || 1;
+    const nx = sepX / len, ny = sepY / len;
+    const into = body.vx * nx + body.vy * ny;
+    // Shed speed into the cloth. A light touch only slows; a deep press stops.
+    if (into < 0) {
+      const absorb = clamp(-into / (h.inner * 18), 0.18, 0.72);
+      body.vx -= nx * into * absorb;
+      body.vy -= ny * into * absorb * 0.45;
+    }
   }
-  return y;
+  return { bx, by, hits };
 }
 
 export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _world: World,
@@ -391,7 +445,7 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
     canTouch ? Math.ceil(travel / Math.max(2, ball.r * 0.28)) : 1));
   const tick = total / steps;
   let moveX = (body.x - bx) / steps;
-  const moveY = (body.y - by) / steps;
+  let moveY = (body.y - by) / steps;
   let corrected = false, frictionTime = 0;
   const damping = Math.exp(-profile.dampRate * tick);
   for (let step = 0; step < steps; step++) {
@@ -480,23 +534,26 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
         if (x !== bx) {
           bx = x; moveX = 0; body.vx = 0; corrected = true;
         }
-      } else if (!state.fromBelow && by + ball.r > h.y - 2 && by - ball.r < hemScreen(h) + 2) {
-        // Side walls run the full woven height. The rim mouth and the hem mouth
-        // stay open; a ball whose center is already between the walls is not pushed.
-        const pad = ball.r;
-        const walls = screenWalls(h, by, ball.r);
-        if (walls && fromX <= walls.left && bx + pad > walls.left) {
-          bx = walls.left - pad; moveX = Math.min(moveX, 0);
-          if (body.vx > 0) body.vx = -body.vx * .18;
-          corrected = true;
-        } else if (walls && fromX >= walls.right && bx - pad < walls.right) {
-          bx = walls.right + pad; moveX = Math.max(moveX, 0);
-          if (body.vx < 0) body.vx = -body.vx * .18;
-          corrected = true;
-        }
       }
-      const knots = contact(h, body, fromX, fromY, bx, by, tick, profile);
-      const ropes = contactEdges(h, bx, by, ball.r * 1.025, body.vy < 0);
+      // Outside the sleeve the mesh itself resists. Inside, and on the way up
+      // through the hem, the one-way cloth contact wraps without shoving the ball.
+      const mouth = state.inside || state.fromBelow;
+      let knots = 0, ropes = 0;
+      if (!mouth) {
+        const held = resistSleeve(h, ball, body, fromX, fromY, bx, by, tick);
+        if (held.hits) {
+          const dx = held.bx - bx, dy = held.by - by;
+          bx = held.bx; by = held.by;
+          // Don't keep driving through a strand for the rest of this frame.
+          if (dx * moveX < 0) moveX = 0;
+          if (dy * moveY < 0) moveY *= 0.35;
+          corrected = true;
+          frictionTime += tick;
+        }
+      } else {
+        knots = contact(h, body, fromX, fromY, bx, by, tick, profile);
+        ropes = contactEdges(h, bx, by, ball.r * 1.025, body.vy < 0);
+      }
       for (let pass = 0; pass < 6; pass++) {
         constrain(h, tick, 2, profile.rowPitch);
         if (knots || ropes) contactEdges(h, bx, by, ball.r * 1.025, body.vy < 0);
