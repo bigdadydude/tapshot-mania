@@ -392,6 +392,69 @@ test("net3 peaks and returns sooner than net2 on the same stand hit", () => {
     `net3 should return sooner: ${fast.reboundT} vs ${slow.reboundT}`);
 });
 
+function screenRopeDistance(s: ReturnType<typeof setup>) {
+  let min = Infinity;
+  for (const e of NET2_EDGES) {
+    const a = s.hoop.net[e.a]!, b = s.hoop.net[e.b]!;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const sq = dx * dx + dy * dy;
+    const t = sq > 1e-8 ? Math.max(0, Math.min(1, ((s.ball.x - a.x) * dx + (s.ball.y - a.y) * dy) / sq)) : 0;
+    min = Math.min(min, Math.hypot(a.x + dx * t - s.ball.x, a.y + dy * t - s.ball.y));
+  }
+  return min;
+}
+
+function settleCloth(profile: NetProfile) {
+  const s = setup();
+  const far = { ...s.ball, x: 900, y: 40, vx: 0, vy: 0 };
+  for (let i = 0; i < 240; i++) stepNet2(s.hoop, far, far.x, far.y, s.world, 1 / 120, i / 120, false, { wind: 0, profile });
+  return s;
+}
+
+test("a sideways shot cannot punch through the woven wall, but the hem mouth stays open", () => {
+  const dt = 1 / 60;
+  for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
+    for (const y0 of [210, 222, 232]) for (const dir of [1, -1] as const) {
+      for (const [speed, gravity] of [[650, 1400], [1600, 2500]] as const) {
+        const s = settleCloth(profile);
+        s.ball.x = s.hoop.x - dir * 110;
+        s.ball.y = y0;
+        s.ball.vx = dir * speed;
+        s.ball.vy = 0;
+        let minDistance = Infinity;
+        for (let i = 0; i < 36; i++) {
+          const x = s.ball.x, y = s.ball.y;
+          s.ball.vy += gravity * dt;
+          s.ball.x += s.ball.vx * dt;
+          s.ball.y += s.ball.vy * dt;
+          stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, { wind: 0, profile });
+          minDistance = Math.min(minDistance, screenRopeDistance(s));
+          assert.ok(dir * (s.ball.x - s.hoop.x) < 0, `side shot crossed the sleeve at y=${y0} v=${speed} ${profile === NET3_PROFILE ? "net3" : "net2"}`);
+        }
+        assert.ok(minDistance >= s.ball.r - 2, `side ropes cut the ball by ${s.ball.r - minDistance}px`);
+        assert.ok(dir * s.ball.vx < 0, "the wall should throw the shot back");
+      }
+    }
+    const open = settleCloth(profile);
+    const hem = Math.max(...open.hoop.net.map(n => n.y));
+    open.ball.x = open.hoop.x - 110;
+    open.ball.y = hem + open.ball.r + 8;
+    open.ball.vx = 700;
+    open.ball.vy = 0;
+    let crossed = false, minDistance = Infinity;
+    for (let i = 0; i < 40; i++) {
+      const x = open.ball.x, y = open.ball.y;
+      open.ball.x += open.ball.vx * dt;
+      stepNet2(open.hoop, open.ball, x, y, open.world, dt, i * dt, true, { wind: 0, profile });
+      minDistance = Math.min(minDistance, screenRopeDistance(open));
+      if (open.ball.x > open.hoop.x + 24) crossed = true;
+    }
+    assert.ok(crossed, "the bottom opening must still let a ball through");
+    assert.ok(open.ball.vx > 0, "passing under the hem must not bounce");
+    assert.ok(minDistance >= open.ball.r - 2, `hem mouth clipped the ball by ${open.ball.r - minDistance}px`);
+  }
+});
+
 test("net3 idle hem hangs as deep as net1 while net2 stays shorter", () => {
   const far = { x: 900, y: 40, vx: 0, vy: 0, r: 19, spin: 0, omega: 0, squash: 1, scored: false, hitRim: false, hitBoard: false } as Ball;
   const depth = (net: Hoop["net"], y: number, inner: number) => (Math.max(...net.map((n) => n.y)) - y) / inner;

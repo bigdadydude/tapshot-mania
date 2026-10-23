@@ -334,6 +334,40 @@ function sideAt(h: Hoop, y: number, left: boolean) {
   return extent(row) * (1 - t) + extent(row + 1) * t;
 }
 
+/** Side-column knot: the woven wall, not the front or back lip of an opening. */
+function sideKnot(index: number) {
+  const rest = REST[index]!;
+  return Math.abs(rest.x) >= Math.abs(rest.z);
+}
+
+/**
+ * Left and right side walls in the plane the player sees.
+ * Both columns have to be in range. A lone hem-lip knot is the mouth, not a wall.
+ */
+function screenWalls(h: Hoop, y: number, reach: number) {
+  let left = Infinity, right = -Infinity;
+  for (let i = 0; i < h.net.length; i++) {
+    if (!sideKnot(i)) continue;
+    const n = h.net[i]!;
+    if (netRowReleased(h.char, REST[i]!.row)) continue;
+    const sy = n.y + n.depth! * RIM_RY;
+    if (sy < y - reach || sy > y + reach) continue;
+    left = Math.min(left, n.x);
+    right = Math.max(right, n.x);
+  }
+  if (!(left < h.x && right > h.x)) return null;
+  return { left, right };
+}
+
+function hemScreen(h: Hoop) {
+  let y = -Infinity;
+  for (let i = (NET_ROWS - 1) * NET_COLS; i < h.net.length; i++) {
+    const n = h.net[i]!;
+    y = Math.max(y, n.y + n.depth! * RIM_RY);
+  }
+  return y;
+}
+
 export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _world: World,
   dt: number, _time: number, allowContact: boolean, env: Net2Environment = {}) {
   if (!(dt > 0) || !h.net.length) return;
@@ -446,12 +480,19 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
         if (x !== bx) {
           bx = x; moveX = 0; body.vx = 0; corrected = true;
         }
-      } else if (!state.fromBelow && by > h.y + ball.r * .2 && by < bottom - ball.r * .15) {
-        const left = sideAt(h, by, true), right = sideAt(h, by, false);
-        if (fromX < left && bx + ball.r > left && moveX > 0) {
-          bx = left - ball.r; moveX = 0; body.vx = -Math.abs(body.vx) * .12; corrected = true;
-        } else if (fromX > right && bx - ball.r < right && moveX < 0) {
-          bx = right + ball.r; moveX = 0; body.vx = Math.abs(body.vx) * .12; corrected = true;
+      } else if (!state.fromBelow && by + ball.r > h.y - 2 && by - ball.r < hemScreen(h) + 2) {
+        // Side walls run the full woven height. The rim mouth and the hem mouth
+        // stay open; a ball whose center is already between the walls is not pushed.
+        const pad = ball.r;
+        const walls = screenWalls(h, by, ball.r);
+        if (walls && fromX <= walls.left && bx + pad > walls.left) {
+          bx = walls.left - pad; moveX = Math.min(moveX, 0);
+          if (body.vx > 0) body.vx = -body.vx * .18;
+          corrected = true;
+        } else if (walls && fromX >= walls.right && bx - pad < walls.right) {
+          bx = walls.right + pad; moveX = Math.max(moveX, 0);
+          if (body.vx < 0) body.vx = -body.vx * .18;
+          corrected = true;
         }
       }
       const knots = contact(h, body, fromX, fromY, bx, by, tick, profile);
