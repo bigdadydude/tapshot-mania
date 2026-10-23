@@ -4,7 +4,7 @@ import { createGame, rankFor, GAME_REV, type GameHandle } from "@/game/engine";
 import { primeArt } from "@/game/art";
 import { DEFAULT_DEV, wantDevQuery } from "@/game/dev";
 import { BALLS, DEFAULT_BALL, ballFuseLabel, playableBalls, type BallId } from "@/game/balls";
-import { DEFAULT_GFX, type CloudMode, type Gfx, type HudState, type PlayMode } from "@/game/types";
+import { DEFAULT_GFX, type CloudMode, type Gfx, type HudState, type NetStyle, type PlayMode } from "@/game/types";
 import { SCENE_LABELS, type SceneId } from "@/game/scenes";
 import { DevConsole } from "@/components/dev-console";
 import { SearchlightEditor } from "@/components/searchlight-editor";
@@ -361,6 +361,8 @@ export function GameView() {
       {showSettings ? (
         <SettingsHub
           showDev={hud.dev.unlocked}
+          net={hud.gfx.net}
+          onNet={(net) => gameRef.current?.setGfx({ net })}
           onGfx={() => setMenu("gfx")}
           onSound={() => setMenu("sound")}
           onDev={() => {
@@ -1959,14 +1961,30 @@ function MenuBtn({
   );
 }
 
+const NET_OPTIONS: [NetStyle, string][] = [
+  ["legacy", "篮网1"],
+  ["net2", "篮网2"],
+  ["net3", "篮网3"],
+];
+
+function netCaption(net: NetStyle) {
+  if (net === "net3") return "更快的受力反馈，撞击后迅速回弹。";
+  if (net === "net2") return "柔软拉扯与自然回弹。";
+  return "最初的篮网。";
+}
+
 function SettingsHub({
   showDev,
+  net,
+  onNet,
   onGfx,
   onSound,
   onDev,
   onBack,
 }: {
   showDev: boolean;
+  net: NetStyle;
+  onNet: (net: NetStyle) => void;
   onGfx: () => void;
   onSound: () => void;
   onDev: () => void;
@@ -1979,6 +1997,26 @@ function SettingsHub({
         <div className="flex flex-col gap-2">
           <MenuBtn label="画面" onClick={onGfx} />
           <MenuBtn label="声音" onClick={onSound} />
+          <div className="mt-1">
+            <p className="mb-2 text-sm text-fg">篮网</p>
+            <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-bg-subtle p-1">
+              {NET_OPTIONS.map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onNet(id)}
+                  aria-pressed={net === id}
+                  className={cn(
+                    "h-12 rounded-md text-sm font-medium",
+                    net === id ? "bg-accent text-accent-fg" : "text-fg",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 px-1 text-xs leading-relaxed text-muted">{netCaption(net)}</p>
+          </div>
           {showDev ? <MenuBtn label="开发者" onClick={onDev} /> : null}
         </div>
         <button
@@ -2055,6 +2093,9 @@ function ToggleRow({ label, on, onToggle }: { label: string; on: boolean; onTogg
   return (
     <button
       type="button"
+      role="switch"
+      aria-label={label}
+      aria-checked={on}
       onClick={onToggle}
       className="flex h-11 w-full items-center justify-between rounded-lg border border-border bg-bg-subtle px-3"
     >

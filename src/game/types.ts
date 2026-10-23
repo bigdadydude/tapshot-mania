@@ -45,6 +45,26 @@ export type NetNode = {
   px: number;
   py: number;
   pinned: boolean;
+  /** Net 2 depth; y/py remain projected so moves and snapshots share the old format. */
+  depth?: number;
+  prevDepth?: number;
+  netDt?: number;
+  /** Stored on the first knot so rebuilding the mesh also resets its contact state. */
+  netState?: {
+    clock: number;
+    seed: number;
+    inside: boolean;
+    exited: boolean;
+    fromBelow: boolean;
+    impactUntil: number;
+    /** Screen-space velocity when this make entered the rim. */
+    entryVx: number;
+    entryVy: number;
+    /** Seconds of fall-resistance left while the ball is still in the sleeve. */
+    dwellLeft: number;
+    /** A downward make is in progress and should tug the cloth when it clears the hem. */
+    throughMake: boolean;
+  };
 };
 
 export type Ball = {
@@ -95,6 +115,7 @@ export type Hoop = {
   frostLeft: number;
   netPulse: number;
   jolt: number;
+  joltPower?: number;
   joltDir: number;
   net: NetNode[];
   /** Stage modifier: hide backboard + brace (ghost rings). */
@@ -121,7 +142,15 @@ export type Callout = {
 
 export type CloudMode = "dance" | "drift" | "off";
 
+/** legacy = original net; net2 = softer cloth; net3 = snappier cloth. */
+export type NetStyle = "legacy" | "net2" | "net3";
+
+export function isClothNet(net: NetStyle) {
+  return net !== "legacy";
+}
+
 export type Gfx = {
+  net: NetStyle;
   clouds: CloudMode;
   ballShade: boolean;
   ballShadow: boolean;
@@ -133,6 +162,7 @@ export type Gfx = {
 };
 
 export const DEFAULT_GFX: Gfx = {
+  net: "net2",
   clouds: "dance",
   ballShade: true,
   ballShadow: true,

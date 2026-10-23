@@ -1,9 +1,9 @@
-import { DEFAULT_GFX, type CloudMode, type Gfx, type PlayMode } from "./types";
+import { DEFAULT_GFX, type CloudMode, type Gfx, type NetStyle, type PlayMode } from "./types";
 import { DEFAULT_BALL, parseBall, type BallId } from "./balls";
 import { type SceneId } from "./scenes";
 
 const KEY = "tq-bounce-v1";
-const VERSION = 11;
+const VERSION = 12;
 
 export type SaveData = {
   version: number;
@@ -59,8 +59,16 @@ function parseScene(v: unknown): SceneId {
   return v === "prison" || v === "overpass" || v === "train" ? v : "street";
 }
 
-function parseGfx(raw: Partial<Gfx> | undefined): Gfx {
+function parseNet(raw: { net?: unknown; net2?: unknown } | undefined): NetStyle {
+  if (raw?.net === "legacy" || raw?.net === "net2" || raw?.net === "net3") return raw.net;
+  // Saves from before 篮网3 stored a boolean. Missing or true meant 篮网2.
+  if (raw?.net2 === false) return "legacy";
+  return "net2";
+}
+
+function parseGfx(raw: (Partial<Gfx> & { net2?: boolean }) | undefined): Gfx {
   return {
+    net: parseNet(raw),
     clouds: parseClouds(raw?.clouds),
     ballShade: raw?.ballShade !== false,
     ballShadow: raw?.ballShadow !== false,

@@ -5,7 +5,7 @@ import { drawTrainBackdrop, getTrainScroll } from "./train-bg";
 import { drawTrainGantryWarnings } from "./train-gantry";
 import { birdOwnsBall, drawBirds, drawEagleWarnings, type BirdState } from "./birds";
 import type { Ball, Callout, Gfx, Hoop, NinjaCloneDraw, Particle, PrisonHud, TrailPt, World } from "./types";
-import { DEFAULT_GFX, fireStage } from "./types";
+import { DEFAULT_GFX, fireStage, isClothNet } from "./types";
 import { artImage, ballImage, cloudImages, graffitiImage } from "./art";
 import type { BallId } from "./balls";
 import { DEFAULT_BALL } from "./balls";
@@ -24,6 +24,7 @@ import {
   netRowBurn,
   netRowReleased,
 } from "./net";
+import { NET2_EDGES, net2Depth } from "./net2";
 
 export { NET_COLS, NET_ROWS, NET_ROW_H, RIM_RY } from "./net";
 
@@ -596,31 +597,21 @@ function drawHoopStack(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
 		}
 		if (alpha < 0.999) ctx.globalAlpha = alpha;
 		if (hoop.jolt > 0 && hoop.active) {
-			const p = bracePivot(hoop, world);
-			const stage = fireStage(combo);
-			const boost = stage >= 4 ? 1.7 : stage >= 3 ? 1.35 : 1;
-			const elapsed = (1 - hoop.jolt) * 0.28;
-			const ang =
-				hoop.jolt *
-				hoop.joltDir *
-				-hoop.side *
-				boost *
-				0.024 *
-				Math.sin(elapsed * Math.PI * 2 * 11);
-			ctx.translate(p.x, p.y);
-			ctx.rotate(ang);
-			ctx.translate(-p.x, -p.y);
+			const motion = hoopNetMotion(hoop, world, combo);
+			ctx.translate(motion.pivotX, motion.pivotY);
+			ctx.rotate(motion.angle);
+			ctx.translate(-motion.pivotX, -motion.pivotY);
 		}
 	};
 	beginHoopFx();
 	if (!hoop.noBoard) drawBackboard(ctx, hoop, world, time, combo);
 	drawRim(ctx, hoop, "back", combo);
-	drawNet(ctx, hoop, "back", ball, combo);
+	drawNet(ctx, hoop, "back", ball, combo, isClothNet(gfx.net));
 	ctx.restore();
 	// Ball stays in world space — hoop fade/scale must not suck it toward the rim.
 	drawBallLayer();
 	beginHoopFx();
-	drawNet(ctx, hoop, "front", ball, combo);
+	drawNet(ctx, hoop, "front", ball, combo, isClothNet(gfx.net));
 	drawRim(ctx, hoop, "front", combo);
 	if (hoop.frostLeft > 0) drawFrostVeil(ctx, hoop, world);
 	ctx.restore();
@@ -1334,6 +1325,21 @@ function bracePivot(hoop: Hoop, world: World) {
   const t = Math.abs(dx) < 0.0001 ? 0 : (edge - x0) / dx;
   return { x: edge, y: y0 + (y1 - y0) * t };
 }
+
+/** Same support motion drives both the rendered stand and the net's inertia. */
+export function hoopNetMotion(h: Hoop, world: World, combo: number) {
+  const pivot = bracePivot(h, world);
+  if (!(h.jolt > 0 && h.active)) return { angle: 0, pivotX: pivot.x, pivotY: pivot.y, accelX: 0, accelY: 0 };
+  const stage = fireStage(combo), boost = stage >= 4 ? 1.7 : stage >= 3 ? 1.35 : 1;
+  const elapsed = (1 - h.jolt) * .28, omega = Math.PI * 2 * 11;
+  const amplitude = h.joltDir * -h.side * boost * .024 * (h.joltPower ?? 1);
+  const angle = amplitude * h.jolt * Math.sin(elapsed * omega);
+  const angularAccel = amplitude * (-2 * omega / .28 * Math.cos(elapsed * omega)
+    - h.jolt * omega * omega * Math.sin(elapsed * omega));
+  return { angle, pivotX: pivot.x, pivotY: pivot.y,
+    accelX: angularAccel * (h.y + h.inner * .7 - pivot.y),
+    accelY: -angularAccel * (h.x - pivot.x) };
+}
 function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, _time: number, _combo: number) {
   const ch = boardHeat(hoop);
   const fr = hoop.frostLeft > 0 ? Math.min(0.92, 0.4 + hoop.frost * 0.16) : 0;
@@ -1500,7 +1506,46 @@ function drawRim(ctx: CanvasRenderingContext2D, hoop: Hoop, part: "back" | "fron
 	}
 	ctx.restore();
 }
-function drawNet(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "front", ball: Ball | null, combo: number) {
+function drawNet2(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "front", combo: number) {
+	if (!hoop.net.length || hoop.char >= .98) return;
+	const look = hoopLook(), heat = hoopHeat(hoop, combo), ch = hoop.char;
+	ctx.save();
+	const alpha = ctx.globalAlpha;
+	ctx.lineCap = "round";
+	ctx.lineJoin = "round";
+	ctx.lineWidth = 1.2;
+	for (let row = 0; row < NET_ROWS; row++) {
+		const burn = netRowBurn(ch, row);
+		if (burn >= 1) continue;
+		const lower = row >= look.netHemFromRow;
+		ctx.strokeStyle = mixHex(lower ? look.netHem : look.net, lower ? look.netHemChar : look.netChar,
+			Math.min(1, Math.max(heat, ch, burn) * 1.08));
+		ctx.globalAlpha = alpha
+			* (burn > 0 ? Math.max(.08, 1 - burn) : 1)
+			* (ch > .5 ? Math.max(.12, 1 - (ch - .5) / .5) : 1);
+		ctx.beginPath();
+		for (const edge of NET2_EDGES) {
+			if (Math.floor(edge.a / NET_COLS) !== row || netRowReleased(ch, Math.floor(edge.b / NET_COLS))) continue;
+			const a = hoop.net[edge.a]!, b = hoop.net[edge.b]!;
+			const za = net2Depth(hoop, edge.a), zb = net2Depth(hoop, edge.b);
+			const frontA = za >= 0, frontB = zb >= 0, front = layer === "front";
+			if (frontA === frontB) {
+				if (frontA !== front) continue;
+				ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+			} else {
+				// Split at the depth boundary instead of assigning the entire edge to one layer.
+				const t = za / (za - zb), x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+				const p = frontA === front ? a : b;
+				ctx.moveTo(p.x, p.y); ctx.lineTo(x, y);
+			}
+		}
+		ctx.stroke();
+	}
+	ctx.restore();
+}
+
+function drawNet(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "front", ball: Ball | null, combo: number, cloth = false) {
+	if (cloth) { drawNet2(ctx, hoop, layer, combo); return; }
 	if (hoop.net.length === 0) return;
 	const ch = hoop.char;
 	if (ch >= .98) return;

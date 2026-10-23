@@ -20,11 +20,12 @@ import {
   netRestBottom,
   netShouldCollide,
   nudgeNet,
-  stepNet,
-  tugNet,
+  stepNet as stepLegacyNet,
+  tugNet as tugLegacyNet,
   RIM_RY,
 } from "./net";
-import { boardGeom, braceColliders, clearSceneLayers, drawBoot, drawScene, paintBallSprite } from "./render";
+import { NET2_PROFILE, NET3_PROFILE, stepNet2, strikeNet2, tugNet2 } from "./net2";
+import { boardGeom, braceColliders, clearSceneLayers, drawBoot, drawScene, paintBallSprite, hoopNetMotion } from "./render";
 import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
@@ -39,7 +40,7 @@ import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
-import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
+import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage, isClothNet } from "./types";
 import {
   advanceRogueStage,
   applyRogueMakeMods,
@@ -69,7 +70,7 @@ import {
   type RogueRun,
 } from "./rogue";
 
-export const GAME_REV = 306;
+export const GAME_REV = 311;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -228,6 +229,41 @@ export function createGame(
     sfx: save.lastSfx,
   };
   let gfx: Gfx = { ...save.gfx };
+  function netProfile() {
+    return gfx.net === "net3" ? NET3_PROFILE : NET2_PROFILE;
+  }
+  function stepNet(...args: Parameters<typeof stepLegacyNet>) {
+    const h = args[0];
+    if (isClothNet(gfx.net)) stepNet2(...args, {
+      horizontalAccel: trainBackdropOn() && phase === "playing" ? trainInertiaAccel() : 0,
+      motion: hoopNetMotion(h, args[4], heatN()),
+      profile: netProfile(),
+    });
+    else {
+      // A rewind snapshot may have been captured with the other visual mode.
+      if (h.net[0]?.depth !== undefined) h.net = buildNet(h);
+      stepLegacyNet(...args);
+    }
+  }
+  function tugNet(h: Hoop, hit?: Ball) {
+    if (isClothNet(gfx.net)) tugNet2(h, hit, netProfile());
+    else tugLegacyNet(h);
+  }
+  function strikeNet(h: Hoop, x: number, y: number, nx: number, ny: number) {
+    if (!isClothNet(gfx.net)) return;
+    const motion = hoopNetMotion(h, world, heatN());
+    const cos = Math.cos(motion.angle), sin = Math.sin(motion.angle);
+    const strength = strikeNet2(h,
+      motion.pivotX + (x - motion.pivotX) * cos + (y - motion.pivotY) * sin,
+      motion.pivotY - (x - motion.pivotX) * sin + (y - motion.pivotY) * cos,
+      ball.vx * cos + ball.vy * sin, -ball.vx * sin + ball.vy * cos,
+      -(ball.vx * nx + ball.vy * ny), netProfile());
+    if (strength > 0) {
+      h.jolt = 1;
+      h.joltDir = ball.vy < 0 ? -1 : 1;
+      h.joltPower = Math.min(1.35, strength / (h.inner * 7));
+    }
+  }
   /** Player graphics state captured before the temporary developer sandbox overrides it. */
   let devGfxBackup: Gfx | null = null;
   let ballId: BallId = parseBall(save.ball);
@@ -818,7 +854,7 @@ export function createGame(
   /** Left the floor during this attempt �?avoids marking miss on takeoff overlap. */
   let shotAirborne = false;
   // Natural ricochets do not spend the rescue; only a jump after contact starts it.
-  type ComboRescue = "approach" | "contact" | "rescue" | "spent";
+  type ComboRescue = "approach" | "contact" | "rescue" | "secondContact" | "secondRescue" | "spent";
   let comboRescue: ComboRescue = "approach";
   let opener = 0;
   let bgmOn = false;
@@ -1139,7 +1175,8 @@ export function createGame(
   function noteComboContact(h: Hoop) {
     if (h.comboScored || !shotOpen || shotMade || shotMissed || ball.scored) return;
     if (comboRescue === "approach") comboRescue = "contact";
-    else if (comboRescue === "rescue") comboRescue = "spent";
+    else if (comboRescue === "rescue") comboRescue = "secondContact";
+    else if (comboRescue === "secondRescue") comboRescue = "spent";
   }
 
   function resetShotFlags() {
@@ -1335,7 +1372,7 @@ export function createGame(
 
   function persist() {
     writeSave({
-      version: 11,
+      version: 12,
       best,
       bestMinute,
       bestRogue,
@@ -3816,12 +3853,14 @@ export function createGame(
     if (ballHidden() && !onApproachSide() && !stageMod.allowHiddenTap?.()) return;
     if (shotOpen && !shotMade && !shotMissed) {
       if (comboRescue === "spent") {
-        // This input starts another attempt, rather than a second rescue round.
+        // Both rescue rounds are spent; another input starts a new attempt.
         comboRescue = "approach";
         breakComboStreak();
         if (paused) return;
       } else if (comboRescue === "contact") {
         comboRescue = "rescue";
+      } else if (comboRescue === "secondContact") {
+        comboRescue = "secondRescue";
       }
     }
     cancelVectorInput();
@@ -4635,6 +4674,7 @@ export function createGame(
         else if (cmd.kind === "burst") burst(ball.x, ball.y, 22, 80);
         else if (cmd.kind === "jolt") {
           hoop.jolt = 1;
+          hoop.joltPower = 1;
           hoop.joltDir = -1;
         } else if (cmd.kind === "opener") {
           opener = 1.6;
@@ -5549,7 +5589,7 @@ export function createGame(
 
     const ghostQuiet = hoop.noBoard && hoop.scoreable === false;
     const nearHoop = !ghostQuiet && netNearHoop(hoop, ball);
-    stepNet(hoop, ball, prevBallX, prevBallY, world, dt, time, !anti2ReturnLocked() && !vector.anchor && vector.burst <= 0 && nearHoop && netShouldCollide(hoop, ball));
+    stepNet(hoop, ball, prevBallX, prevBallY, world, dt, time, !ghostQuiet && !anti2ReturnLocked() && !vector.anchor && vector.burst <= 0 && (isClothNet(gfx.net) || (nearHoop && netShouldCollide(hoop, ball))));
     if (other) {
       const nearOther = netNearHoop(other, ball);
       stepNet(
@@ -5560,7 +5600,7 @@ export function createGame(
         world,
         dt,
         time,
-        !anti2ReturnLocked() && !vector.anchor && vector.burst <= 0 && nearOther && other.couple && netShouldCollide(other, ball),
+        !anti2ReturnLocked() && !vector.anchor && vector.burst <= 0 && other.couple && (isClothNet(gfx.net) || (nearOther && netShouldCollide(other, ball))),
       );
       if (other.burning) {
         other.char = Math.min(1, other.char + dt / 1.05);
@@ -5722,6 +5762,7 @@ export function createGame(
     // The rim stays solid: remove only the inward movement and cruise along its tangent.
     ball.x += normalX * (penetration + 0.7);
     ball.y += normalY * (penetration + 0.7);
+    strikeNet(h, ball.x - normalX * (ball.r + .7), ball.y - normalY * (ball.r + .7), normalX, normalY);
     const dir = hackerRimSlide?.dir ?? hackerDir;
     const desired = hackerDirectionVector(dir);
     const tangentX = -normalY;
@@ -5740,8 +5781,10 @@ export function createGame(
     ball.vy = tangentY * hackerSpeed * turn;
     ball.omega = ball.vx / Math.max(8, ball.r);
     ball.hitRim = true;
-    h.jolt = 1;
-    h.joltDir = ball.vy < 0 ? -1 : 1;
+    if (!isClothNet(gfx.net)) {
+      h.jolt = 1; h.joltPower = 1;
+      h.joltDir = ball.vy < 0 ? -1 : 1;
+    }
   }
   function collideRim(h: Hoop) {
     const rad = h.tube * 0.92;
@@ -5805,13 +5848,16 @@ export function createGame(
     noteComboContact(h);
     // Going through the hoop is a make path — do not arm perfect cancel on that graze.
     if (!throughHole && superCancelsSolid(nx, ny)) return;
+    strikeNet(h, ball.x - nx * (ball.r + .7), ball.y - ny * (ball.r + .7), nx, ny);
     const rest = isMaze() ? mazeRestitution(-vn, bounceRest("rim")) : bounceRest("rim");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
     applySpinDeflect();
     ball.hitRim = true;
-    h.jolt = 1;
-    h.joltDir = ball.vy < 0 ? -1 : 1;
+    if (!isClothNet(gfx.net)) {
+      h.jolt = 1; h.joltPower = 1;
+      h.joltDir = ball.vy < 0 ? -1 : 1;
+    }
     // Black-hole mode: break horizontal rim pinball by kicking off the rim plane.
     if (legacyHole() && !ball.scored) {
       const level = Math.abs(ball.y - h.y) < ball.r * 1.35;
@@ -5908,6 +5954,7 @@ export function createGame(
     }
     noteComboContact(h);
     if (superCancelsSolid(nx, ny)) return;
+    strikeNet(h, ball.x - nx * ball.r, ball.y - ny * ball.r, nx, ny);
     const rest = isMaze() ? mazeRestitution(-vn, bounceRest("board")) : bounceRest("board");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
@@ -5960,10 +6007,10 @@ export function createGame(
       if (hit.dist >= need) {
         const end = closestPointOnSeg(bx, by, s.x0, s.y0, s.x1, s.y1);
         if (end.dist >= need) continue;
-        resolveBraceHit(end.x, end.y, s.x1 - s.x0, s.y1 - s.y0, need, end.dist);
+        resolveBraceHit(h, end.x, end.y, s.x1 - s.x0, s.y1 - s.y0, need, end.dist);
         continue;
       }
-      resolveBraceHit(hit.px, hit.py, s.x1 - s.x0, s.y1 - s.y0, need, hit.dist);
+      resolveBraceHit(h, hit.px, hit.py, s.x1 - s.x0, s.y1 - s.y0, need, hit.dist);
     }
   }
 
@@ -6038,6 +6085,7 @@ export function createGame(
   }
 
   function resolveBraceHit(
+    h: Hoop,
     px: number,
     py: number,
     segDx: number,
@@ -6062,6 +6110,7 @@ export function createGame(
     const vn = ball.vx * nx + ball.vy * ny;
     if (vn >= 0) return;
     if (superCancelsSolid(nx, ny)) return;
+    strikeNet(h, px, py, nx, ny);
     const rest = isMaze() ? mazeRestitution(-vn, bounceRest("board")) : bounceRest("board");
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
@@ -6499,7 +6548,7 @@ export function createGame(
       if (!timerArmed) timerArmed = true;
       audio.swish();
       audio.score(swish, 0);
-      tugNet(hoop);
+      tugNet(hoop, ghost ? undefined : ball);
       refillShotClock();
       prisonShackleBest = Math.max(prisonShackleBest, streak);
       if (!ghost) nextHoop();
@@ -6706,7 +6755,7 @@ export function createGame(
     const popY = scoredHoop.y;
     const popInner = scoredHoop.inner;
     if (!ghost) {
-      tugNet(hoop);
+      tugNet(hoop, ball);
     } else {
       const near =
         (other && Math.hypot(other.x - popX, other.y - popY) < popInner * 2.5 ? other : null) ||
@@ -7331,7 +7380,13 @@ export function createGame(
       emitHud();
     },
     setGfx(next) {
-      gfx = { ...gfx, ...next };
+      const net = next.net === "legacy" || next.net === "net2" || next.net === "net3" ? next.net : gfx.net;
+      if (net !== gfx.net) {
+        hoop.net = buildNet(hoop);
+        hoop.netPulse = 0;
+        if (other) { other.net = buildNet(other); other.netPulse = 0; }
+      }
+      gfx = { ...gfx, ...next, net };
       if (next.clouds === "off" || next.clouds === "drift" || next.clouds === "dance") {
         gfx.clouds = next.clouds;
       }
@@ -7664,6 +7719,8 @@ function scaleHoop(h: Hoop, sx: number, sy: number, world: World) {
     n.y *= sy;
     n.px *= sx;
     n.py *= sy;
+    if (n.depth !== undefined) n.depth *= sy;
+    if (n.prevDepth !== undefined) n.prevDepth *= sy;
   }
 }
 
