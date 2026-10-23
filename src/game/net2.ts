@@ -13,6 +13,8 @@ export type NetProfile = {
   tugGain: number;
   /** Scales wind and train accel so those nudges stay visible as tension changes. */
   envResponse: number;
+  /** Vertical rope pitch. 1 is 篮网2; above 1 lowers the idle hem. */
+  rowPitch: number;
 };
 
 const RELEASED_ACCEL = 18;
@@ -27,6 +29,7 @@ export const NET2_PROFILE: NetProfile = {
   hitCap: 5.5,
   tugGain: 0.25,
   envResponse: 1,
+  rowPitch: 1,
 };
 
 const NET3_HANG = 31;
@@ -40,6 +43,8 @@ export const NET3_PROFILE: NetProfile = {
   hitCap: 10.2,
   tugGain: 0.46,
   envResponse: NET3_HANG / 9,
+  // Idle 篮网3 sat ~0.09×inner above 篮网1. Extra vertical pitch drops the hem to match.
+  rowPitch: 1.074,
 };
 
 // A sleeve in 3D, projected onto the existing 2D court. Only the rim is pinned.
@@ -154,7 +159,13 @@ function pin(h: Hoop) {
   }
 }
 
-function constrain(h: Hoop, dt: number, passes: number) {
+function restSpan(edge: Edge, inner: number, rowPitch: number) {
+  if (rowPitch === 1) return edge.length * inner;
+  const p = REST[edge.a]!, q = REST[edge.b]!;
+  return Math.hypot(q.x - p.x, (q.y - p.y) * rowPitch, q.z - p.z) * inner;
+}
+
+function constrain(h: Hoop, dt: number, passes: number, rowPitch = 1) {
   // Knots articulate, but the cord between them cannot disappear under
   // compression. Solve both signs of the length error, with very little stretch.
   const compliance = 0.0000001 / (dt * dt);
@@ -165,7 +176,7 @@ function constrain(h: Hoop, dt: number, passes: number) {
       if (netRowReleased(h.char, REST[edge.a]!.row) || netRowReleased(h.char, REST[edge.b]!.row)) continue;
       const dx = b.x - a.x, dy = b.y - a.y, dz = b.depth! - a.depth!;
       const length = Math.hypot(dx, dy, dz);
-      const restLength = edge.length * h.inner;
+      const restLength = restSpan(edge, h.inner, rowPitch);
       if (length < 1e-6) continue;
       const wa = a.pinned ? 0 : 1, wb = b.pinned ? 0 : 1;
       if (wa + wb === 0) continue;
@@ -393,7 +404,7 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
       n.netDt = tick;
     }
     tension.fill(0);
-    constrain(h, tick, 10);
+    constrain(h, tick, 10, profile.rowPitch);
     const fromX = bx, fromY = by;
     bx += moveX; by += moveY;
     if (canTouch) {
@@ -446,12 +457,12 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
       const knots = contact(h, body, fromX, fromY, bx, by, tick, profile);
       const ropes = contactEdges(h, bx, by, ball.r * 1.025, body.vy < 0);
       for (let pass = 0; pass < 6; pass++) {
-        constrain(h, tick, 2);
+        constrain(h, tick, 2, profile.rowPitch);
         if (knots || ropes) contactEdges(h, bx, by, ball.r * 1.025, body.vy < 0);
       }
       frictionTime += tick * Math.min(1, knots / 6 + ropes / 12);
     } else {
-      constrain(h, tick, 12);
+      constrain(h, tick, 12, profile.rowPitch);
     }
     constrainVelocity(h);
     pin(h);

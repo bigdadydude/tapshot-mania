@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildNet, nudgeNet, NET_COLS, RIM_RY } from "./net.ts";
+import { buildNet, nudgeNet, NET_COLS, RIM_RY, stepNet } from "./net.ts";
 import { stepNet2, strikeNet2, tugNet2, NET2_EDGES, NET2_PROFILE, NET3_PROFILE, type NetProfile } from "./net2.ts";
 import type { Ball, Hoop, World } from "./types";
 
@@ -355,13 +355,13 @@ test("impact feedback visibly swings back before settling, without resting-conta
 test("net2 keeps the slower cloth and net3 keeps the snappy profile", () => {
   assert.deepEqual(
     [NET2_PROFILE.shapeRestore, NET2_PROFILE.hangAccel, NET2_PROFILE.dampRate, NET2_PROFILE.contactResponse,
-      NET2_PROFILE.hitScale, NET2_PROFILE.hitCap, NET2_PROFILE.tugGain, NET2_PROFILE.envResponse],
-    [16, 9, 4.4, 54, 0.32, 5.5, 0.25, 1],
+      NET2_PROFILE.hitScale, NET2_PROFILE.hitCap, NET2_PROFILE.tugGain, NET2_PROFILE.envResponse, NET2_PROFILE.rowPitch],
+    [16, 9, 4.4, 54, 0.32, 5.5, 0.25, 1, 1],
   );
   assert.deepEqual(
     [NET3_PROFILE.shapeRestore, NET3_PROFILE.hangAccel, NET3_PROFILE.dampRate, NET3_PROFILE.contactResponse,
-      NET3_PROFILE.hitScale, NET3_PROFILE.hitCap, NET3_PROFILE.tugGain],
-    [56, 31, 8.1, 120, 0.59, 10.2, 0.46],
+      NET3_PROFILE.hitScale, NET3_PROFILE.hitCap, NET3_PROFILE.tugGain, NET3_PROFILE.rowPitch],
+    [56, 31, 8.1, 120, 0.59, 10.2, 0.46, 1.074],
   );
   assert.equal(NET3_PROFILE.envResponse, NET3_PROFILE.hangAccel / 9);
   assert.equal(NET2_PROFILE.releasedAccel, NET3_PROFILE.releasedAccel);
@@ -390,4 +390,23 @@ test("net3 peaks and returns sooner than net2 on the same stand hit", () => {
   assert.ok(fast.minT < slow.minT * 0.75, `net3 should peak sooner: ${fast.minT} vs ${slow.minT}`);
   assert.ok(fast.reboundT > 0 && slow.reboundT > 0 && fast.reboundT < slow.reboundT,
     `net3 should return sooner: ${fast.reboundT} vs ${slow.reboundT}`);
+});
+
+test("net3 idle hem hangs as deep as net1 while net2 stays shorter", () => {
+  const far = { x: 900, y: 40, vx: 0, vy: 0, r: 19, spin: 0, omega: 0, squash: 1, scored: false, hitRim: false, hitBoard: false } as Ball;
+  const depth = (net: Hoop["net"], y: number, inner: number) => (Math.max(...net.map((n) => n.y)) - y) / inner;
+  const settle = (profile?: NetProfile) => {
+    const s = setup();
+    if (profile) {
+      for (let i = 0; i < 360; i++) stepNet2(s.hoop, far, far.x, far.y, s.world, 1 / 120, i / 120, false, { wind: 0, profile });
+    } else {
+      for (let i = 0; i < 240; i++) stepNet(s.hoop, far, far.x, far.y, s.world, 1 / 60, i / 60, false);
+    }
+    return depth(s.hoop.net, s.hoop.y, s.hoop.inner);
+  };
+  const net1 = settle();
+  const net2 = settle(NET2_PROFILE);
+  const net3 = settle(NET3_PROFILE);
+  assert.ok(Math.abs(net3 - net1) < 0.02, `net3 hang ${net3} inner vs net1 ${net1}`);
+  assert.ok(net2 < net1 - 0.05, `net2 should keep its shorter hang, got ${net2} vs net1 ${net1}`);
 });
