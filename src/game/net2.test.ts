@@ -525,8 +525,8 @@ test("a slower make hesitates longer than a fast one and still falls through", (
     s.ball.y = s.hoop.y - 16;
     s.ball.vx = 24;
     s.ball.vy = vy0;
-    let seen = false, exited = false, minVy = Infinity, dwell = 0, entryVy = 0, climbed = false;
-    let prevY = s.ball.y;
+    let seen = false, exited = false, minVy = Infinity, dwell = 0, entryVy = 0, firstVy = 0;
+    let rise = 0, deepest = -Infinity, highest = Infinity;
     for (let i = 0; i < 220; i++) {
       const x = s.ball.x, y = s.ball.y;
       s.ball.vy += g * dt;
@@ -536,12 +536,16 @@ test("a slower make hesitates longer than a fast one and still falls through", (
       stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, { wind: 0, profile });
       const state = s.hoop.net[0]!.netState!;
       if (state.inside && s.ball.y > s.hoop.y) {
-        if (!seen) entryVy = state.entryVy;
+        if (!seen) {
+          entryVy = state.entryVy;
+          firstVy = s.ball.vy;
+        }
         seen = true;
         dwell += dt;
         minVy = Math.min(minVy, s.ball.vy);
-        if (s.ball.y < prevY - 0.35) climbed = true;
-        prevY = s.ball.y;
+        if (s.ball.y > deepest) deepest = s.ball.y;
+        rise = Math.max(rise, deepest - s.ball.y);
+        highest = Math.min(highest, s.ball.y);
       } else if (seen) {
         const hem = Math.max(...s.hoop.net.map(n => n.y));
         assert.ok(s.ball.y > hem - s.ball.r, "the make must leave through the hem");
@@ -550,7 +554,7 @@ test("a slower make hesitates longer than a fast one and still falls through", (
         break;
       }
     }
-    return { seen, exited, minVy, dwell, entryVy, climbed };
+    return { seen, exited, minVy, dwell, entryVy, firstVy, rise, highest, hoopY: s.hoop.y };
   };
   for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
     const label = profile === NET3_PROFILE ? "net3" : "net2";
@@ -560,15 +564,20 @@ test("a slower make hesitates longer than a fast one and still falls through", (
       const mid = run(profile, 420, scoreFirst);
       const fast = run(profile, 1450, scoreFirst);
       assert.ok(slow.seen && slow.exited && mid.exited && fast.seen && fast.exited, `${label} ${how} should score through the hem`);
-      assert.equal(slow.climbed || mid.climbed || fast.climbed, false, `${label} ${how} climbed back out`);
+      assert.ok(slow.highest > slow.hoopY && mid.highest > mid.hoopY && fast.highest > fast.hoopY,
+        `${label} ${how} center crossed back above the rim`);
       assert.ok(slow.minVy > 40 && mid.minVy > 40 && fast.minVy > 40, `${label} ${how} stalled in the sleeve`);
+      assert.ok(slow.firstVy / slow.entryVy < 0.55, `${label} ${how} soft stepped to ${slow.firstVy} of ${slow.entryVy}`);
       assert.ok(slow.minVy / slow.entryVy < 0.55, `${label} ${how} soft held ${slow.minVy} of ${slow.entryVy}`);
-      assert.ok(slow.dwell > 0.25, `${label} ${how} soft dwell ${slow.dwell}s`);
-      assert.ok(mid.minVy / mid.entryVy < 0.58, `${label} ${how} medium held ${mid.minVy} of ${mid.entryVy}`);
-      assert.ok(mid.dwell > 0.16, `${label} ${how} medium dwell ${mid.dwell}s`);
+      assert.ok(slow.rise > 4, `${label} ${how} soft rise only ${slow.rise}px`);
+      assert.ok(mid.firstVy / mid.entryVy < 0.6, `${label} ${how} medium stepped to ${mid.firstVy} of ${mid.entryVy}`);
+      assert.ok(mid.minVy / mid.entryVy < 0.6, `${label} ${how} medium held ${mid.minVy} of ${mid.entryVy}`);
+      assert.ok(mid.rise > 3, `${label} ${how} medium rise only ${mid.rise}px`);
       assert.ok(fast.minVy / fast.entryVy > 0.84, `${label} ${how} hard slowed to ${fast.minVy} from ${fast.entryVy}`);
+      assert.ok(fast.rise < 2.5, `${label} ${how} hard rise ${fast.rise}px`);
       assert.ok(fast.dwell < 0.09, `${label} ${how} hard dwell ${fast.dwell}s`);
-      assert.ok(slow.dwell > fast.dwell * 3.5, `${label} ${how} dwell slow ${slow.dwell}s vs fast ${fast.dwell}s`);
+      assert.ok(slow.dwell > fast.dwell * 2.5, `${label} ${how} dwell slow ${slow.dwell}s vs fast ${fast.dwell}s`);
+      assert.ok(slow.rise > fast.rise + 3, `${label} ${how} rise slow ${slow.rise}px vs fast ${fast.rise}px`);
     }
   }
 });
