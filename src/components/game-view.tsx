@@ -1962,7 +1962,7 @@ function MenuBtn({
 }
 
 const NET_OPTIONS: [NetStyle, string][] = [
-  ["legacy", "旧篮网"],
+  ["legacy", "篮网1"],
   ["net2", "篮网2"],
   ["net3", "篮网3"],
 ];
@@ -1970,7 +1970,7 @@ const NET_OPTIONS: [NetStyle, string][] = [
 function netCaption(net: NetStyle) {
   if (net === "net3") return "更快的受力反馈，撞击后迅速回弹。";
   if (net === "net2") return "柔软拉扯与自然回弹。";
-  return "当前使用旧版篮网。";
+  return "最初的篮网。";
 }
 
 function SettingsHub({
