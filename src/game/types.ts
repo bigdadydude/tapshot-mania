@@ -57,6 +57,13 @@ export type NetNode = {
     exited: boolean;
     fromBelow: boolean;
     impactUntil: number;
+    /** Screen-space velocity when this make entered the rim. */
+    entryVx: number;
+    entryVy: number;
+    /** Seconds of fall-resistance left while the ball is still in the sleeve. */
+    dwellLeft: number;
+    /** A downward make is in progress and should tug the cloth when it clears the hem. */
+    throughMake: boolean;
   };
 };
 

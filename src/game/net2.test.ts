@@ -516,6 +516,117 @@ test("side contact meets the weave, cups it, and does not punch through", () => 
   }
 });
 
+test("a slower make hesitates longer than a fast one and still falls through", () => {
+  const dt = 1 / 60;
+  const g = 2500;
+  const run = (profile: NetProfile, vy0: number) => {
+    const s = settleCloth(profile);
+    s.ball.x = s.hoop.x;
+    s.ball.y = s.hoop.y - 16;
+    s.ball.vx = 24;
+    s.ball.vy = vy0;
+    let seen = false, exited = false, minVy = Infinity, dwell = 0, entryVy = 0, climbed = false;
+    let prevY = s.ball.y;
+    for (let i = 0; i < 180; i++) {
+      const x = s.ball.x, y = s.ball.y;
+      s.ball.vy += g * dt;
+      s.ball.x += s.ball.vx * dt;
+      s.ball.y += s.ball.vy * dt;
+      stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, { wind: 0, profile });
+      const state = s.hoop.net[0]!.netState!;
+      if (state.inside && s.ball.y > s.hoop.y) {
+        if (!seen) entryVy = state.entryVy;
+        seen = true;
+        dwell += dt;
+        minVy = Math.min(minVy, s.ball.vy);
+        if (s.ball.y < prevY - 0.35) climbed = true;
+        prevY = s.ball.y;
+      } else if (seen) {
+        const hem = Math.max(...s.hoop.net.map(n => n.y));
+        assert.ok(s.ball.y > hem - s.ball.r, "the make must leave through the hem");
+        assert.ok(Math.abs(s.ball.x - s.hoop.x) <= s.hoop.inner * 0.35);
+        exited = true;
+        break;
+      }
+    }
+    return { seen, exited, minVy, dwell, entryVy, climbed };
+  };
+  for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
+    const label = profile === NET3_PROFILE ? "net3" : "net2";
+    const slow = run(profile, 200);
+    const fast = run(profile, 1450);
+    assert.ok(slow.seen && slow.exited && fast.seen && fast.exited, `${label} should score through the hem`);
+    assert.equal(slow.climbed, false, `${label} slow make climbed back out`);
+    assert.equal(fast.climbed, false, `${label} fast make climbed back out`);
+    assert.ok(slow.minVy > 40 && fast.minVy > 40, `${label} stalled in the sleeve`);
+    assert.ok(slow.minVy / slow.entryVy < 0.78, `${label} soft make only slowed to ${slow.minVy} from ${slow.entryVy}`);
+    assert.ok(fast.minVy / fast.entryVy > 0.88, `${label} hard make slowed to ${fast.minVy} from ${fast.entryVy}`);
+    assert.ok(slow.dwell > fast.dwell * 2.4, `${label} dwell slow ${slow.dwell}s vs fast ${fast.dwell}s`);
+  }
+});
+
+test("clearing the hem tugs the net opposite the make's entry", () => {
+  const dt = 1 / 120;
+  const g = 900;
+  const hemOf = (net: ReturnType<typeof setup>["hoop"]["net"]) => {
+    const row = net.slice(-NET_COLS);
+    return {
+      x: row.reduce((sum, n) => sum + n.x, 0) / row.length,
+      y: row.reduce((sum, n) => sum + n.y, 0) / row.length,
+    };
+  };
+  for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
+    const label = profile === NET3_PROFILE ? "net3" : "net2";
+    for (const vx0 of [240, -240]) {
+      const s = settleCloth(profile);
+      s.ball.x = s.hoop.x - Math.sign(vx0) * 4;
+      s.ball.y = s.hoop.y - 30;
+      s.ball.vx = vx0;
+      s.ball.vy = 400;
+      let entry = { vx: 0, vy: 0 };
+      let seen = false;
+      let caught = false;
+      for (let i = 0; i < 240 && !caught; i++) {
+        const snap = structuredClone(s);
+        const x = s.ball.x, y = s.ball.y;
+        s.ball.vy += g * dt;
+        s.ball.x += s.ball.vx * dt;
+        s.ball.y += s.ball.vy * dt;
+        const was = s.hoop.net[0]!.netState?.inside ?? false;
+        stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, { wind: 0, profile });
+        const state = s.hoop.net[0]!.netState!;
+        if (state.inside) {
+          seen = true;
+          entry = { vx: state.entryVx, vy: state.entryVy };
+        } else if (was && seen) {
+          snap.ball.x = 900; snap.ball.y = 40; snap.ball.vx = 0; snap.ball.vy = 0;
+          stepNet2(snap.hoop, snap.ball, snap.ball.x, snap.ball.y, snap.world, dt, i * dt, false, { wind: 0, profile });
+          let lift = 0, side = 0, minY = Infinity;
+          for (let k = 0; k < 20; k++) {
+            const lx = s.ball.x, ly = s.ball.y;
+            s.ball.vy += g * dt;
+            s.ball.x += s.ball.vx * dt;
+            s.ball.y += s.ball.vy * dt;
+            stepNet2(s.hoop, s.ball, lx, ly, s.world, dt, (i + 1 + k) * dt, true, { wind: 0, profile });
+            stepNet2(snap.hoop, snap.ball, snap.ball.x, snap.ball.y, snap.world, dt, (i + 1 + k) * dt, false, { wind: 0, profile });
+            const a = hemOf(s.hoop.net), b = hemOf(snap.hoop.net);
+            const dx = a.x - b.x, dy = a.y - b.y;
+            if (dy < lift) lift = dy;
+            if (Math.abs(dx) > Math.abs(side)) side = dx;
+            minY = Math.min(minY, a.y);
+          }
+          assert.ok(lift < -6, `${label} vx ${vx0} hem lift ${lift}`);
+          assert.ok(side * entry.vx < 0, `${label} vx ${vx0} kicked ${side} along entry ${entry.vx}`);
+          assert.ok(Math.abs(side) > 1.5, `${label} vx ${vx0} sideways tug only ${side}`);
+          assert.ok(minY > s.hoop.y, `${label} hem crossed above the rim at ${minY}`);
+          caught = true;
+        }
+      }
+      assert.ok(caught, `${label} vx ${vx0} should leave through the hem`);
+    }
+  }
+});
+
 test("net3 idle hem hangs as deep as net1 while net2 stays shorter", () => {
   const far = { x: 900, y: 40, vx: 0, vy: 0, r: 19, spin: 0, omega: 0, squash: 1, scored: false, hitRim: false, hitBoard: false } as Ball;
   const depth = (net: Hoop["net"], y: number, inner: number) => (Math.max(...net.map((n) => n.y)) - y) / inner;
