@@ -577,7 +577,7 @@ test("clearing the hem tugs the net opposite the make's entry", () => {
   };
   for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
     const label = profile === NET3_PROFILE ? "net3" : "net2";
-    for (const vx0 of [240, -240]) {
+    for (const scoreFirst of [false, true]) for (const vx0 of [240, -240]) {
       const s = settleCloth(profile);
       s.ball.x = s.hoop.x - Math.sign(vx0) * 4;
       s.ball.y = s.hoop.y - 30;
@@ -586,12 +586,15 @@ test("clearing the hem tugs the net opposite the make's entry", () => {
       let entry = { vx: 0, vy: 0 };
       let seen = false;
       let caught = false;
+      const how = scoreFirst ? "score" : "cross";
       for (let i = 0; i < 240 && !caught; i++) {
         const snap = structuredClone(s);
         const x = s.ball.x, y = s.ball.y;
         s.ball.vy += g * dt;
         s.ball.x += s.ball.vx * dt;
         s.ball.y += s.ball.vy * dt;
+        // The engine scores, and tugs, before the cloth step on the crossing frame.
+        if (scoreFirst && y < s.hoop.y && s.ball.y >= s.hoop.y) tugNet2(s.hoop, s.ball, profile);
         const was = s.hoop.net[0]!.netState?.inside ?? false;
         stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, { wind: 0, profile });
         const state = s.hoop.net[0]!.netState!;
@@ -602,7 +605,7 @@ test("clearing the hem tugs the net opposite the make's entry", () => {
           snap.ball.x = 900; snap.ball.y = 40; snap.ball.vx = 0; snap.ball.vy = 0;
           stepNet2(snap.hoop, snap.ball, snap.ball.x, snap.ball.y, snap.world, dt, i * dt, false, { wind: 0, profile });
           let lift = 0, side = 0, minY = Infinity;
-          for (let k = 0; k < 20; k++) {
+          for (let k = 0; k < 24; k++) {
             const lx = s.ball.x, ly = s.ball.y;
             s.ball.vy += g * dt;
             s.ball.x += s.ball.vx * dt;
@@ -613,16 +616,16 @@ test("clearing the hem tugs the net opposite the make's entry", () => {
             const dx = a.x - b.x, dy = a.y - b.y;
             if (dy < lift) lift = dy;
             if (Math.abs(dx) > Math.abs(side)) side = dx;
-            minY = Math.min(minY, a.y);
+            minY = Math.min(minY, ...s.hoop.net.slice(-NET_COLS).map(n => n.y));
           }
-          assert.ok(lift < -6, `${label} vx ${vx0} hem lift ${lift}`);
-          assert.ok(side * entry.vx < 0, `${label} vx ${vx0} kicked ${side} along entry ${entry.vx}`);
-          assert.ok(Math.abs(side) > 1.5, `${label} vx ${vx0} sideways tug only ${side}`);
-          assert.ok(minY > s.hoop.y, `${label} hem crossed above the rim at ${minY}`);
+          assert.ok(lift < -16, `${label} ${how} vx ${vx0} hem lift ${lift}`);
+          assert.ok(side * entry.vx < 0, `${label} ${how} vx ${vx0} kicked ${side} along entry ${entry.vx}`);
+          assert.ok(Math.abs(side) > 4, `${label} ${how} vx ${vx0} sideways tug only ${side}`);
+          assert.ok(minY > s.hoop.y, `${label} ${how} hem crossed above the rim at ${minY}`);
           caught = true;
         }
       }
-      assert.ok(caught, `${label} vx ${vx0} should leave through the hem`);
+      assert.ok(caught, `${label} ${how} vx ${vx0} should leave through the hem`);
     }
   }
 });

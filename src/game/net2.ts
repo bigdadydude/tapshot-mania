@@ -130,20 +130,26 @@ function prepare(h: Hoop) {
   return state;
 }
 
-/** After the ball clears the hem, snap the cloth back against the make's entry. */
+/**
+ * After the ball clears the hem, snap the cloth back against the make's entry.
+ * A normal make lifts the hem about 20–25px for a quarter second and swings it
+ * back toward the incoming side, while the hem stays under the rim.
+ * 篮网3's higher tugGain hits harder; its restore brings the cloth back sooner.
+ */
+const EXIT_TUG = 1.35;
+const EXIT_SIDE = 1.25;
 function tugAgainstEntry(h: Hoop, vx: number, vy: number, profile: NetProfile, dt: number) {
   const speed = Math.hypot(vx, vy);
   if (!(speed > 1)) return;
   const ox = -vx / speed, oy = -vy / speed;
-  const along = clamp(speed, h.inner * 8, h.inner * 26);
-  // tugGain already separates the nets: 篮网2 is 0.25, 篮网3 is 0.46.
-  const power = along * profile.tugGain * 0.85;
+  const along = clamp(speed, h.inner * 11, h.inner * 20);
+  const power = along * profile.tugGain * EXIT_TUG;
   for (let i = NET_COLS; i < h.net.length; i++) {
     const n = h.net[i]!, rest = REST[i]!;
     if (netRowReleased(h.char, rest.row)) continue;
-    const hem = 0.45 + 0.55 * rest.row / (NET_ROWS - 1);
+    const hem = 0.3 + 0.7 * rest.row / (NET_ROWS - 1);
     const kick = power * hem;
-    n.px -= ox * kick * dt;
+    n.px -= ox * EXIT_SIDE * kick * dt;
     n.py -= oy * kick * dt;
   }
 }
@@ -172,7 +178,14 @@ export function tugNet2(h: Hoop, ball?: Pick<Ball, "x" | "y" | "vx" | "vy">, pro
   // Scoring must not attach the sleeve to an ascending ball.
   if (ball && ball.vy <= 0) return;
   const state = prepare(h);
-  if (ball) { state.inside = true; state.exited = false; state.fromBelow = false; }
+  if (ball) {
+    state.inside = true; state.exited = false; state.fromBelow = false;
+    // Scoring calls this before the cloth step, which would otherwise miss the
+    // rim crossing and never snap the net after the ball leaves.
+    state.entryVx = ball.vx;
+    state.entryVy = ball.vy;
+    state.throughMake = true;
+  }
   h.netPulse = 0.7;
   const bx = ball?.x ?? h.x, by = ball?.y ?? h.y;
   const vy = clamp(ball?.vy ?? h.inner * 4, -h.inner * 32, h.inner * 32);
