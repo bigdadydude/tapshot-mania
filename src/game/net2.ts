@@ -1,6 +1,21 @@
 import type { Ball, Hoop, World } from "./types";
 import { NET_COLS, NET_ROWS, NET_ROW_H, RIM_RY, netTheta, rowShrink, netRowReleased } from "./net.ts";
 
+// Snappier than the first net2 pass: restore and damping were scaled together
+// (~1.85× frequency, same damping ratio) so hits read immediately and the
+// cloth returns instead of drifting. Contact catch-up is a bit faster still.
+const SHAPE_RESTORE = 56; // was 16 (1/s²) — local weave spring
+const HANG_ACCEL = 31; // was 9 (× rim radius → px/s²) — swing / spring-return
+const RELEASED_ACCEL = 18;
+const DAMP_RATE = 8.1; // was 4.4 (1/s)
+const CONTACT_RESPONSE = 120; // was 54 (1/s) — knot speed catches the ball
+const HIT_SCALE = 0.59; // was 0.32
+const HIT_CAP = 10.2; // was 5.5 (× rim radius)
+const TUG_GAIN = 0.46; // was 0.25
+// Wind and train lean use the same accel the cloth now resists. Scale them
+// with hang tension so those nudges stay visible while hits stay quick.
+const ENV_RESPONSE = HANG_ACCEL / 9;
+
 // A sleeve in 3D, projected onto the existing 2D court. Only the rim is pinned.
 // Rest geometry and connectivity are shared by the solver and renderer.
 const REST = Array.from({ length: NET_COLS * NET_ROWS }, (_, i) => {
@@ -67,7 +82,7 @@ export function strikeNet2(h: Hoop, x: number, y: number, vx: number, vy: number
   if (speed < 1 || impact < h.inner * .6 || state.clock < state.impactUntil) return 0;
   const distance = Math.hypot(x - h.x, y - h.y);
   const attenuation = 1 / (1 + Math.pow(distance / (h.inner * 1.8), 2));
-  const strength = Math.min(h.inner * 5.5, (impact - h.inner * .6) * .32) * attenuation;
+  const strength = Math.min(h.inner * HIT_CAP, (impact - h.inner * .6) * HIT_SCALE) * attenuation;
   state.impactUntil = state.clock + .035;
   for (let i = NET_COLS; i < h.net.length; i++) {
     const n = h.net[i]!, rest = REST[i]!;
@@ -94,7 +109,7 @@ export function tugNet2(h: Hoop, ball?: Pick<Ball, "x" | "y" | "vx" | "vy">) {
     const n = h.net[i]!, rest = REST[i]!;
     if (netRowReleased(h.char, rest.row)) continue;
     const distance = Math.hypot(n.x - bx, n.y - by);
-    const weight = Math.exp(-Math.pow(distance / (h.inner * 0.85), 2)) * 0.25;
+    const weight = Math.exp(-Math.pow(distance / (h.inner * 0.85), 2)) * TUG_GAIN;
     const dt = n.netDt!;
     n.px -= vx * weight * dt;
     n.py -= vy * weight * dt;
@@ -211,7 +226,7 @@ function contact(h: Hoop, ball: Ball, fromX: number, fromY: number, bx: number, 
     const relativeNormal = (ballVx - vx) * nx + (ballVy - vy) * ny - vz * nz;
     // One-sided pressure and Coulomb friction: a separating ball cannot pull
     // the net after itself, and friction cannot exist without contact pressure.
-    const pressure = Math.max(0, relativeNormal) * (1 - Math.exp(-54 * dt));
+    const pressure = Math.max(0, relativeNormal) * (1 - Math.exp(-CONTACT_RESPONSE * dt));
     const tx = ballVx - vx - relativeNormal * nx;
     const ty = ballVy - vy - relativeNormal * ny;
     const tz = -vz - relativeNormal * nz;
@@ -305,7 +320,7 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
   let moveX = (body.x - bx) / steps;
   const moveY = (body.y - by) / steps;
   let corrected = false, frictionTime = 0;
-  const damping = Math.exp(-4.4 * tick);
+  const damping = Math.exp(-DAMP_RATE * tick);
   for (let step = 0; step < steps; step++) {
     state.clock += tick;
     const wind = (env.wind ?? 1) * (gust(state.clock * .55, state.seed) + .25 * gust(state.clock * 1.3, state.seed + 7));
@@ -337,15 +352,15 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
       const limit = h.inner * 18 * tick;
       if (speed > limit) { vx *= limit / speed; vy *= limit / speed; vz *= limit / speed; }
       n.px = n.x; n.py = n.y; n.prevDepth = n.depth;
-      const memory = released ? 0 : 16;
+      const memory = released ? 0 : SHAPE_RESTORE;
       const lower = Math.pow(rest.row / (NET_ROWS - 1), 2);
-      const ax = released ? 0 : clamp((env.horizontalAccel ?? 0) + (motion?.accelX ?? 0) * 1.6, -h.inner * 55, h.inner * 55);
-      const ay = released ? 0 : clamp((motion?.accelY ?? 0) * 1.6, -h.inner * 55, h.inner * 55);
+      const ax = released ? 0 : clamp(((env.horizontalAccel ?? 0) + (motion?.accelX ?? 0) * 1.6) * ENV_RESPONSE, -h.inner * 55 * ENV_RESPONSE, h.inner * 55 * ENV_RESPONSE);
+      const ay = released ? 0 : clamp((motion?.accelY ?? 0) * 1.6 * ENV_RESPONSE, -h.inner * 55 * ENV_RESPONSE, h.inner * 55 * ENV_RESPONSE);
       n.x += vx + ((rowCenterX[rest.row]! + rest.x * h.inner - n.x) * memory
-        + ax + (released ? 0 : wind * h.inner * 1.2 * lower)) * tick * tick;
-      n.y += vy + (h.inner * (released ? 18 : 9) + ay) * tick * tick;
+        + ax + (released ? 0 : wind * h.inner * 1.2 * ENV_RESPONSE * lower)) * tick * tick;
+      n.y += vy + (h.inner * (released ? RELEASED_ACCEL : HANG_ACCEL) + ay) * tick * tick;
       n.depth! += vz + ((rowCenterZ[rest.row]! + rest.z * h.inner - n.depth!) * memory
-        + (released ? 0 : wind * h.inner * .35 * lower)) * tick * tick;
+        + (released ? 0 : wind * h.inner * .35 * ENV_RESPONSE * lower)) * tick * tick;
       n.netDt = tick;
     }
     tension.fill(0);
