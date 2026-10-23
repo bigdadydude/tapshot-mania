@@ -519,16 +519,23 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
       if (body.vy >= 0) state.fromBelow = false;
       if (by + ball.r < h.y - 1) state.fromBelow = false;
       if (state.inside) {
-        // Finite sleeve reach supplies side tension. It cannot let a captured
-        // ball escape sideways while the net is still wrapped around it.
-        const progress = clamp((by - h.y) / Math.max(h.inner, bottom - h.y), 0, 1);
-        let reach = h.inner * (.52 + progress * .85);
+        // The rim accepts the make. Below it the sleeve closes around the ball,
+        // so a scoring ball is guided down the channel instead of walking out
+        // through the side weave. The cloth still deforms around that channel.
+        const rowU = clamp((by - h.y) / (h.inner * NET_ROW_H), 0, NET_ROWS - 1);
+        const row = Math.min(NET_ROWS - 2, Math.floor(rowU));
+        const ft = rowU - row;
+        const rad = (r: number) => rowShrink(Math.min(r, NET_ROWS - 1)) * h.inner;
+        const channel = (rad(row) * (1 - ft) + rad(row + 1) * ft) * 0.16;
         const rimDy = by - h.y;
+        let reach = channel;
         if (Math.abs(rimDy) < ball.r) {
           // A sphere still overlapping the fixed upper opening must clear it;
           // otherwise edge projection stretches the first row into long spikes.
-          const section = Math.sqrt(ball.r * ball.r - rimDy * rimDy);
-          reach = Math.min(reach, Math.max(h.inner * .08, h.inner - section - h.inner * .04));
+          const section = Math.sqrt(Math.max(0, ball.r * ball.r - rimDy * rimDy));
+          const rimReach = Math.max(h.inner * .08, h.inner - section - h.inner * .04);
+          const rimT = Math.abs(rimDy) / ball.r;
+          reach = rimReach * (1 - rimT) + channel * rimT;
         }
         const x = clamp(bx, h.x - reach, h.x + reach);
         if (x !== bx) {

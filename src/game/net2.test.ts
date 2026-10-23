@@ -149,6 +149,41 @@ test("the sleeve wraps a descending ball through the hem without rope penetratio
   }
 });
 
+test("a make stays in the sleeve and leaves through the hem", () => {
+  const dt = 1 / 120;
+  for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
+    const label = profile === NET3_PROFILE ? "net3" : "net2";
+    for (const [offset, vx] of [[0, 40], [8, 120], [-6, -90]] as const) {
+      const s = settleCloth(profile);
+      s.ball.x = s.hoop.x + offset;
+      s.ball.y = s.hoop.y - 45;
+      s.ball.vx = vx;
+      s.ball.vy = 360;
+      let occupied = false, exited = false, maxOff = 0;
+      for (let i = 0; i < 220; i++) {
+        const x = s.ball.x, y = s.ball.y;
+        s.ball.vy += 900 * dt;
+        s.ball.x += s.ball.vx * dt;
+        s.ball.y += s.ball.vy * dt;
+        stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, { wind: 0, profile });
+        const state = s.hoop.net[0]!.netState!;
+        if (state.inside) {
+          occupied = true;
+          if (s.ball.y > s.hoop.y + s.ball.r) maxOff = Math.max(maxOff, Math.abs(s.ball.x - s.hoop.x));
+        } else if (occupied) {
+          const hem = Math.max(...s.hoop.net.map(n => n.y));
+          assert.ok(s.ball.y > hem - s.ball.r, `${label} offset ${offset} left the sleeve above the hem`);
+          assert.ok(Math.abs(s.ball.x - s.hoop.x) <= s.hoop.inner * 0.3, `${label} offset ${offset} exited the side at x ${s.ball.x}`);
+          exited = true;
+          break;
+        }
+      }
+      assert.ok(occupied && exited, `${label} offset ${offset} should score through the hem`);
+      assert.ok(maxOff <= s.hoop.inner * 0.25, `${label} offset ${offset} drifted ${maxOff}px out through the side`);
+    }
+  }
+});
+
 test("a fast sideways attempt cannot leave the occupied sleeve through its wall", () => {
   const s = setup(); tick(s, 1);
   s.ball.y = 201; s.ball.vx = 1400; s.ball.vy = 150;
