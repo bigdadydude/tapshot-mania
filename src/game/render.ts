@@ -1,7 +1,6 @@
 import { drawTrainSmoke, sootFilter } from "./train-smoke";
 import { drawBlackHole } from "./black-hole-render";
 import { drawCity } from "./city-render";
-import { blueprintHudBar, drawBlueprint } from "./blueprint";
 import { drawTrainBackdrop, getTrainScroll } from "./train-bg";
 import { drawTrainGantryWarnings } from "./train-gantry";
 import { birdOwnsBall, drawBirds, drawEagleWarnings, type BirdState } from "./birds";
@@ -12,7 +11,7 @@ import type { BallId } from "./balls";
 import { DEFAULT_BALL } from "./balls";
 import type { Chain } from "./chain";
 import { gecko } from "./perf";
-import { getScene, getSceneId, type GrafKey, type SceneId } from "./scenes";
+import { getScene, type GrafKey, type SceneId } from "./scenes";
 import { clearSparseCodeRain, drawSparseCodeRain } from "./sparse-rain";
 import { drawHackerPad, hackerPadLayout, type HackerDir } from "./hacker-pad";
 import { drawMazePad, mazePadLayout, type MazeGravity } from "./maze-pad";
@@ -324,7 +323,6 @@ export function drawScene(
 	else if (backdrop === "overpass") drawCity(ctx, world, time, () => {
 		if (gfx.clouds !== "off") drawSkyClouds(ctx, world, cloudT, 0, world.floorY * 0.4, cloudSx, cloudSy);
 	});
-	else if (backdrop === "blueprint") drawBlueprint(ctx, world, blueprintHudBar(world).bottom);
 	else if (backdrop === "train") {
 		// Street sky sheet. Cloud size uses the street band. Trees still paint after both cloud passes.
 		drawOpenSky(ctx, world, cloudT, cloudSx, cloudSy, false, 0, world.floorY, world.floorY);
@@ -1337,17 +1335,16 @@ function bracePivot(hoop: Hoop, world: World) {
   return { x: edge, y: y0 + (y1 - y0) * t };
 }
 function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, _time: number, _combo: number) {
-  const blueprint = getSceneId() === "blueprint";
-  const ch = blueprint ? 0 : boardHeat(hoop);
-  const fr = blueprint ? 0 : hoop.frostLeft > 0 ? Math.min(0.92, 0.4 + hoop.frost * 0.16) : 0;
+  const ch = boardHeat(hoop);
+  const fr = hoop.frostLeft > 0 ? Math.min(0.92, 0.4 + hoop.frost * 0.16) : 0;
   const { bh, visW, visX, visY, padH, padY, armH, armTop, boardBotY } = boardGeom(hoop, world);
   const yy = visY + (ch > 0.4 ? (ch - 0.4) * 10 : 0);
   const padDrawY = padY + (ch > 0.4 ? (ch - 0.4) * 10 : 0);
   const left = hoop.side < 0;
   const boardFace = left ? visX + visW : visX;
   const boardBack = left ? visX : visX + visW;
-  const steel = blueprint ? "#ffffff" : mixHex("#1e242c", "#3a3632", ch);
-  const steelHi = blueprint ? "#ffffff" : mixHex("#3a4450", "#4a443e", ch);
+  const steel = mixHex("#1e242c", "#3a3632", ch);
+  const steelHi = mixHex("#3a4450", "#4a443e", ch);
 
   const braceW = Math.max(3.6, visW * 0.42);
   const wallX = left ? -Math.max(90, world.w * 0.42) : world.w + Math.max(90, world.w * 0.42);
@@ -1462,9 +1459,8 @@ function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
 }
 function drawRim(ctx: CanvasRenderingContext2D, hoop: Hoop, part: "back" | "front", combo: number) {
 	const { x, y, inner, tube } = hoop;
-	const blueprint = getSceneId() === "blueprint";
-	const ch = blueprint ? 0 : hoopHeat(hoop, combo);
-	const fr = blueprint ? 0 : hoop.frostLeft > 0 ? Math.min(0.9, 0.45 + hoop.frost * 0.14) : 0;
+	const ch = hoopHeat(hoop, combo);
+	const fr = hoop.frostLeft > 0 ? Math.min(0.9, 0.45 + hoop.frost * 0.14) : 0;
 	const rx = inner;
 	const ry = inner * RIM_RY;
 	const tw = Math.max(3.2, tube * 1.18);
@@ -2816,20 +2812,24 @@ function drawScorePops(ctx: CanvasRenderingContext2D, callouts: Callout[], world
 	}
 }
 function hudGeom(world: World) {
-	const bar = blueprintHudBar(world);
+	const scoreSize = Math.floor(world.w * .15);
 	const scoreY = 14;
+	const comboSlot = Math.max(34, Math.floor(world.w * .09));
 	const comboSize = Math.max(16, Math.floor(world.w * .048));
-	const comboY = scoreY + bar.scoreSize + Math.floor((bar.comboSlot - comboSize) / 2);
+	const comboY = scoreY + scoreSize + Math.floor((comboSlot - comboSize) / 2);
+	const barW = Math.floor(world.w * 0.64);
+	const barH = Math.floor(barW * 367 / 1817);
+	const barY = scoreY + scoreSize + comboSlot + 2;
 	return {
-		scoreSize: bar.scoreSize,
+		scoreSize,
 		scoreY,
-		comboSlot: bar.comboSlot,
+		comboSlot,
 		comboSize,
 		comboY,
-		barH: bar.barH,
-		barY: bar.barY,
-		barW: bar.barW,
-		tagY: bar.bottom + 8
+		barH,
+		barY,
+		barW,
+		tagY: barY + barH + 8
 	};
 }
 
