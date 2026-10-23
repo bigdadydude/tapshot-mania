@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildNet, nudgeNet, NET_COLS, RIM_RY } from "./net.ts";
-import { stepNet2, strikeNet2, tugNet2, NET2_EDGES } from "./net2.ts";
+import { stepNet2, strikeNet2, tugNet2, NET2_EDGES, NET2_PROFILE, NET3_PROFILE, type NetProfile } from "./net2.ts";
 import type { Ball, Hoop, World } from "./types";
 
 function setup() {
@@ -350,4 +350,44 @@ test("impact feedback visibly swings back before settling, without resting-conta
   }
   assert.ok(min < -5 && rebound > .2, `expected a visible whip and reversal, got ${min}, ${rebound}`);
   assert.ok(Math.abs(center(s).x - center(control).x) < .3, "net must settle after the impulse");
+});
+
+test("net2 keeps the slower cloth and net3 keeps the snappy profile", () => {
+  assert.deepEqual(
+    [NET2_PROFILE.shapeRestore, NET2_PROFILE.hangAccel, NET2_PROFILE.dampRate, NET2_PROFILE.contactResponse,
+      NET2_PROFILE.hitScale, NET2_PROFILE.hitCap, NET2_PROFILE.tugGain, NET2_PROFILE.envResponse],
+    [16, 9, 4.4, 54, 0.32, 5.5, 0.25, 1],
+  );
+  assert.deepEqual(
+    [NET3_PROFILE.shapeRestore, NET3_PROFILE.hangAccel, NET3_PROFILE.dampRate, NET3_PROFILE.contactResponse,
+      NET3_PROFILE.hitScale, NET3_PROFILE.hitCap, NET3_PROFILE.tugGain],
+    [56, 31, 8.1, 120, 0.59, 10.2, 0.46],
+  );
+  assert.equal(NET3_PROFILE.envResponse, NET3_PROFILE.hangAccel / 9);
+  assert.equal(NET2_PROFILE.releasedAccel, NET3_PROFILE.releasedAccel);
+});
+
+test("net3 peaks and returns sooner than net2 on the same stand hit", () => {
+  const swing = (profile: NetProfile) => {
+    const s = setup();
+    tick(s, 2);
+    const control = structuredClone(s);
+    strikeNet2(s.hoop, 228, 200, 600, 0, 600, profile);
+    let min = 0, minT = 0, reboundT = 0;
+    const env = { wind: 0, profile };
+    for (let i = 0; i < 200; i++) {
+      stepNet2(s.hoop, s.ball, s.ball.x, s.ball.y, s.world, 1 / 120, i / 120, false, env);
+      stepNet2(control.hoop, control.ball, control.ball.x, control.ball.y, control.world, 1 / 120, i / 120, false, env);
+      const dx = center(s).x - center(control).x;
+      if (dx < min) { min = dx; minT = (i + 1) / 120; }
+      if (reboundT === 0 && minT > 0 && (i + 1) / 120 > minT + 0.04 && dx > 0.2) reboundT = (i + 1) / 120;
+    }
+    return { min, minT, reboundT };
+  };
+  const slow = swing(NET2_PROFILE);
+  const fast = swing(NET3_PROFILE);
+  assert.ok(slow.min < -5 && fast.min < -5, `both whips should stay visible: ${slow.min}, ${fast.min}`);
+  assert.ok(fast.minT < slow.minT * 0.75, `net3 should peak sooner: ${fast.minT} vs ${slow.minT}`);
+  assert.ok(fast.reboundT > 0 && slow.reboundT > 0 && fast.reboundT < slow.reboundT,
+    `net3 should return sooner: ${fast.reboundT} vs ${slow.reboundT}`);
 });

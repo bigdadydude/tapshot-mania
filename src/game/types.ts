@@ -135,8 +135,15 @@ export type Callout = {
 
 export type CloudMode = "dance" | "drift" | "off";
 
+/** legacy = original net; net2 = softer cloth; net3 = snappier cloth. */
+export type NetStyle = "legacy" | "net2" | "net3";
+
+export function isClothNet(net: NetStyle) {
+  return net !== "legacy";
+}
+
 export type Gfx = {
-  net2: boolean;
+  net: NetStyle;
   clouds: CloudMode;
   ballShade: boolean;
   ballShadow: boolean;
@@ -148,7 +155,7 @@ export type Gfx = {
 };
 
 export const DEFAULT_GFX: Gfx = {
-  net2: true,
+  net: "net2",
   clouds: "dance",
   ballShade: true,
   ballShadow: true,

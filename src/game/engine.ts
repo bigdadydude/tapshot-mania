@@ -24,7 +24,7 @@ import {
   tugNet as tugLegacyNet,
   RIM_RY,
 } from "./net";
-import { stepNet2, strikeNet2, tugNet2 } from "./net2";
+import { NET2_PROFILE, NET3_PROFILE, stepNet2, strikeNet2, tugNet2 } from "./net2";
 import { boardGeom, braceColliders, clearSceneLayers, drawBoot, drawScene, paintBallSprite, hoopNetMotion } from "./render";
 import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
@@ -40,7 +40,7 @@ import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
-import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage } from "./types";
+import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage, isClothNet } from "./types";
 import {
   advanceRogueStage,
   applyRogueMakeMods,
@@ -229,11 +229,15 @@ export function createGame(
     sfx: save.lastSfx,
   };
   let gfx: Gfx = { ...save.gfx };
+  function netProfile() {
+    return gfx.net === "net3" ? NET3_PROFILE : NET2_PROFILE;
+  }
   function stepNet(...args: Parameters<typeof stepLegacyNet>) {
     const h = args[0];
-    if (gfx.net2) stepNet2(...args, {
+    if (isClothNet(gfx.net)) stepNet2(...args, {
       horizontalAccel: trainBackdropOn() && phase === "playing" ? trainInertiaAccel() : 0,
       motion: hoopNetMotion(h, args[4], heatN()),
+      profile: netProfile(),
     });
     else {
       // A rewind snapshot may have been captured with the other visual mode.
@@ -242,18 +246,18 @@ export function createGame(
     }
   }
   function tugNet(h: Hoop, hit?: Ball) {
-    if (gfx.net2) tugNet2(h, hit);
+    if (isClothNet(gfx.net)) tugNet2(h, hit, netProfile());
     else tugLegacyNet(h);
   }
   function strikeNet(h: Hoop, x: number, y: number, nx: number, ny: number) {
-    if (!gfx.net2) return;
+    if (!isClothNet(gfx.net)) return;
     const motion = hoopNetMotion(h, world, heatN());
     const cos = Math.cos(motion.angle), sin = Math.sin(motion.angle);
     const strength = strikeNet2(h,
       motion.pivotX + (x - motion.pivotX) * cos + (y - motion.pivotY) * sin,
       motion.pivotY - (x - motion.pivotX) * sin + (y - motion.pivotY) * cos,
       ball.vx * cos + ball.vy * sin, -ball.vx * sin + ball.vy * cos,
-      -(ball.vx * nx + ball.vy * ny));
+      -(ball.vx * nx + ball.vy * ny), netProfile());
     if (strength > 0) {
       h.jolt = 1;
       h.joltDir = ball.vy < 0 ? -1 : 1;
@@ -1368,7 +1372,7 @@ export function createGame(
 
   function persist() {
     writeSave({
-      version: 11,
+      version: 12,
       best,
       bestMinute,
       bestRogue,
@@ -5585,7 +5589,7 @@ export function createGame(
 
     const ghostQuiet = hoop.noBoard && hoop.scoreable === false;
     const nearHoop = !ghostQuiet && netNearHoop(hoop, ball);
-    stepNet(hoop, ball, prevBallX, prevBallY, world, dt, time, !ghostQuiet && !anti2ReturnLocked() && !vector.anchor && vector.burst <= 0 && (gfx.net2 || (nearHoop && netShouldCollide(hoop, ball))));
+    stepNet(hoop, ball, prevBallX, prevBallY, world, dt, time, !ghostQuiet && !anti2ReturnLocked() && !vector.anchor && vector.burst <= 0 && (isClothNet(gfx.net) || (nearHoop && netShouldCollide(hoop, ball))));
     if (other) {
       const nearOther = netNearHoop(other, ball);
       stepNet(
@@ -5596,7 +5600,7 @@ export function createGame(
         world,
         dt,
         time,
-        !anti2ReturnLocked() && !vector.anchor && vector.burst <= 0 && other.couple && (gfx.net2 || (nearOther && netShouldCollide(other, ball))),
+        !anti2ReturnLocked() && !vector.anchor && vector.burst <= 0 && other.couple && (isClothNet(gfx.net) || (nearOther && netShouldCollide(other, ball))),
       );
       if (other.burning) {
         other.char = Math.min(1, other.char + dt / 1.05);
@@ -5777,7 +5781,7 @@ export function createGame(
     ball.vy = tangentY * hackerSpeed * turn;
     ball.omega = ball.vx / Math.max(8, ball.r);
     ball.hitRim = true;
-    if (!gfx.net2) {
+    if (!isClothNet(gfx.net)) {
       h.jolt = 1; h.joltPower = 1;
       h.joltDir = ball.vy < 0 ? -1 : 1;
     }
@@ -5850,7 +5854,7 @@ export function createGame(
     ball.vy -= (1 + rest) * vn * ny;
     applySpinDeflect();
     ball.hitRim = true;
-    if (!gfx.net2) {
+    if (!isClothNet(gfx.net)) {
       h.jolt = 1; h.joltPower = 1;
       h.joltDir = ball.vy < 0 ? -1 : 1;
     }
@@ -7376,12 +7380,13 @@ export function createGame(
       emitHud();
     },
     setGfx(next) {
-      if (next.net2 !== undefined && next.net2 !== gfx.net2) {
+      const net = next.net === "legacy" || next.net === "net2" || next.net === "net3" ? next.net : gfx.net;
+      if (net !== gfx.net) {
         hoop.net = buildNet(hoop);
         hoop.netPulse = 0;
         if (other) { other.net = buildNet(other); other.netPulse = 0; }
       }
-      gfx = { ...gfx, ...next };
+      gfx = { ...gfx, ...next, net };
       if (next.clouds === "off" || next.clouds === "drift" || next.clouds === "dance") {
         gfx.clouds = next.clouds;
       }

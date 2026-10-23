@@ -5,7 +5,7 @@ import { drawTrainBackdrop, getTrainScroll } from "./train-bg";
 import { drawTrainGantryWarnings } from "./train-gantry";
 import { birdOwnsBall, drawBirds, drawEagleWarnings, type BirdState } from "./birds";
 import type { Ball, Callout, Gfx, Hoop, NinjaCloneDraw, Particle, PrisonHud, TrailPt, World } from "./types";
-import { DEFAULT_GFX, fireStage } from "./types";
+import { DEFAULT_GFX, fireStage, isClothNet } from "./types";
 import { artImage, ballImage, cloudImages, graffitiImage } from "./art";
 import type { BallId } from "./balls";
 import { DEFAULT_BALL } from "./balls";
@@ -606,12 +606,12 @@ function drawHoopStack(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
 	beginHoopFx();
 	if (!hoop.noBoard) drawBackboard(ctx, hoop, world, time, combo);
 	drawRim(ctx, hoop, "back", combo);
-	drawNet(ctx, hoop, "back", ball, combo, gfx.net2);
+	drawNet(ctx, hoop, "back", ball, combo, isClothNet(gfx.net));
 	ctx.restore();
 	// Ball stays in world space — hoop fade/scale must not suck it toward the rim.
 	drawBallLayer();
 	beginHoopFx();
-	drawNet(ctx, hoop, "front", ball, combo, gfx.net2);
+	drawNet(ctx, hoop, "front", ball, combo, isClothNet(gfx.net));
 	drawRim(ctx, hoop, "front", combo);
 	if (hoop.frostLeft > 0) drawFrostVeil(ctx, hoop, world);
 	ctx.restore();
@@ -1544,8 +1544,8 @@ function drawNet2(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "fr
 	ctx.restore();
 }
 
-function drawNet(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "front", ball: Ball | null, combo: number, net2 = false) {
-	if (net2) { drawNet2(ctx, hoop, layer, combo); return; }
+function drawNet(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "front", ball: Ball | null, combo: number, cloth = false) {
+	if (cloth) { drawNet2(ctx, hoop, layer, combo); return; }
 	if (hoop.net.length === 0) return;
 	const ch = hoop.char;
 	if (ch >= .98) return;
