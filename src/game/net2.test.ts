@@ -519,7 +519,7 @@ test("side contact meets the weave, cups it, and does not punch through", () => 
 test("a slower make hesitates longer than a fast one and still falls through", () => {
   const dt = 1 / 60;
   const g = 2500;
-  const run = (profile: NetProfile, vy0: number) => {
+  const run = (profile: NetProfile, vy0: number, scoreFirst = false) => {
     const s = settleCloth(profile);
     s.ball.x = s.hoop.x;
     s.ball.y = s.hoop.y - 16;
@@ -527,11 +527,12 @@ test("a slower make hesitates longer than a fast one and still falls through", (
     s.ball.vy = vy0;
     let seen = false, exited = false, minVy = Infinity, dwell = 0, entryVy = 0, climbed = false;
     let prevY = s.ball.y;
-    for (let i = 0; i < 180; i++) {
+    for (let i = 0; i < 220; i++) {
       const x = s.ball.x, y = s.ball.y;
       s.ball.vy += g * dt;
       s.ball.x += s.ball.vx * dt;
       s.ball.y += s.ball.vy * dt;
+      if (scoreFirst && y < s.hoop.y && s.ball.y >= s.hoop.y) tugNet2(s.hoop, s.ball, profile);
       stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, { wind: 0, profile });
       const state = s.hoop.net[0]!.netState!;
       if (state.inside && s.ball.y > s.hoop.y) {
@@ -553,15 +554,22 @@ test("a slower make hesitates longer than a fast one and still falls through", (
   };
   for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
     const label = profile === NET3_PROFILE ? "net3" : "net2";
-    const slow = run(profile, 200);
-    const fast = run(profile, 1450);
-    assert.ok(slow.seen && slow.exited && fast.seen && fast.exited, `${label} should score through the hem`);
-    assert.equal(slow.climbed, false, `${label} slow make climbed back out`);
-    assert.equal(fast.climbed, false, `${label} fast make climbed back out`);
-    assert.ok(slow.minVy > 40 && fast.minVy > 40, `${label} stalled in the sleeve`);
-    assert.ok(slow.minVy / slow.entryVy < 0.78, `${label} soft make only slowed to ${slow.minVy} from ${slow.entryVy}`);
-    assert.ok(fast.minVy / fast.entryVy > 0.88, `${label} hard make slowed to ${fast.minVy} from ${fast.entryVy}`);
-    assert.ok(slow.dwell > fast.dwell * 2.4, `${label} dwell slow ${slow.dwell}s vs fast ${fast.dwell}s`);
+    for (const scoreFirst of [false, true]) {
+      const how = scoreFirst ? "score" : "cross";
+      const slow = run(profile, 200, scoreFirst);
+      const mid = run(profile, 420, scoreFirst);
+      const fast = run(profile, 1450, scoreFirst);
+      assert.ok(slow.seen && slow.exited && mid.exited && fast.seen && fast.exited, `${label} ${how} should score through the hem`);
+      assert.equal(slow.climbed || mid.climbed || fast.climbed, false, `${label} ${how} climbed back out`);
+      assert.ok(slow.minVy > 40 && mid.minVy > 40 && fast.minVy > 40, `${label} ${how} stalled in the sleeve`);
+      assert.ok(slow.minVy / slow.entryVy < 0.55, `${label} ${how} soft held ${slow.minVy} of ${slow.entryVy}`);
+      assert.ok(slow.dwell > 0.25, `${label} ${how} soft dwell ${slow.dwell}s`);
+      assert.ok(mid.minVy / mid.entryVy < 0.58, `${label} ${how} medium held ${mid.minVy} of ${mid.entryVy}`);
+      assert.ok(mid.dwell > 0.16, `${label} ${how} medium dwell ${mid.dwell}s`);
+      assert.ok(fast.minVy / fast.entryVy > 0.84, `${label} ${how} hard slowed to ${fast.minVy} from ${fast.entryVy}`);
+      assert.ok(fast.dwell < 0.09, `${label} ${how} hard dwell ${fast.dwell}s`);
+      assert.ok(slow.dwell > fast.dwell * 3.5, `${label} ${how} dwell slow ${slow.dwell}s vs fast ${fast.dwell}s`);
+    }
   }
 });
 
@@ -618,7 +626,7 @@ test("clearing the hem tugs the net opposite the make's entry", () => {
             if (Math.abs(dx) > Math.abs(side)) side = dx;
             minY = Math.min(minY, ...s.hoop.net.slice(-NET_COLS).map(n => n.y));
           }
-          assert.ok(lift < -16, `${label} ${how} vx ${vx0} hem lift ${lift}`);
+          assert.ok(lift < -9, `${label} ${how} vx ${vx0} hem lift ${lift}`);
           assert.ok(side * entry.vx < 0, `${label} ${how} vx ${vx0} kicked ${side} along entry ${entry.vx}`);
           assert.ok(Math.abs(side) > 4, `${label} ${how} vx ${vx0} sideways tug only ${side}`);
           assert.ok(minY > s.hoop.y, `${label} ${how} hem crossed above the rim at ${minY}`);

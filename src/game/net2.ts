@@ -81,19 +81,22 @@ export type Net2Environment = {
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 // A make catches in the sleeve, then drops. The reference speed is 14× the rim.
-// At 0.4× reference the catch lasts ~0.26s and holds ~40% of entry speed; at
-// ~2× reference and above it holds ~95% and the window shrinks toward 0.02s.
+// Soft and medium entries are held near 34% of their speed for a short beat,
+// then gravity takes them out. Past ~1.5× reference the hold climbs to 92%
+// and a hard make is through in a couple of frames.
 const MAKE_REF = 14;
-const MAKE_EASE = 48;
+const MAKE_EASE = 110;
 function makeNorm(speed: number, inner: number) {
   return clamp(speed / (inner * MAKE_REF), 0.4, 5);
 }
 function makeWindow(speed: number, inner: number) {
-  return 0.105 / makeNorm(speed, inner);
+  // End the hold before a soft ball would crawl out, so the last bit of the
+  // sleeve is a real drop and the hem kick still meets a departing ball.
+  return 0.22 / makeNorm(speed, inner);
 }
 function makeFloor(speed: number, inner: number) {
-  const keep = 0.4 + 0.55 * clamp((makeNorm(speed, inner) - 0.4) / 1.6, 0, 1);
-  return Math.max(inner * 2.5, speed * keep);
+  const keep = 0.34 + 0.58 * clamp((makeNorm(speed, inner) - 1.45) / 1.35, 0, 1);
+  return Math.max(inner * 3.5, speed * keep);
 }
 function gust(t: number, seed: number) {
   const hash = (n: number) => {
@@ -179,12 +182,18 @@ export function tugNet2(h: Hoop, ball?: Pick<Ball, "x" | "y" | "vx" | "vy">, pro
   if (ball && ball.vy <= 0) return;
   const state = prepare(h);
   if (ball) {
+    // A second score on the same make must not restart the catch from the
+    // speed the sleeve just bled off — that would hold longer than the entry.
+    const catching = state.inside && state.throughMake && state.dwellLeft > 0;
     state.inside = true; state.exited = false; state.fromBelow = false;
-    // Scoring calls this before the cloth step, which would otherwise miss the
-    // rim crossing and never snap the net after the ball leaves.
-    state.entryVx = ball.vx;
-    state.entryVy = ball.vy;
-    state.throughMake = true;
+    if (!catching) {
+      // Scoring calls this before the cloth step, which would otherwise miss the
+      // rim crossing and never snap the net after the ball leaves.
+      state.entryVx = ball.vx;
+      state.entryVy = ball.vy;
+      state.throughMake = true;
+      state.dwellLeft = makeWindow(Math.hypot(ball.vx, ball.vy), h.inner);
+    }
   }
   h.netPulse = 0.7;
   const bx = ball?.x ?? h.x, by = ball?.y ?? h.y;
@@ -605,10 +614,12 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
         if (x !== bx) {
           bx = x; moveX = 0; body.vx = 0; corrected = true;
         }
-        // Hold a slower fall while the catch window lasts. Faster entries keep
-        // more of their speed and the window itself is shorter, so a hard make
-        // only hiccups. The cap never points the ball back up the sleeve.
-        if (state.dwellLeft > 0 && moveY > 0 && body.vy > 0) {
+        // Hold a slower fall once the center is inside the rim. Braking the
+        // approach above the plane pops the ball back out and a later crossing
+        // would re-arm a longer catch. Faster entries keep more of their speed
+        // and the window itself is shorter, so a hard make only hiccups. The
+        // cap never points the ball back up the sleeve.
+        if (state.dwellLeft > 0 && moveY > 0 && body.vy > 0 && by > h.y) {
           const entrySpeed = Math.hypot(state.entryVx, state.entryVy);
           const floor = makeFloor(entrySpeed, h.inner);
           if (body.vy > floor) {
