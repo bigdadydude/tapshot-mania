@@ -566,17 +566,16 @@ test("a slower make hesitates longer than a fast one and still falls through", (
       assert.ok(slow.seen && slow.exited && mid.exited && fast.seen && fast.exited, `${label} ${how} should score through the hem`);
       assert.ok(slow.highest > slow.hoopY && mid.highest > mid.hoopY && fast.highest > fast.hoopY,
         `${label} ${how} center crossed back above the rim`);
+      assert.ok(slow.rise < 1 && mid.rise < 1 && fast.rise < 1, `${label} ${how} rose slow ${slow.rise} mid ${mid.rise} fast ${fast.rise}`);
       assert.ok(slow.minVy > 40 && mid.minVy > 40 && fast.minVy > 40, `${label} ${how} stalled in the sleeve`);
-      assert.ok(slow.firstVy / slow.entryVy < 0.55, `${label} ${how} soft stepped to ${slow.firstVy} of ${slow.entryVy}`);
-      assert.ok(slow.minVy / slow.entryVy < 0.55, `${label} ${how} soft held ${slow.minVy} of ${slow.entryVy}`);
-      assert.ok(slow.rise < 1, `${label} ${how} soft still rose ${slow.rise}px`);
-      assert.ok(mid.firstVy / mid.entryVy < 0.6, `${label} ${how} medium stepped to ${mid.firstVy} of ${mid.entryVy}`);
-      assert.ok(mid.minVy / mid.entryVy < 0.6, `${label} ${how} medium held ${mid.minVy} of ${mid.entryVy}`);
-      assert.ok(mid.rise < 1, `${label} ${how} medium still rose ${mid.rise}px`);
-      assert.ok(fast.minVy / fast.entryVy > 0.84, `${label} ${how} hard slowed to ${fast.minVy} from ${fast.entryVy}`);
-      assert.ok(fast.rise < 1, `${label} ${how} hard still rose ${fast.rise}px`);
-      assert.ok(fast.dwell < 0.09, `${label} ${how} hard dwell ${fast.dwell}s`);
-      assert.ok(slow.dwell > fast.dwell * 2.5, `${label} ${how} dwell slow ${slow.dwell}s vs fast ${fast.dwell}s`);
+      assert.ok(slow.firstVy / slow.entryVy > 0.5, `${label} ${how} soft cut in one frame to ${slow.firstVy} of ${slow.entryVy}`);
+      assert.ok(slow.minVy / slow.entryVy < 0.78, `${label} ${how} soft held ${slow.minVy} of ${slow.entryVy}`);
+      assert.ok(slow.dwell > 0.08 && slow.dwell < 0.28, `${label} ${how} soft dwell ${slow.dwell}s`);
+      assert.ok(mid.minVy / mid.entryVy < 0.85, `${label} ${how} medium held ${mid.minVy} of ${mid.entryVy}`);
+      assert.ok(mid.dwell > 0.06 && mid.dwell < 0.22, `${label} ${how} medium dwell ${mid.dwell}s`);
+      assert.ok(fast.minVy / fast.entryVy > 0.88, `${label} ${how} hard slowed to ${fast.minVy} from ${fast.entryVy}`);
+      assert.ok(fast.dwell < 0.08, `${label} ${how} hard dwell ${fast.dwell}s`);
+      assert.ok(slow.dwell > fast.dwell * 2.4, `${label} ${how} dwell slow ${slow.dwell}s vs fast ${fast.dwell}s`);
     }
   }
 });
@@ -634,7 +633,7 @@ test("clearing the hem tugs the net opposite the make's entry", () => {
             if (Math.abs(dx) > Math.abs(side)) side = dx;
             minY = Math.min(minY, ...s.hoop.net.slice(-NET_COLS).map(n => n.y));
           }
-          assert.ok(lift < -9, `${label} ${how} vx ${vx0} hem lift ${lift}`);
+          assert.ok(lift < -16, `${label} ${how} vx ${vx0} hem lift ${lift}`);
           assert.ok(side * entry.vx < 0, `${label} ${how} vx ${vx0} kicked ${side} along entry ${entry.vx}`);
           assert.ok(Math.abs(side) > 4, `${label} ${how} vx ${vx0} sideways tug only ${side}`);
           assert.ok(minY > s.hoop.y, `${label} ${how} hem crossed above the rim at ${minY}`);

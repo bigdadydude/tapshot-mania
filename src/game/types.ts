@@ -62,8 +62,6 @@ export type NetNode = {
     entryVy: number;
     /** Seconds of fall-resistance left while the ball is still in the sleeve. */
     dwellLeft: number;
-    /** The one-frame speed step for this make has already fired. */
-    stepped: boolean;
     /** A downward make is in progress and should tug the cloth when it clears the hem. */
     throughMake: boolean;
   };
