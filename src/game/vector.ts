@@ -1,45 +1,21 @@
 /** Shared rules for the Vector Ball. World units are CSS pixels. */
-export const VECTOR = { conversion: 1 / 5, correctionOutput: 50, correctionCost: 250, correctionMin: 1000, capacity: 1500, storageLock: 10, burstMin: 40, hold: 1, chargeStart: 0.12, pulse: 0.16, pulseSpeed: 0.7, pulseHold: 0.08, drain: 18, makeCost: 5 };
+export const VECTOR = { conversion: 1 / 5, capacity: 1500, storageLock: 10, burstMin: 40, hold: 1, chargeStart: 0.12, drain: 18, makeCost: 5 };
 export function createVector() {
-  return { energy: 0, powered: false, burst: 0, injected: 0, bounces: 0, coast: 0,
+  return { energy: 0, powered: false, burst: 0, injected: 0, fullRelease: false, bounces: 0, coast: 0,
     unlocked: false, stored: 0, storeFlash: 0, spent: 0, released: 0, storageCooldown: 0,
     elapsed: 0, leakLeft: 0, leakAmount: 0, leakRemaining: 0, leakKick: 0, leakCooldown: 0, leakBounceCooldown: 0,
-    pointer: null as number | null, held: 0, consumed: false, notice: 0,
-    correction: null as { vx:number; vy:number; left:number; linger:number } | null, collisionCooldown: 0,
+    pointer: null as number | null, held: 0, consumed: false, notice: 0, cancelPending: false, cancelHold: 0,
+    collisionCooldown: 0,
     anchor: null as {x:number;y:number;vx:number;vy:number} | null,
     trail: [] as { x: number; y: number }[] };
 }
 export type VectorState = ReturnType<typeof createVector>;
-export function vectorPulse(ball: {x:number;y:number;r:number}, hoop: {x:number;y:number}, width:number, boardTop=-Infinity) {
-  const aboveBoard=ball.y+ball.r<=boardTop;
-  const targetX=!aboveBoard && ball.y>hoop.y ? width/2 : hoop.x;
-  const targetY=aboveBoard ? ball.y : ball.y>hoop.y ? hoop.y : Math.max(ball.r+2,hoop.y-ball.r*4);
-  const dx=targetX-ball.x, dy=targetY-ball.y;
-  // Keep the established 50-unit pulse strength; releasing it costs 250 storage.
-  // Travel is 70% of the previous speed. The moving segment still ends at `pulse`.
-  const distance=Math.hypot(dx,dy),speed=width*2.2*Math.sqrt(VECTOR.correctionOutput/15)*VECTOR.pulseSpeed;
-  return {vx:distance>0?dx/distance*speed:0,vy:distance>0?dy/distance*speed:0,left:Math.min(VECTOR.pulse,distance/speed),linger:VECTOR.pulseHold};
-}
-/** Drive a short-press correction. False means the hold is over and physics may resume. */
-export function stepVectorCorrection(ball:{vx:number;vy:number}, correction:{vx:number;vy:number;left:number;linger:number}, dt:number) {
-  if (correction.left > 0) {
-    const fraction = dt > 0 ? Math.min(1, correction.left / dt) : 1;
-    ball.vx = correction.vx * fraction;
-    ball.vy = correction.vy * fraction;
-    correction.left = Math.max(0, correction.left - dt);
-    return true;
-  }
-  // Displacement is finished: clear velocity and stay put for the hold.
-  ball.vx = 0;
-  ball.vy = 0;
-  if (correction.linger > 0) {
-    correction.linger = Math.max(0, correction.linger - dt);
-    return correction.linger > 0;
-  }
-  return false;
+/** Every release has the same speed; injected energy only extends burst duration. */
+export function vectorBurstSpeed(_s: VectorState, width: number) {
+  return width * 5.5;
 }
 export function vectorChargeProgress(s:VectorState) {
-  return s.anchor ? Math.min(1,Math.max(0,(s.held-VECTOR.chargeStart)/(VECTOR.hold-VECTOR.chargeStart))) : 0;
+  return s.pointer !== null ? Math.min(1,Math.max(0,(s.held-VECTOR.chargeStart)/(VECTOR.hold-VECTOR.chargeStart))) : 0;
 }
 export function vectorChargeScale(s:VectorState) {
   return 1-0.5*vectorChargeProgress(s);
@@ -49,14 +25,16 @@ export function vectorGaugeEnergy(s:VectorState) {
 }
 export function vectorFinishBurst(s:VectorState) {
   if(s.injected<=0 || s.burst>0) return false;
-  s.injected=0; s.storageCooldown=VECTOR.storageLock;
+  s.injected=0;
+  if (s.fullRelease) s.storageCooldown=VECTOR.storageLock;
+  s.fullRelease=false;
   return true;
 }
 export function vectorLayout(w: number, h: number, floorY: number) {
   const r = Math.max(28, Math.min(40, w * 0.085));
   return { x: w / 2, y: Math.min(h-60, floorY+r*2.15+18), r };
 }
-export function cancelVectorPress(s: VectorState) { s.pointer = null; s.held = 0; s.consumed = false; }
+export function cancelVectorPress(s: VectorState) { s.pointer = null; s.held = 0; s.consumed = false; s.cancelPending = false; }
 export function vectorRecover(s: VectorState, impulse: number, after: number, speedRef: number, random=Math.random):number {
   if (!s.unlocked || s.leakLeft > 0 || s.burst > 0 || s.injected > 0 || s.storageCooldown > 0 || s.coast > 0 || s.collisionCooldown > 0 || impulse < speedRef*0.2) return 0;
   const x=50*(Math.max(after,impulse*0.5)/speedRef)**2;
@@ -70,33 +48,29 @@ export function vectorMake(s: VectorState) {
   if (s.burst > 0) s.burst = Math.max(0, s.burst - VECTOR.makeCost);
   s.unlocked = true;
 }
-export function vectorRelease(s: VectorState): "correct" | "empty" | "none" {
+/** Release commits the displayed charge once; holding never spends energy or auto-fires. */
+export function vectorRelease(s: VectorState): "burst" | "empty" | "none" {
   if (s.pointer === null) return "none";
-  const short = !s.consumed && s.held < VECTOR.hold;
+  const progress = vectorChargeProgress(s);
+  const spent = s.energy * progress;
   cancelVectorPress(s);
-  if (!short) return "none";
-  if (s.energy < VECTOR.correctionCost) { s.notice = 0.8; return "empty"; }
-  s.energy -= VECTOR.correctionCost;
-  s.spent=VECTOR.correctionCost; s.released=s.spent*VECTOR.conversion;
-  s.powered = true;
-  return "correct";
-}
-export function vectorHold(s: VectorState, dt: number): boolean {
-  if (s.pointer === null || s.consumed) return false;
-  s.held += dt;
-  if (s.held + 1e-8 < VECTOR.hold) return false;
-  s.consumed = true;
-  if (s.energy < VECTOR.burstMin) { s.notice = 0.8; return false; }
-  s.spent=s.energy; s.released=s.spent*VECTOR.conversion;
+  if (progress <= 0) return "none";
+  if (spent < VECTOR.burstMin) { s.notice = 0.8; return "empty"; }
+  s.fullRelease = progress >= 1;
+  s.spent = spent;
+  s.released = spent * VECTOR.conversion;
   s.burst = s.released;
   s.injected = s.released;
-  s.energy = 0;
+  s.energy = s.fullRelease ? 0 : Math.max(0, s.energy - spent);
   s.powered = true;
-  s.correction = null;
   s.coast = 0;
   s.bounces = 0;
   s.trail = [];
-  return true;
+  return "burst";
+}
+export function vectorHold(s: VectorState, dt: number) {
+  if (s.pointer === null || s.cancelPending) return;
+  s.held = Math.min(VECTOR.hold, s.held + Math.max(0, dt));
 }
 export function drawVector(ctx: CanvasRenderingContext2D, world: {w: number; h: number; floorY: number}, s: VectorState, disabled: boolean) {
   const {x,y,r} = vectorLayout(world.w, world.h, world.floorY);
@@ -139,6 +113,23 @@ export function drawVector(ctx: CanvasRenderingContext2D, world: {w: number; h: 
   ctx.beginPath();ctx.moveTo(x,cy);ctx.lineTo(x+Math.cos(angle)*(radius-19),cy+Math.sin(angle)*(radius-19));ctx.stroke();
   ctx.strokeStyle="#000000";ctx.lineWidth=2.5;ctx.stroke();
   ctx.fillStyle="#000000";ctx.beginPath();ctx.arc(x,cy,4,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeStyle = "#142933";
+  ctx.lineWidth = 3;
+  ctx.font = "700 11px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const label = s.pointer !== null ? `投入 ${Math.round(s.energy * vectorChargeProgress(s))} / ${Math.round(s.energy)}`
+    : s.storageCooldown > 0 ? `储能冷却 ${s.storageCooldown.toFixed(1)}s`
+    : s.notice > 0 ? "至少投入40能量" : "按住蓄力 · 松手释放";
+  ctx.strokeText(label, x, Math.min(world.h - 12, cy + 26));
+  ctx.fillText(label, x, Math.min(world.h - 12, cy + 26));
+  if (s.pointer !== null) {
+    const hintY = Math.min(world.h - 10, cy + 43);
+    const hint = s.cancelPending ? "松手取消 · 停顿0.3秒后下落" : "松手释放 · 移出仪表取消";
+    ctx.strokeText(hint, x, hintY);
+    ctx.fillText(hint, x, hintY);
+  }
   ctx.restore();
 }
 

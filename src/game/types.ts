@@ -179,7 +179,7 @@ export type Gfx = {
 };
 
 export const DEFAULT_GFX: Gfx = {
-  net: "net2",
+  net: "net3",
   clouds: "dance",
   ballShade: true,
   ballShadow: true,

@@ -299,7 +299,7 @@ export function drawScene(
   chain: Chain | null = null,
   prison: PrisonHud | null = null,
   ninjaClones: NinjaCloneDraw[] = [],
-  champBank = -1,
+  champDoublePending = false,
   hole: { x: number; y: number; r: number; left?: number } | null = null,
   mazeHoles: { x: number; y: number; r: number }[] = [],
   antiCharge = -1,
@@ -435,7 +435,7 @@ export function drawScene(
 			comboBanner,
 			glassBase,
 			prison,
-			champBank,
+			champDoublePending,
 			antiCharge,
 			hole?.left ?? -1,
 			scoreOverride,
@@ -2964,7 +2964,7 @@ function drawHud(
 	comboBanner = "",
 	glassBase = -1,
 	prison: PrisonHud | null = null,
-	champBank = -1,
+	champDoublePending = false,
 	antiCharge = -1,
 	antiHoleLeft = -1,
 	scoreOverride: string | null = null,
@@ -3038,7 +3038,7 @@ function drawHud(
 		ctx.strokeText(String(glassBase), x, g.scoreY + 4 + label + 1);
 		ctx.fillText(String(glassBase), x, g.scoreY + 4 + label + 1);
 		ctx.restore();
-	} else if (champBank >= 0) {
+	} else if (champDoublePending) {
 		const label = Math.max(11, Math.floor(w * 0.032));
 		const num = Math.max(22, Math.floor(w * 0.068));
 		const x = Math.max(12, Math.floor(w * 0.035));
@@ -3049,14 +3049,14 @@ function drawHud(
 		ctx.fillStyle = "#90caf9";
 		ctx.font = `700 ${label}px 'Noto Sans SC', sans-serif`;
 		ctx.lineWidth = Math.max(3, label * 0.18);
-		ctx.strokeText("存时", x, g.scoreY + 4);
-		ctx.fillText("存时", x, g.scoreY + 4);
+		ctx.strokeText("下一球", x, g.scoreY + 4);
+		ctx.fillText("下一球", x, g.scoreY + 4);
 		ctx.font = `900 ${num}px 'Noto Sans SC', Impact, sans-serif`;
 		ctx.lineWidth = Math.max(4, num * 0.12);
 		ctx.fillStyle = "#ff8a80";
-		const bankText = `${champBank.toFixed(1)}s`;
-		ctx.strokeText(bankText, x, g.scoreY + 4 + label + 1);
-		ctx.fillText(bankText, x, g.scoreY + 4 + label + 1);
+		const bonusText = "×2";
+		ctx.strokeText(bonusText, x, g.scoreY + 4 + label + 1);
+		ctx.fillText(bonusText, x, g.scoreY + 4 + label + 1);
 		ctx.restore();
 	} else if (antiHoleLeft >= 0) {
 		const label = Math.max(11, Math.floor(w * 0.032));

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {stepVectorLeak,vectorLeakRate,vectorLeakBounce} from './vector.ts';
-import {createVector,vectorRecover,vectorMake,vectorRelease,vectorHold,vectorPulse,vectorLayout,vectorFinishBurst,vectorGaugeEnergy,vectorChargeScale,cancelVectorPress,stepVectorCorrection,VECTOR} from './vector.ts';
+import {createVector,vectorRecover,vectorMake,vectorRelease,vectorHold,vectorBurstSpeed,vectorLayout,vectorFinishBurst,vectorGaugeEnergy,vectorChargeScale,cancelVectorPress,VECTOR} from './vector.ts';
 test('first make unlocks storage without awarding energy',()=>{
  const s=createVector();vectorRecover(s,1200,600,600,()=>1);assert.equal(s.energy,0);
  vectorMake(s);assert.equal(s.unlocked,true);assert.equal(s.energy,0);
@@ -19,55 +19,6 @@ test('sustained/tiny contacts and burst cannot farm energy',()=>{
  vectorRecover(s,1200,600,600,()=>1);assert.equal(s.energy,50);
  s.collisionCooldown=0;vectorRecover(s,10,600,600,()=>1);assert.equal(s.energy,50);
  s.burst=10;vectorRecover(s,3000,2000,600,()=>1);assert.equal(s.energy,50);
-});
-test('short has no red-zone gate and only needs its actual cost',()=>{
- const s=createVector();
- for(const energy of [0,249]) { s.energy=energy;s.pointer=1;assert.equal(vectorRelease(s),'empty');assert.equal(s.energy,energy); }
- s.energy=1001;s.pointer=1;vectorHold(s,0.1);
- assert.equal(vectorRelease(s),'correct');assert.equal(s.energy,751);assert.equal(s.spent,250);assert.equal(s.released,50);
- assert.equal(vectorRelease(s),'none');assert.equal(s.energy,751);
- s.energy=250;s.pointer=1;assert.equal(vectorRelease(s),'correct');assert.equal(s.energy,0);
-});
-test('long spends five stored units per output unit and spends all energy once',()=>{
- const s=createVector();s.energy=1000;s.pointer=1;
- assert.equal(vectorHold(s,0.99),false);assert.equal(s.energy,1000);
- assert.equal(vectorHold(s,0.01),true);assert.equal(s.energy,0);assert.equal(s.burst,1000*VECTOR.conversion);assert.equal(s.injected,s.burst);
- assert.equal(vectorHold(s,1),false);assert.equal(vectorRelease(s),'none');vectorMake(s);assert.equal(s.burst,1000*VECTOR.conversion-5);
-});
-test('insufficient long does not fall back to short',()=>{
- const s=createVector();s.energy=30;s.pointer=1;assert.equal(vectorHold(s,1),false);assert.equal(vectorRelease(s),'none');assert.equal(s.energy,30);
-});
-test('pulse below hoop targets screen center at hoop height',()=>{
- const p=vectorPulse({x:100,y:550,r:18},{x:320,y:300},390,150);
- assert.ok(Math.abs(p.vx/p.vy-95/(300-550))<1e-9);
- assert.equal(VECTOR.pulseSpeed,0.7);
- assert.ok(Math.abs((p.vx*p.vx+p.vy*p.vy)/(390*2.2*VECTOR.pulseSpeed)**2-VECTOR.correctionOutput/15)<1e-9);assert.equal(p.left,0.16);assert.equal(p.linger,VECTOR.pulseHold);
-});
-test('pulse holds still for 0.08s after the moving segment',()=>{
- assert.equal(VECTOR.pulseHold,0.08);
- const ball={vx:3,vy:-4};
- const c={vx:200,vy:-50,left:0.05,linger:VECTOR.pulseHold};
- assert.equal(stepVectorCorrection(ball,c,0.02),true);
- assert.ok(Math.abs(c.left-0.03)<1e-12);assert.equal(c.linger,0.08);assert.equal(ball.vx,200);assert.equal(ball.vy,-50);
- const remain=c.left;
- assert.equal(stepVectorCorrection(ball,c,0.04),true);
- assert.equal(c.left,0);assert.equal(c.linger,0.08);
- assert.ok(Math.abs(ball.vx-200*remain/0.04)<1e-9);assert.ok(Math.abs(ball.vy-(-50*remain/0.04))<1e-9);
- let held=0;
- while(c.linger>0){
-  const dt=Math.min(0.02,c.linger);
-  const on=stepVectorCorrection(ball,c,dt);
-  held+=dt;
-  assert.equal(ball.vx,0);assert.equal(ball.vy,0);assert.equal(on,c.linger>0);
- }
- assert.ok(Math.abs(held-0.08)<1e-9);
- assert.equal(stepVectorCorrection(ball,c,0.02),false);assert.equal(ball.vx,0);assert.equal(ball.vy,0);
-});
-test('above hoop aims two diameters above; above board takes horizontal priority',()=>{
- const p=vectorPulse({x:100,y:270,r:18},{x:320,y:300},390,150);
- assert.ok(Math.abs(p.vx/p.vy-220/(228-270))<1e-9);
- const h=vectorPulse({x:100,y:100,r:18},{x:320,y:300},390,150);
- assert.equal(h.vy,0);assert.ok(h.vx>0);
 });
 test('leak probability increases with played time, respects red zone and active skills',()=>{
  assert.ok(vectorLeakRate(120)>vectorLeakRate(30));assert.equal(vectorLeakRate(0),0);
@@ -103,7 +54,7 @@ test('capacity only absorbs available room and cannot destroy excess rebound ene
  s.collisionCooldown=0;assert.equal(vectorRecover(s,1200,600,600,()=>1),0);assert.equal(s.energy,1500);
 });
 test('storage lock starts at burst end and cannot be reset repeatedly',()=>{
- const s=createVector();s.unlocked=true;s.energy=1500;s.pointer=1;vectorHold(s,1);
+ const s=createVector();s.unlocked=true;s.energy=1500;s.pointer=1;vectorHold(s,1);vectorRelease(s);
  assert.equal(s.burst,300);assert.equal(vectorFinishBurst(s),false);assert.equal(s.storageCooldown,0);
  s.burst=0;assert.equal(vectorFinishBurst(s),true);assert.equal(s.storageCooldown,10);
  assert.equal(vectorRecover(s,1200,600,600,()=>1),0);assert.equal(s.energy,0);
@@ -116,4 +67,44 @@ test('gauge and ball share proportional charge progress without spending before 
  s.held=0.56;assert.ok(Math.abs(vectorGaugeEnergy(s)-750)<1e-9);assert.equal(vectorChargeScale(s),0.75);
  s.held=1;assert.equal(vectorGaugeEnergy(s),0);assert.equal(vectorChargeScale(s),0.5);assert.equal(s.energy,1500);
  cancelVectorPress(s);assert.equal(vectorGaugeEnergy(s),1500);assert.equal(s.energy,1500);
+});
+
+test('holding caps charge without spending or automatically firing',()=>{
+ const s=createVector();s.energy=1500;s.pointer=1;
+ vectorHold(s,0.56);assert.equal(s.energy,1500);assert.equal(s.burst,0);
+ assert.ok(Math.abs(vectorGaugeEnergy(s)-750)<1e-8);
+ vectorHold(s,10);assert.equal(s.energy,1500);assert.equal(s.burst,0);assert.equal(s.held,1);
+ assert.equal(vectorRelease(s),'burst');assert.equal(s.energy,0);assert.equal(s.spent,1500);assert.equal(s.injected,300);
+ assert.equal(vectorRelease(s),'none');
+});
+test('partial release preserves remainder and does not start storage lock',()=>{
+ const s=createVector();s.energy=1000;s.pointer=1;vectorHold(s,.56);
+ assert.equal(vectorRelease(s),'burst');assert.ok(Math.abs(s.energy-500)<1e-8);assert.equal(s.fullRelease,false);
+ assert.ok(Math.abs(s.injected-100)<1e-8);s.burst=0;assert.equal(vectorFinishBurst(s),true);assert.equal(s.storageCooldown,0);
+ s.coast=0;s.unlocked=true;assert.ok(vectorRecover(s,1200,600,600,()=>1)>0);
+});
+test('full release of a partially filled tank starts lock only at burst end',()=>{
+ const s=createVector();s.energy=300;s.pointer=1;vectorHold(s,1);vectorRelease(s);
+ assert.equal(s.energy,0);assert.equal(s.fullRelease,true);assert.equal(s.storageCooldown,0);
+ vectorMake(s);assert.equal(s.burst,55);s.burst=0;vectorFinishBurst(s);assert.equal(s.storageCooldown,10);
+});
+test('all charge levels have equal launch speed but proportional duration',()=>{
+ const durations:number[]=[];
+ for(const held of [.34,.56,1]) {
+  const s=createVector();s.energy=1000;s.pointer=1;vectorHold(s,held);
+  assert.equal(vectorRelease(s),'burst');
+  assert.equal(vectorBurstSpeed(s,390),390*5.5);
+  durations.push(s.burst/VECTOR.drain);
+ }
+ assert.ok(Math.abs(durations[1]/durations[0]-2)<1e-8);
+ assert.ok(Math.abs(durations[2]/durations[1]-2)<1e-8);
+});test('tap and insufficient charge do not spend or restore removed correction',()=>{
+ const s=createVector();s.energy=1500;s.pointer=1;vectorHold(s,.1);
+ assert.equal(vectorRelease(s),'none');assert.equal(s.energy,1500);
+ s.energy=30;s.pointer=2;vectorHold(s,1);assert.equal(vectorRelease(s),'empty');assert.equal(s.energy,30);
+ assert.equal(s.burst,0);assert.equal(s.storageCooldown,0);
+});
+test('cancelled charge preserves energy and never starts cooldown',()=>{
+ const s=createVector();s.energy=1200;s.pointer=1;vectorHold(s,.8);cancelVectorPress(s);
+ assert.equal(vectorRelease(s),'none');assert.equal(s.energy,1200);assert.equal(s.storageCooldown,0);
 });

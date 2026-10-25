@@ -27,7 +27,7 @@ export type BallKit = {
   heat: boolean;
   /** Ice ball: freeze hoops at high combo, white-smoke FX. */
   frost?: boolean;
-  /** Champion ball: bank leftover timer → champion moment. */
+  /** Champion ball: controllable clutch with a one-shot double-score reward. */
   champ?: boolean;
   /** Anti ball: collect antimatter → timed black hole. */
   anti?: boolean;
@@ -37,11 +37,11 @@ export type BallKit = {
   bolt?: boolean;
   /** Maze ball: a floor joystick redirects gravity. */
   maze?: boolean;
-  /** Vector ball: 45° ascent followed by a vertical drop until an impact. */
+  /** Vector ball: collision storage and hold-to-charge random kinetic bursts. */
   vector?: boolean;
   rocket?: boolean;
   super?: boolean;
-  /** Hacker ball: first clock empty awakens code-rain cruise. */
+  /** Hacker ball: hidden red/blue pills switch the code world. */
   codeRain?: boolean;
   /** Quantum ball: high-combo chance to phase through the basket rig. */
   quantum?: boolean;
@@ -63,7 +63,7 @@ export type BallKit = {
 export const BALLS: BallKit[] = [
   {
     id: "super", name: "超能球", heat: false, super: true,
-    skill: "进球得分充能，每20分一段，最多6段。滑动八向立刻减速冲刺五个球直径，抵达顶端停滞0.2秒再下落；连续冲刺消耗1/2/3段，停手0.2秒后进球返10能量。打板、打铁、撞车或中弹后0.07秒内滑动：球原地静止0.08秒并清空速度，返1段，0能量也可触发；进球时不可触发。点击能量条切换护盾：抵御车与子弹，每球基础加满段数×2；每次抵御或加分耗4能量，每秒耗0.5，护盾进球不充能，能量耗尽自动回到滑动",
+    skill: "每进一球固定充10能量，每20能量一段，最多6段。滑动八向立刻减速冲刺五个球直径，抵达顶端停滞0.2秒再下落；连续冲刺消耗1/2/3段。打板、打铁、撞车或中弹后0.12秒内滑动：球原地静止0.08秒并清空速度，返1段，0能量也可触发；进球时不可触发。点击能量条切换护盾：抵御车与子弹，每球基础加满段数×2；每次抵御或加分耗4能量，每秒耗0.5，护盾进球不充能，能量耗尽自动回到滑动",
     src: "/game/balls/super.png?v=1", fallback: "/game/balls/super.png?v=1",
     wrap: "ground", score: "normal", phys: {jumpUp:0.95,jumpFwd:0.95},
   },
@@ -176,7 +176,7 @@ export const BALLS: BallKit[] = [
   {
     id: "vector",
     name: "矢量球",
-    skill: "首球后自动储能，上限1500；短按消耗250，按球与篮筐的位置调整方向；长按1秒全部爆发（至少40），消耗为释放的5倍，大招后10秒无法储能。超过1000指针摇晃，随游戏时间增加泄漏风险：3秒流失100–500能量，期间无法储能，能量转成随机回弹",
+    skill: "首球后碰撞储能，上限1500；按住悬停蓄力，松手向随机方向释放；1秒全量注入，速度固定、投入越多持续越久；少量释放保留余能，全部释放后禁储能10秒；超过1000有泄漏风险",
     heat: false,
     vector: true,
     src: "/game/balls/vector.png?v=1",
@@ -191,7 +191,7 @@ export const BALLS: BallKit[] = [
   {
     id: "rain",
     name: "骇客球",
-    skill: "倒计时首次耗尽先进入绝杀，随后觉醒：绿滤镜巡航，沿篮圈滑行；进球加速",
+    skill: "首球后随机生成隐藏红药丸，越接近glitch越频繁；首次经过显形，离开后再次接近可收集，第二次错过则换位置重新隐藏。点击底部红药丸觉醒；蓝药丸靠近显形，经过返回现实。保持点跳与正常倒计时，觉醒近身停弹并击倒鸟",
     heat: false,
     codeRain: true,
     wrap: "ground",
@@ -228,7 +228,7 @@ export const BALLS: BallKit[] = [
   {
     id: "champ",
     name: "冠军球",
-    skill: "存剩余时间的两成，耗尽后开启双倍冠军时刻（不可用于1分钟）",
+    skill: "每次绝杀5秒内仅可操作1次；绝杀进球后下一球×2；若操作过，下一钟减半；奖励不叠加；1分钟仅终局绝杀可操作1次",
     heat: false,
     champ: true,
     wrap: "ground",
@@ -257,7 +257,7 @@ export const BALLS: BallKit[] = [
   {
     id: "glass",
     name: "玻璃球",
-    skill: "基础分从30起；打铁/打板按冲击扣0–2/0–1，落地按下落高度扣0–10，空心+4，上限50",
+    skill: "基础分20，上限40；首球进球前免伤；空心+4并保护3秒，连续空心刷新；保护期间免疫碰撞及落地伤害；平时打铁/打板扣0–2/0–1，落地扣0–10",
     heat: false,
     src: "/game/balls/glass.webp?v=5",
     fallback: "/game/balls/glass.png?v=5",
