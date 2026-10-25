@@ -381,7 +381,7 @@ export function stepNet(
   if (!h.net.length) return;
   if (h.netPulse > 0) h.netPulse = Math.max(0, h.netPulse - dt);
   const pulse = h.netPulse;
-  const wrapping = ballWrapping(h, ball);
+  const wrapping = near && ballWrapping(h, ball);
   const g = world.h * 0.12 * dt;
   const u = pulse > 0 ? 1 - pulse / PULSE_MAX : 1;
   for (let i = 0; i < h.net.length; i++) {

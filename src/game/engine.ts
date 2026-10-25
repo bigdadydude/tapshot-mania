@@ -24,7 +24,12 @@ import {
   tugNet as tugLegacyNet,
   RIM_RY,
 } from "./net";
-import { NET2_PROFILE, NET3_PROFILE, stepNet2, strikeNet2, tugNet2 } from "./net2";
+import { NET2_PROFILE, NET3_PROFILE, stepNet2, strikeNet2, tugNet2, netImpactStrength } from "./net2";
+import { rimPassage } from "./rim-score";
+import { releaseSupportRest } from "./support-release";
+import { sweepSupport, sweepSupportPolygon } from "./support-collision";
+import { rimArmPoints } from "./rim-arm";
+import { freezeNet, clearOfFrozenNet, touchesFrozenNet, shatterFrozenNet } from "./frost-net";
 import { boardGeom, braceColliders, clearSceneLayers, drawBoot, drawScene, paintBallSprite, hoopNetMotion } from "./render";
 import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
@@ -70,7 +75,7 @@ import {
   type RogueRun,
 } from "./rogue";
 
-export const GAME_REV = 311;
+export const GAME_REV = 332;
 
 const STEP = 1 / 60;
 const TIMER_START = 15;
@@ -234,10 +239,19 @@ export function createGame(
   }
   function stepNet(...args: Parameters<typeof stepLegacyNet>) {
     const h = args[0];
+    if (h.netShattered) return;
+    // A phased ball cannot load the cloth, including on the scoring frame.
+    args[7] = args[7] && quantumTunnelLeft <= 0;
+    if (h.frostLeft > 0 && h.frost > 0) {
+      if (h.frostNetIgnoreBall && clearOfFrozenNet(h, args[1])) h.frostNetIgnoreBall = false;
+      if (args[7] && !h.frostNetIgnoreBall && touchesFrozenNet(h, args[1], args[2], args[3])) breakFrozenNet(h);
+      return;
+    }
     if (isClothNet(gfx.net)) stepNet2(...args, {
       horizontalAccel: trainBackdropOn() && phase === "playing" ? trainInertiaAccel() : 0,
       motion: hoopNetMotion(h, args[4], heatN()),
       profile: netProfile(),
+      brakingScale: heatN() >= STAGE_BLAZE ? .35 : heatN() >= STAGE_IGNITE ? .65 : 1,
     });
     else {
       // A rewind snapshot may have been captured with the other visual mode.
@@ -246,18 +260,33 @@ export function createGame(
     }
   }
   function tugNet(h: Hoop, hit?: Ball) {
+    if (h.netShattered) return;
+    if (hit && quantumTunnelLeft > 0) return;
+    if (h.frostLeft > 0 && h.frost > 0) return;
     if (isClothNet(gfx.net)) tugNet2(h, hit, netProfile());
     else tugLegacyNet(h);
   }
   function strikeNet(h: Hoop, x: number, y: number, nx: number, ny: number) {
-    if (!isClothNet(gfx.net)) return;
+    if (quantumTunnelLeft > 0) return;
+    const frozen = h.frostLeft > 0 && h.frost > 0;
+    if (frozen) breakFrozenNet(h);
+    if (!isClothNet(gfx.net)) {
+      if ((frozen || h.netShattered) && -(ball.vx * nx + ball.vy * ny) > h.inner * .6) {
+        h.jolt = 1; h.joltPower = 1; h.joltDir = ball.vy < 0 ? -1 : 1;
+      }
+      return;
+    }
     const motion = hoopNetMotion(h, world, heatN());
     const cos = Math.cos(motion.angle), sin = Math.sin(motion.angle);
-    const strength = strikeNet2(h,
+    // Rigid/broken nets still transmit impact to the stand, without moving knots.
+    const impact = -(ball.vx * nx + ball.vy * ny);
+    const strength = frozen || h.netShattered
+      ? (h.jolt > .875 ? 0 : netImpactStrength(h, x, y, impact, netProfile()))
+      : strikeNet2(h,
       motion.pivotX + (x - motion.pivotX) * cos + (y - motion.pivotY) * sin,
       motion.pivotY - (x - motion.pivotX) * sin + (y - motion.pivotY) * cos,
       ball.vx * cos + ball.vy * sin, -ball.vx * sin + ball.vy * cos,
-      -(ball.vx * nx + ball.vy * ny), netProfile());
+      impact, netProfile());
     if (strength > 0) {
       h.jolt = 1;
       h.joltDir = ball.vy < 0 ? -1 : 1;
@@ -2365,6 +2394,8 @@ export function createGame(
   }
 
   function applyFrostToHoop(h: Hoop, refreshing = false) {
+    // Refreshing the timer must not protect the next incoming shot from fracture.
+    freezeNet(h, h.frostLeft > 0 ? !!h.frostNetIgnoreBall : netNearHoop(h, ball));
     h.frost = 1;
     // First freeze: 4s; any re-freeze refreshes to 3s.
     h.frostLeft = refreshing ? FROST_DUR_REFRESH : FROST_DUR_FIRST;
@@ -2378,6 +2409,7 @@ export function createGame(
   }
 
   function clearFrost(h: Hoop, asOther: boolean) {
+    h.frostNetIgnoreBall = false;
     h.frostLeft = 0;
     h.frost = 0;
     if (asOther) {
@@ -5138,6 +5170,9 @@ export function createGame(
       }
     }
 
+    // Capture by identity before any stand/modifier motion, including the other hoop.
+    const scoringRimStarts = new Map<Hoop, { x: number; y: number }>();
+    for (const h of other ? [hoop, other] : [hoop]) scoringRimStarts.set(h, { x: h.x, y: h.y });
     stepHoop(hoop, dt);
     tickFrost(hoop, dt, false);
     if (phase === "playing" && !paused && !birdOwnsBall(birds)) {
@@ -5497,8 +5532,14 @@ export function createGame(
       }
       ball.spin += ball.omega * dt;
       ball.squash += (1 - ball.squash) * (1 - Math.exp(-12 * dt));
+      // The solid orange connector must stop a path before the scoring plane
+      // is tested. Otherwise a tunneled connector hit can become a false make.
+      if (phase !== "title" && !ballHidden() && !anti2ReturnLocked() && quantumTunnelLeft <= 0) {
+        if (!hoop.noBoard && !stageMod.skipBrace(hoop)) collideRimArm(hoop);
+        if (other && !other.noBoard && !stageMod.skipBrace(other)) collideRimArm(other);
+      }
       // Score before rim/board so a clean thread isn't eaten by rim bounce.
-      if (phase === "playing") checkScore();
+      if (phase === "playing") checkScore(scoringRimStarts);
       if (phase !== "title" && !ballHidden() && !anti2ReturnLocked()) {
         const vx0 = ball.vx;
         const vy0 = ball.vy;
@@ -5518,6 +5559,12 @@ export function createGame(
           if (!other.noBoard && !stageMod.skipBoard(other)) collideBoard(other);
           if (!other.noBoard && !stageMod.skipBrace(other)) collideBrace(other);
         }
+        // A neighboring rim/board correction must not embed the small ball
+        // back into the connector at the shared seam.
+        if (quantumTunnelLeft <= 0) {
+          if (!hoop.noBoard && !stageMod.skipBrace(hoop)) collideRimArm(hoop, false);
+          if (other && !other.noBoard && !stageMod.skipBrace(other)) collideRimArm(other, false);
+        }
         if (ball.vx !== vx0 || ball.vy !== vy0) traffic.launched = false;
         if (ball.vx !== vx0 || ball.vy !== vy0) vectorCollision(vx0,vy0);
         if (
@@ -5529,6 +5576,10 @@ export function createGame(
         }
       }
       if (phase === "playing") {
+        // Rim/board resolution can turn a grazing approach into a real make,
+        // especially when quantum phasing ends while overlapping the rim.
+        // Recheck this step's path; ball.scored prevents a second award.
+        checkScore(scoringRimStarts);
         if (isAnti()) tryCollectAntiMatter();
         if (holeOn) stepAntiHole(dt);
         if (antiMatter && !holeOn && isAnti()) antiMatter.age += dt;
@@ -5589,7 +5640,7 @@ export function createGame(
 
     const ghostQuiet = hoop.noBoard && hoop.scoreable === false;
     const nearHoop = !ghostQuiet && netNearHoop(hoop, ball);
-    stepNet(hoop, ball, prevBallX, prevBallY, world, dt, time, !ghostQuiet && !anti2ReturnLocked() && !vector.anchor && vector.burst <= 0 && (isClothNet(gfx.net) || (nearHoop && netShouldCollide(hoop, ball))));
+    stepNet(hoop, ball, prevBallX, prevBallY, world, dt, time, !ghostQuiet && !anti2ReturnLocked() && !vector.anchor && (isClothNet(gfx.net) || (nearHoop && netShouldCollide(hoop, ball))));
     if (other) {
       const nearOther = netNearHoop(other, ball);
       stepNet(
@@ -5600,7 +5651,7 @@ export function createGame(
         world,
         dt,
         time,
-        !anti2ReturnLocked() && !vector.anchor && vector.burst <= 0 && other.couple && (isClothNet(gfx.net) || (nearOther && netShouldCollide(other, ball))),
+        !anti2ReturnLocked() && !vector.anchor && other.couple && (isClothNet(gfx.net) || (nearOther && netShouldCollide(other, ball))),
       );
       if (other.burning) {
         other.char = Math.min(1, other.char + dt / 1.05);
@@ -5950,6 +6001,7 @@ export function createGame(
     const vn = ball.vx * nx + ball.vy * ny;
     if (vn >= 0) {
       ball.hitBoard = true;
+      releaseSupportRest(ball, h.side, nx, ny, !isMaze() && pMul("ball") > 1.15);
       return;
     }
     noteComboContact(h);
@@ -5968,6 +6020,7 @@ export function createGame(
     ball.omega = clamp(ball.omega, -9, 9);
     ball.hitBoard = true;
     const topHit = h.active && ny < -0.55;
+    releaseSupportRest(ball, h.side, nx, ny, !isMaze() && pMul("ball") > 1.15);
     if (topHit) hitBoardTop = true;
     const impact = -vn;
     if (impact > 90) audio.board(Math.min(1, (impact - 60) / 520));
@@ -5992,126 +6045,58 @@ export function createGame(
     }
   }
 
-  /** Collide with hoop support brace — swept so small/fast balls cannot tunnel. */
+  /** Stop at the first swept contact, on the incoming side of the stand. */
   function collideBrace(h: Hoop) {
     if (h.noBoard) return;
-    const segs = braceColliders(h, world);
-    const hitR = ball.r;
-    const ax0 = prevBallX;
-    const ay0 = prevBallY;
-    const bx = ball.x;
-    const by = ball.y;
-    for (const s of segs) {
-      const need = hitR + s.halfW;
-      const hit = closestSegSeg(ax0, ay0, bx, by, s.x0, s.y0, s.x1, s.y1);
-      if (hit.dist >= need) {
-        const end = closestPointOnSeg(bx, by, s.x0, s.y0, s.x1, s.y1);
-        if (end.dist >= need) continue;
-        resolveBraceHit(h, end.x, end.y, s.x1 - s.x0, s.y1 - s.y0, need, end.dist);
-        continue;
-      }
-      resolveBraceHit(h, hit.px, hit.py, s.x1 - s.x0, s.y1 - s.y0, need, hit.dist);
+    const from = { x: prevBallX, y: prevBallY };
+    const to = { x: ball.x, y: ball.y };
+    let first: ReturnType<typeof sweepSupport> = null;
+    for (const segment of braceColliders(h, world)) {
+      const hit = sweepSupport(from, to, ball.r, segment);
+      if (hit && (!first || hit.t < first.t)) first = hit;
     }
+    if (!first) return;
+    ball.x = first.x + first.nx * .35;
+    ball.y = first.y + first.ny * .35;
+    resolveBraceHit(h, first.px, first.py, first.nx, first.ny);
   }
 
-  function closestPointOnSeg(
-    px: number,
-    py: number,
-    x0: number,
-    y0: number,
-    x1: number,
-    y1: number,
-  ) {
-    const dx = x1 - x0;
-    const dy = y1 - y0;
-    const len2 = dx * dx + dy * dy || 0.0001;
-    let t = ((px - x0) * dx + (py - y0) * dy) / len2;
-    t = Math.max(0, Math.min(1, t));
-    const x = x0 + dx * t;
-    const y = y0 + dy * t;
-    return { x, y, dist: Math.hypot(px - x, py - y) };
+  function collideRimArm(h: Hoop, swept = true) {
+    if (h.noBoard) return;
+    const motion = hoopNetMotion(h, world, heatN()), scale = Math.max(.01, h.fxScale ?? 1);
+    const cos = Math.cos(motion.angle), sin = Math.sin(motion.angle);
+    const local = (x: number, y: number) => {
+      x = h.x + (x - h.x) / scale; y = h.y + (y - h.y) / scale;
+      const dx = x - motion.pivotX, dy = y - motion.pivotY;
+      return {x: motion.pivotX + dx * cos + dy * sin, y: motion.pivotY - dx * sin + dy * cos};
+    };
+    const end = local(ball.x, ball.y);
+    const hit = sweepSupportPolygon(swept ? local(prevBallX, prevBallY) : end, end,
+      ball.r / scale, rimArmPoints(h, boardGeom(h, world)));
+    if (!hit) return;
+    const nx = hit.nx * cos - hit.ny * sin, ny = hit.nx * sin + hit.ny * cos;
+    const toWorld = (x: number, y: number) => {
+      const dx = x - motion.pivotX, dy = y - motion.pivotY;
+      return {x: h.x + (motion.pivotX + dx * cos - dy * sin - h.x) * scale,
+        y: h.y + (motion.pivotY + dx * sin + dy * cos - h.y) * scale};
+    };
+    const position = toWorld(hit.x, hit.y), contact = toWorld(hit.px, hit.py);
+    ball.x = position.x + nx * .35; ball.y = position.y + ny * .35;
+    // Here the free side is toward the court: pushing toward the board wedges
+    // a small ball between the board face and the adjacent rim contact.
+    resolveBraceHit(h, contact.x, contact.y, nx, ny, h.side < 0 ? 1 : -1, .65);
   }
 
-  /** Closest points between segments A→B (ball path) and C→D (brace). */
-  function closestSegSeg(
-    ax: number,
-    ay: number,
-    bx: number,
-    by: number,
-    cx: number,
-    cy: number,
-    dx: number,
-    dy: number,
-  ) {
-    const d1x = bx - ax;
-    const d1y = by - ay;
-    const d2x = dx - cx;
-    const d2y = dy - cy;
-    const rx = ax - cx;
-    const ry = ay - cy;
-    const a = d1x * d1x + d1y * d1y;
-    const e = d2x * d2x + d2y * d2y;
-    const f = d2x * rx + d2y * ry;
-    const eps = 1e-8;
-    let s = 0;
-    let t = 0;
-    if (a <= eps && e <= eps) {
-      // both points
-    } else if (a <= eps) {
-      t = Math.max(0, Math.min(1, f / e));
-    } else {
-      const c = d1x * rx + d1y * ry;
-      if (e <= eps) {
-        s = Math.max(0, Math.min(1, -c / a));
-      } else {
-        const b = d1x * d2x + d1y * d2y;
-        const denom = a * e - b * b;
-        s = Math.abs(denom) > eps ? Math.max(0, Math.min(1, (b * f - c * e) / denom)) : 0;
-        t = (b * s + f) / e;
-        if (t < 0) {
-          t = 0;
-          s = Math.max(0, Math.min(1, -c / a));
-        } else if (t > 1) {
-          t = 1;
-          s = Math.max(0, Math.min(1, (b - c) / a));
-        }
-      }
-    }
-    const qx = ax + d1x * s;
-    const qy = ay + d1y * s;
-    const px = cx + d2x * t;
-    const py = cy + d2y * t;
-    return { dist: Math.hypot(qx - px, qy - py), qx, qy, px, py };
-  }
-
-  function resolveBraceHit(
-    h: Hoop,
-    px: number,
-    py: number,
-    segDx: number,
-    segDy: number,
-    need: number,
-    dist: number,
-  ) {
-    let ox = ball.x - px;
-    let oy = ball.y - py;
-    let d = Math.hypot(ox, oy);
-    if (d < 0.0001) {
-      const len = Math.hypot(segDx, segDy) || 1;
-      ox = -segDy / len;
-      oy = segDx / len;
-      d = 0.0001;
-    }
-    const nx = ox / d;
-    const ny = oy / d;
-    const overlap = need - Math.min(dist, d);
-    ball.x += nx * (overlap + 0.35);
-    ball.y += ny * (overlap + 0.35);
+  function resolveBraceHit(h: Hoop, px: number, py: number, nx: number, ny: number, releaseDirection = h.side, restitutionScale = 1) {
     const vn = ball.vx * nx + ball.vy * ny;
-    if (vn >= 0) return;
+    if (vn >= 0) {
+      releaseSupportRest(ball, releaseDirection, nx, ny, !isMaze() && pMul("ball") > 1.15);
+      return;
+    }
     if (superCancelsSolid(nx, ny)) return;
     strikeNet(h, px, py, nx, ny);
-    const rest = isMaze() ? mazeRestitution(-vn, bounceRest("board")) : bounceRest("board");
+    // The short connector absorbs more impact than the broad backboard.
+    const rest = (isMaze() ? mazeRestitution(-vn, bounceRest("board")) : bounceRest("board")) * restitutionScale;
     ball.vx -= (1 + rest) * vn * nx;
     ball.vy -= (1 + rest) * vn * ny;
     const tx = -ny;
@@ -6121,6 +6106,7 @@ export function createGame(
     ball.vx -= grip * vt * tx;
     ball.vy -= grip * vt * ty;
     ball.hitBoard = true;
+    releaseSupportRest(ball, releaseDirection, nx, ny, !isMaze() && pMul("ball") > 1.15);
     if (-vn > 90) audio.board(Math.min(1, (-vn - 60) / 520));
   }
 
@@ -6242,105 +6228,32 @@ export function createGame(
     }
   }
 
-  function checkScore() {
+  function checkScore(rimStarts?: ReadonlyMap<Hoop, { x: number; y: number }>) {
     if (phase !== "playing") return;
     if (anti2ReturnLocked()) return;
     if (ball.scored) return;
-    const goingDown = ball.vy > 8;
-    const goingUp = ball.vy < -8;
     const bothWays = legacyHole();
-
-    // 小球穿框/贴支撑轴：用轨迹与篮筐平面求交，避免单帧隧穿漏判
-    const scoreSlack = Math.max(0, (world.ballR - ball.r) * 0.45);
-    if (tryRimPlaneScore(hoop, bothWays, scoreSlack)) return;
+    if (tryRimPlaneScore(hoop, bothWays, rimStarts?.get(hoop))) return;
     if (other && (other.frostLeft > 0 || other.active)) {
-      tryRimPlaneScore(other, bothWays, scoreSlack);
+      tryRimPlaneScore(other, bothWays, rimStarts?.get(other));
     }
   }
 
-  /** Downward (or black-hole upward) crossing of the rim plane inside the opening. */
-  function tryRimPlaneScore(
-    h: Hoop,
-    bothWays: boolean,
-    slack: number,
-  ): boolean {
+  /** Only a fresh crossing inside the opening can register a make. */
+  function tryRimPlaneScore(h: Hoop, bothWays: boolean, previousRim?: { x: number; y: number }): boolean {
     if (!stageMod.canScore(h)) return false;
-    const holePad = -ball.r * 0.1 + slack;
-    const openR = h.inner + holePad;
-    const stickyR = h.inner + ball.r * 0.35 + slack;
-
-    const inHoleNow = Math.abs(ball.x - h.x) < openR;
-    const isOther = other != null && h === other;
-
-    if (isOther) {
-      if (inHoleNow && (ball.y + ball.r * 0.18 < h.y || prevBallY + ball.r * 0.18 < h.y)) {
-        otherOverRim = true;
-      }
-      if (!inHoleNow && Math.abs(ball.x - h.x) > stickyR) otherOverRim = false;
-    } else {
-      if (inHoleNow && prevBallY > h.y && ball.y <= h.y && ball.vy < 0) fromBelow = true;
-      if (inHoleNow && (ball.y + ball.r * 0.18 < h.y || prevBallY + ball.r * 0.18 < h.y)) {
-        overRim = true;
-      }
-      if (!inHoleNow && Math.abs(ball.x - h.x) > stickyR) overRim = false;
+    const passage = rimPassage(h, ball, { x: prevBallX, y: prevBallY }, true, previousRim);
+    if (!passage) return false;
+    if (passage === "up") {
+      // Preserve the through-from-below shot bonus without awarding an upward
+      // basket unless the ball's ability explicitly permits it.
+      if (h === hoop || bothWays) fromBelow = true;
+      if (!bothWays) return false;
     }
-
-    // Continuous segment vs rim plane (catches tunneling / brace-adjacent paths)
-    const y0 = prevBallY;
-    const y1 = ball.y;
-    const crossedDown = y0 < h.y && y1 >= h.y && ball.vy > 4;
-    const crossedUp = y0 > h.y && y1 <= h.y && ball.vy < -4;
-    if (crossedDown || (bothWays && crossedUp)) {
-      const dy = y1 - y0;
-      const t = Math.abs(dy) < 1e-6 ? 1 : (h.y - y0) / dy;
-      const xAt = prevBallX + (ball.x - prevBallX) * Math.max(0, Math.min(1, t));
-      // 略放宽：贴支撑轴/筐沿擦过也算进筐
-      if (Math.abs(xAt - h.x) < h.inner + slack + ball.r * 0.12) {
-        if (crossedUp) fromBelow = true;
-        if (isOther) otherOverRim = true;
-        else overRim = true;
-        registerScore({ at: h });
-        return true;
-      }
-    }
-
-    const goingDown = ball.vy > 8;
-    const goingUp = ball.vy < -8;
-    const below = ball.y >= h.y;
-    if (isOther) {
-      if (otherOverRim && goingDown && below && inHoleNow) {
-        registerScore({ at: h });
-        return true;
-      }
-      if (
-        bothWays &&
-        inHoleNow &&
-        goingUp &&
-        ball.y <= h.y &&
-        (prevBallY > h.y || ball.y - ball.r * 0.18 > h.y)
-      ) {
-        fromBelow = true;
-        registerScore({ at: h });
-        return true;
-      }
-    } else {
-      if (overRim && goingDown && below && inHoleNow) {
-        registerScore({ at: h });
-        return true;
-      }
-      if (
-        bothWays &&
-        inHoleNow &&
-        goingUp &&
-        ball.y <= h.y &&
-        (fromBelow || (prevBallY > h.y && ball.y <= h.y))
-      ) {
-        fromBelow = true;
-        registerScore({ at: h });
-        return true;
-      }
-    }
-    return false;
+    if (other && h === other) otherOverRim = true;
+    else overRim = true;
+    registerScore({ at: h });
+    return true;
   }
 
   function checkGhostScore(g: NinjaGhost, gi: number) {
@@ -7032,6 +6945,20 @@ export function createGame(
     });
   }
 
+  function breakFrozenNet(h: Hoop) {
+    if (!shatterFrozenNet(h)) return;
+    if (!gfx.particles) return;
+    for (let i = 0; i < h.net.length; i += 2) {
+      const n = h.net[i]!;
+      particles.push({x:n.x,y:n.y,
+        vx:(n.x-h.x)*2.5+(Math.random()-.5)*90,
+        vy:-45-Math.random()*105,life:.65+Math.random()*.35,max:1,
+        size:3+Math.random()*4,hue:90,spin:Math.random()*Math.PI,
+        vr:(Math.random()-.5)*14,iceShard:true});
+    }
+    if (particles.length > 180) particles.splice(0, particles.length - 180);
+  }
+
   function frostSmoke(h: Hoop) {
     if (!gfx.particles) return;
     for (let i = 0; i < 12; i++) {
@@ -7090,7 +7017,7 @@ export function createGame(
     let w = 0;
     for (let i = 0; i < particles.length; i++) {
       const p = particles[i]!;
-      p.vy += gravity() * (p.hue < 8 || p.hue >= 80 ? 0.04 : 0.3) * dt;
+      p.vy += gravity() * (p.iceShard ? .35 : p.hue < 8 || p.hue >= 80 ? 0.04 : 0.3) * dt;
       if (p.hue < 8) {
         p.vx *= Math.exp(-5.5 * dt);
         p.vy *= Math.exp(-2.2 * dt);
@@ -7204,7 +7131,7 @@ export function createGame(
               : comboCounting && streak >= 2
                 ? streak
                 : 0,
-            buzzer ? "绝杀时刻" : opener > 0 && streak < 2 ? "好戏开始" : champMode ? "冠军时刻" : holeOn ? "黑洞时刻" : "",
+            buzzer ? "绝杀时刻" : opener > 0 && streak < 2 ? "好戏开始" : champMode ? "冠军时刻" : holeOn ? `黑洞时刻${comboCounting && streak >= 2 ? ` · 连击×${streak}` : ""}` : "",
             cloudShift,
             cloudSx,
             cloudSy,

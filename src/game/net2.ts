@@ -15,9 +15,12 @@ export type NetProfile = {
   envResponse: number;
   /** Vertical rope pitch. 1 is 篮网2; above 1 lowers the idle hem. */
   rowPitch: number;
+  /** Closing speed in hoop radii/second: gentle contact to a fully loaded catch. */
+  dynamicCatch?: { softSpeed: number; firmSpeed: number };
 };
 
 const RELEASED_ACCEL = 18;
+const BALL_INV_MASS = 0.026;
 
 export const NET2_PROFILE: NetProfile = {
   shapeRestore: 16,
@@ -45,6 +48,7 @@ export const NET3_PROFILE: NetProfile = {
   envResponse: NET3_HANG / 9,
   // Idle 篮网3 sat ~0.09×inner above 篮网1. Extra vertical pitch drops the hem to match.
   rowPitch: 1.074,
+  dynamicCatch: { softSpeed: 5, firmSpeed: 13 },
 };
 
 // A sleeve in 3D, projected onto the existing 2D court. Only the rim is pinned.
@@ -72,6 +76,8 @@ const rowCenterX = new Float64Array(NET_ROWS);
 const rowCenterZ = new Float64Array(NET_ROWS);
 
 export type Net2Environment = {
+  /** Fraction of speed loss retained on a valid downward entry (1 = normal). */
+  brakingScale?: number;
   horizontalAccel?: number;
   wind?: number;
   motion?: { angle: number; pivotX: number; pivotY: number; accelX: number; accelY: number };
@@ -80,21 +86,6 @@ export type Net2Environment = {
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
-// A make catches in the sleeve, then drops. The reference speed is 14× the rim.
-// At 0.4× reference the catch lasts ~0.26s and holds ~40% of entry speed; at
-// ~2× reference and above it holds ~95% and the window shrinks toward 0.02s.
-const MAKE_REF = 14;
-const MAKE_EASE = 48;
-function makeNorm(speed: number, inner: number) {
-  return clamp(speed / (inner * MAKE_REF), 0.4, 5);
-}
-function makeWindow(speed: number, inner: number) {
-  return 0.105 / makeNorm(speed, inner);
-}
-function makeFloor(speed: number, inner: number) {
-  const keep = 0.4 + 0.55 * clamp((makeNorm(speed, inner) - 0.4) / 1.6, 0, 1);
-  return Math.max(inner * 2.5, speed * keep);
-}
 function gust(t: number, seed: number) {
   const hash = (n: number) => {
     const v = Math.sin(n * 127.1 + seed * 311.7) * 43758.5453;
@@ -121,46 +112,29 @@ function prepare(h: Hoop) {
   const state = h.net[0]!.netState ??= {
     clock: 0, seed: (h.baseY ?? h.y) * 0.173 + h.inner * 3.71 + (h.side ?? 1) * 7.13,
     inside: false, exited: false, fromBelow: false, impactUntil: 0,
-    entryVx: 0, entryVy: 0, dwellLeft: 0, throughMake: false,
+    entryVx: 0, entryVy: 0, entryOmega: 0, entryOffset: 0, impactApplied: false, throughMake: false,
   };
   state.entryVx ??= 0;
   state.entryVy ??= 0;
-  state.dwellLeft ??= 0;
+  state.entryOmega ??= 0;
+  state.entryOffset ??= 0;
+  state.impactApplied ??= false;
   state.throughMake ??= false;
   return state;
 }
 
-/**
- * After the ball clears the hem, snap the cloth back against the make's entry.
- * A normal make lifts the hem about 20–25px for a quarter second and swings it
- * back toward the incoming side, while the hem stays under the rim.
- * 篮网3's higher tugGain hits harder; its restore brings the cloth back sooner.
- */
-const EXIT_TUG = 1.35;
-const EXIT_SIDE = 1.25;
-function tugAgainstEntry(h: Hoop, vx: number, vy: number, profile: NetProfile, dt: number) {
-  const speed = Math.hypot(vx, vy);
-  if (!(speed > 1)) return;
-  const ox = -vx / speed, oy = -vy / speed;
-  const along = clamp(speed, h.inner * 11, h.inner * 20);
-  const power = along * profile.tugGain * EXIT_TUG;
-  for (let i = NET_COLS; i < h.net.length; i++) {
-    const n = h.net[i]!, rest = REST[i]!;
-    if (netRowReleased(h.char, rest.row)) continue;
-    const hem = 0.3 + 0.7 * rest.row / (NET_ROWS - 1);
-    const kick = power * hem;
-    n.px -= ox * EXIT_SIDE * kick * dt;
-    n.py -= oy * kick * dt;
-  }
+/** Stand recoil opposes the incoming hit; remote support hits lose leverage. */
+export function netImpactStrength(h: Pick<Hoop, "x" | "y" | "inner">, x: number, y: number, impact: number, profile: NetProfile = NET2_PROFILE) {
+  if (impact < h.inner * .6) return 0;
+  const distance = Math.hypot(x - h.x, y - h.y);
+  const attenuation = 1 / (1 + Math.pow(distance / (h.inner * 1.8), 2));
+  return Math.min(h.inner * profile.hitCap, (impact - h.inner * .6) * profile.hitScale) * attenuation;
 }
 
-/** Stand recoil opposes the incoming hit; remote support hits lose leverage. */
 export function strikeNet2(h: Hoop, x: number, y: number, vx: number, vy: number, impact: number, profile: NetProfile = NET2_PROFILE) {
   const state = prepare(h), speed = Math.hypot(vx, vy);
   if (speed < 1 || impact < h.inner * .6 || state.clock < state.impactUntil) return 0;
-  const distance = Math.hypot(x - h.x, y - h.y);
-  const attenuation = 1 / (1 + Math.pow(distance / (h.inner * 1.8), 2));
-  const strength = Math.min(h.inner * profile.hitCap, (impact - h.inner * .6) * profile.hitScale) * attenuation;
+  const strength = netImpactStrength(h, x, y, impact, profile);
   state.impactUntil = state.clock + .035;
   for (let i = NET_COLS; i < h.net.length; i++) {
     const n = h.net[i]!, rest = REST[i]!;
@@ -172,39 +146,13 @@ export function strikeNet2(h: Hoop, x: number, y: number, vx: number, vy: number
   return strength;
 }
 
-/** Inject a local impulse, never reset the cloth's position on a make. */
-export function tugNet2(h: Hoop, ball?: Pick<Ball, "x" | "y" | "vx" | "vy">, profile: NetProfile = NET2_PROFILE) {
-  // Reverse-direction makes already push the cloth through real contact.
-  // Scoring must not attach the sleeve to an ascending ball.
-  if (ball && ball.vy <= 0) return;
-  const state = prepare(h);
-  if (ball) {
-    // A second score on the same make must not restart the catch from the
-    // speed the sleeve just bled off — that would hold longer than the entry.
-    const catching = state.inside && state.throughMake && state.dwellLeft > 0;
-    state.inside = true; state.exited = false; state.fromBelow = false;
-    if (!catching) {
-      // Scoring calls this before the cloth step, which would otherwise miss the
-      // rim crossing and never snap the net after the ball leaves.
-      state.entryVx = ball.vx;
-      state.entryVy = ball.vy;
-      state.throughMake = true;
-      state.dwellLeft = makeWindow(Math.hypot(ball.vx, ball.vy), h.inner);
-    }
-  }
+/** Score feedback cannot authorize a catch. Only stepNet2's downward rim
+ * crossing can start one, including when scoring runs before the cloth step. */
+export function tugNet2(h: Hoop, ball?: Pick<Ball, "x" | "y" | "vx" | "vy" | "omega">, _profile: NetProfile = NET2_PROFILE) {
+  if (!ball || ball.vy <= 0) return;
+  const state = h.net[0]?.netState;
+  if (!state?.inside || !state.throughMake || state.fromBelow) return;
   h.netPulse = 0.7;
-  const bx = ball?.x ?? h.x, by = ball?.y ?? h.y;
-  const vy = clamp(ball?.vy ?? h.inner * 4, -h.inner * 32, h.inner * 32);
-  const vx = clamp(ball?.vx ?? 0, -h.inner * 24, h.inner * 24);
-  for (let i = NET_COLS; i < h.net.length; i++) {
-    const n = h.net[i]!, rest = REST[i]!;
-    if (netRowReleased(h.char, rest.row)) continue;
-    const distance = Math.hypot(n.x - bx, n.y - by);
-    const weight = Math.exp(-Math.pow(distance / (h.inner * 0.85), 2)) * profile.tugGain;
-    const dt = n.netDt!;
-    n.px -= vx * weight * dt;
-    n.py -= vy * weight * dt;
-  }
 }
 
 function pin(h: Hoop) {
@@ -376,6 +324,147 @@ function contactEdges(h: Hoop, bx: number, by: number, radius: number, upward: b
   return contacts;
 }
 
+type ContactLoad = {
+  impulse: number; nx: number; ny: number; weight: number; closingSpeed: number; tautness: number;
+  netVy: number;
+};
+
+function catchStrength(h: Hoop, load: ContactLoad, profile: NetProfile) {
+  if (!profile.dynamicCatch) return 1;
+  const { softSpeed, firmSpeed } = profile.dynamicCatch;
+  // Opposite strands cancel sideways pressure, not the incoming vertical speed.
+  // Normalize against their resultant so centered catches are not underestimated.
+  const normalWeight = Math.max(Math.hypot(load.nx, load.ny), load.weight * .35, 1e-8);
+  const speed = load.closingSpeed / normalWeight / h.inner;
+  const u = clamp((speed - softSpeed) / (firmSpeed - softSpeed), 0, 1);
+  return .08 + .97 * u * u * (3 - 2 * u) * (.85 + .15 * load.tautness);
+}
+
+/** Two-way sphere/strand contact. The ball is heavier than an individual knot.
+ * Work in the hoop's local 3D frame; the ball itself stays in the court plane.
+ * Rope tension is solved between contact passes, so the sleeve can move with an
+ * oblique make instead of deleting its horizontal velocity at a fixed channel.
+ */
+function contactMake(h: Hoop, ball: Ball, dt: number, profile: NetProfile, impulses: boolean, lateral: ContactLoad, response = 1) {
+  // Effective cloth mass includes the adjoining taut strands. This makes a
+  // side hit resist and turn the ball instead of acting as a visual-only wrap.
+  const ballInvMass = BALL_INV_MASS * response;
+  const radius = ball.r * 1.025;
+  const invInertia = ballInvMass / (2 / 3 * ball.r * ball.r);
+  let contacts = 0;
+  for (let e = 0; e < NET2_EDGES.length; e++) {
+    const edge = NET2_EDGES[e]!;
+    if (netRowReleased(h.char, REST[edge.a]!.row) || netRowReleased(h.char, REST[edge.b]!.row)) continue;
+    const a = h.net[edge.a]!, b = h.net[edge.b]!;
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.depth! - a.depth!;
+    const sq = dx * dx + dy * dy + dz * dz;
+    const t = sq > 1e-8 ? clamp(((ball.x - a.x) * dx + (ball.y - a.y) * dy - a.depth! * dz) / sq, 0, 1) : 0;
+    let nx = a.x + dx * t - ball.x, ny = a.y + dy * t - ball.y, nz = a.depth! + dz * t;
+    const dist = Math.hypot(nx, ny, nz);
+    if (dist >= radius || dist < 1e-6) continue;
+    nx /= dist; ny /= dist; nz /= dist;
+    const wa = a.pinned ? 0 : 1 - t, wb = b.pinned ? 0 : t;
+    const clothMass = wa * wa + wb * wb;
+    if (clothMass < 1e-6) continue;
+    contacts++;
+    const mass = clothMass + ballInvMass * (nx * nx + ny * ny);
+    const push = (radius - dist) / mass;
+    // A moving sphere carries the cloth it displaces. Keep part of that
+    // velocity; removing it all here makes an oblique net spring upright.
+    const clothVx = ((a.x - a.px) * (1 - t) + (b.x - b.px) * t) / dt;
+    const clothVy = ((a.y - a.py) * (1 - t) + (b.y - b.py) * t) / dt;
+    const clothVz = ((a.depth! - a.prevDepth!) * (1 - t) + (b.depth! - b.prevDepth!) * t) / dt;
+    const closingSpeed = Math.max(0, (ball.vx - clothVx) * nx + (ball.vy - clothVy) * ny - clothVz * nz);
+    const approaching = closingSpeed > 0;
+    if (profile.dynamicCatch) {
+      // Convert the XPBD multiplier to a force estimate using dt². Only tensile loads
+      // count: compressed or slack cords must not make a slow touch feel rigid.
+      const pull = Math.max(0, -tension[e]!) / (dt * dt);
+      const tautness = pull / (pull + h.inner * 800);
+      lateral.tautness = Math.max(lateral.tautness, tautness);
+    }
+    const preserve = approaching ? Math.exp(-100 * dt) : 1;
+    a.x += nx * push * wa; a.px += nx * push * wa * (0.8 + 0.2 * preserve);
+    a.y += ny * push * wa; a.py += ny * push * wa * preserve;
+    a.depth! += nz * push * wa; a.prevDepth! += nz * push * wa * preserve;
+    b.x += nx * push * wb; b.px += nx * push * wb * (0.8 + 0.2 * preserve);
+    b.y += ny * push * wb; b.py += ny * push * wb * preserve;
+    b.depth! += nz * push * wb; b.prevDepth! += nz * push * wb * preserve;
+    ball.x -= nx * push * ballInvMass;
+    ball.y -= ny * push * ballInvMass;
+    const carry = push * (1 - preserve) / dt;
+    lateral.impulse += nx * carry * (wa + wb) * 0.8;
+    ball.vx -= nx * carry * ballInvMass;
+    ball.vy -= ny * carry * ballInvMass;
+    if (!impulses) continue;
+    const vx = ((a.x - a.px) * (1 - t) + (b.x - b.px) * t) / dt;
+    const vy = ((a.y - a.py) * (1 - t) + (b.y - b.py) * t) / dt;
+    const vz = ((a.depth! - a.prevDepth!) * (1 - t) + (b.depth! - b.prevDepth!) * t) / dt;
+    const rx = nx * ball.r, ry = ny * ball.r;
+    // Positive omega is clockwise on the screen, matching ball.spin.
+    const ux = ball.vx - ball.omega * ry - vx;
+    const uy = ball.vy + ball.omega * rx - vy;
+    const uz = -vz;
+    const normal = ux * nx + uy * ny + uz * nz;
+    const load = Math.max(0, normal) * (1 - Math.exp(-profile.contactResponse * 4 * dt)) / mass;
+    lateral.nx += nx * load;
+    lateral.ny += ny * load;
+    lateral.weight += load;
+    // Sample before projecting the ball/rope apart, so penetration correction
+    // and repeated constraint passes cannot manufacture an impact speed.
+    lateral.closingSpeed += closingSpeed * load;
+    lateral.netVy += clothVy * load;
+    const tx = ux - normal * nx, ty = uy - normal * ny, tz = uz - normal * nz;
+    const tangentSpeed = Math.hypot(tx, ty, tz);
+    const spinMass = invInertia * Math.pow(rx * ty - ry * tx, 2) / Math.max(1e-8, tangentSpeed * tangentSpeed);
+    const friction = tangentSpeed > 1e-6
+      ? Math.min(load * 0.7 / tangentSpeed, (1 - Math.exp(-40 * dt)) / (clothMass + ballInvMass + spinMass)) : 0;
+    const jx = nx * load + tx * friction, jy = ny * load + ty * friction, jz = nz * load + tz * friction;
+    a.px -= jx * wa * dt * 0.2; a.py -= jy * wa * dt; a.prevDepth! -= jz * wa * dt;
+    b.px -= jx * wb * dt * 0.2; b.py -= jy * wb * dt; b.prevDepth! -= jz * wb * dt;
+    lateral.impulse += jx * (wa + wb) * 0.8;
+    ball.vx -= jx * ballInvMass; ball.vy -= jy * ballInvMass;
+    ball.omega -= (rx * jy - ry * jx) * invInertia;
+  }
+  return contacts;
+}
+
+/** Transmit the resultant side load down the receiving half of the sleeve.
+ * Centered pressure cancels. The normalized weights redistribute the contact
+ * impulse rather than adding a separate impulse when scoring or leaving the net. */
+function transmitSideLoad(h: Hoop, impulse: number, dt: number) {
+  const sign = Math.sign(impulse);
+  const weight = (i: number) => netRowReleased(h.char, REST[i]!.row) ? 0
+    : Math.pow(REST[i]!.row / (NET_ROWS - 1), 2) * Math.max(0, sign * REST[i]!.x);
+  let sum = 0;
+  for (let i = NET_COLS; i < h.net.length; i++) sum += weight(i);
+  if (sum < 1e-8) return;
+  for (let i = NET_COLS; i < h.net.length; i++) {
+    const n = h.net[i]!;
+    const dx = n.x - h.x, dy = n.y - h.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const tx = dy / length, ty = -dx / length;
+    // Tension removes the radial component; the remaining momentum curls
+    // the loaded side around the rim instead of stretching the cords.
+    const kick = impulse * weight(i) / sum * dt * tx;
+    n.px -= kick * tx;
+    n.py -= kick * ty;
+  }
+}
+
+function transmitCatchLoad(h: Hoop, ball: Ball, dx: number, dy: number, dt: number, profile: NetProfile) {
+  // Part of the lost ball momentum moves the cloth; the rest is dissipated by
+  // friction and the fixed rim. A harder catch must still visibly load the net.
+  const transfer = profile.tugGain / BALL_INV_MASS;
+  transmitSideLoad(h, dx * transfer, dt);
+  const weight = (i: number) => netRowReleased(h.char, REST[i]!.row) ? 0
+    : Math.exp(-Math.pow(Math.hypot(h.net[i]!.x - ball.x, h.net[i]!.y - ball.y, h.net[i]!.depth!) / (h.inner * .9), 2));
+  let sum = 0;
+  for (let i = NET_COLS; i < h.net.length; i++) sum += weight(i);
+  if (sum < 1e-8) return;
+  for (let i = NET_COLS; i < h.net.length; i++) h.net[i]!.py -= dy * transfer * weight(i) / sum * dt;
+}
+
 function hemHeight(h: Hoop) {
   let y = -Infinity;
   for (let i = (NET_ROWS - 1) * NET_COLS; i < h.net.length; i++) y = Math.max(y, h.net[i]!.y);
@@ -403,6 +492,20 @@ function strandHit(h: Hoop, edge: { a: number; b: number }, px: number, py: numb
   const t = sq > 1e-8 ? clamp(((px - ax) * abx + (py - ay) * aby) / sq, 0, 1) : 0;
   const cx = ax + abx * t, cy = ay + aby * t;
   return { t, cx, cy, dist: Math.hypot(px - cx, py - cy) };
+}
+
+/** Use the drawn, moving strands to recognize a ball lifting the net. A single
+ * unprojected hem height misses off-center arrivals and a curling lower edge. */
+function touchesUnderside(h: Hoop, radius: number, fromX: number, fromY: number, bx: number, by: number) {
+  if (by >= fromY) return false;
+  for (const edge of NET2_EDGES) {
+    if (netRowReleased(h.char, REST[edge.a]!.row) || netRowReleased(h.char, REST[edge.b]!.row)) continue;
+    const now = strandHit(h, edge, bx, by);
+    if (now.dist <= radius && by > now.cy) return true;
+    const prev = strandHit(h, edge, fromX, fromY);
+    if (prev.dist <= radius && fromY > prev.cy) return true;
+  }
+  return false;
 }
 
 /**
@@ -473,9 +576,11 @@ function resistSleeve(h: Hoop, ball: Ball, body: { vx: number; vy: number },
     const into = body.vx * nx + body.vy * ny;
     // Shed speed into the cloth. A light touch only slows; a deep press stops.
     if (into < 0) {
-      const absorb = clamp(-into / (h.inner * 18), 0.18, 0.72);
+      const absorb = clamp(-into / (h.inner * 18), 0.28, 0.82);
       body.vx -= nx * into * absorb;
-      body.vy -= ny * into * absorb * 0.45;
+      // Resolve along the strand normal in both axes. The surviving tangential
+      // velocity slides along the net, changing the outgoing direction.
+      body.vy -= ny * into * absorb;
     }
   }
   return { bx, by, hits };
@@ -489,7 +594,9 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
   const canTouch = allowContact && !(h.burning && h.char > 0.45);
   if (!canTouch) {
     state.inside = false; state.fromBelow = false;
-    state.throughMake = false; state.dwellLeft = 0;
+    state.throughMake = false;
+    if (state.catchGrip !== undefined) state.catchGrip = 0;
+    if (state.wrapTravel !== undefined) state.wrapTravel = state.wrapStrength = state.wrapNx = state.wrapNy = 0;
   }
   h.netPulse = Math.max(0, h.netPulse - dt);
   const total = Math.min(dt, 1 / 15);
@@ -500,7 +607,11 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
   const toY = (x: number, y: number) => pivotY - (x - pivotX) * sin + (y - pivotY) * cos;
   const body = { ...ball, x: toX(ball.x, ball.y), y: toY(ball.x, ball.y),
     vx: ball.vx * cos + ball.vy * sin, vy: -ball.vx * sin + ball.vy * cos };
-  if (body.vy < 0) { state.inside = false; state.throughMake = false; state.dwellLeft = 0; }
+  if (body.vy < 0) {
+    state.inside = false; state.throughMake = false;
+    if (state.catchGrip !== undefined) state.catchGrip = 0;
+    if (state.wrapTravel !== undefined) state.wrapTravel = state.wrapStrength = state.wrapNx = state.wrapNy = 0;
+  }
   let bx = toX(prevX, prevY), by = toY(prevX, prevY);
   const travel = Math.hypot(body.x - bx, body.y - by);
   const steps = Math.min(96, Math.max(1, Math.ceil(total * 240),
@@ -509,9 +620,10 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
   let moveX = (body.x - bx) / steps;
   let moveY = (body.y - by) / steps;
   let corrected = false, frictionTime = 0;
-  let exitKick: { vx: number; vy: number } | null = null;
-  const damping = Math.exp(-profile.dampRate * tick);
   for (let step = 0; step < steps; step++) {
+    if (profile.dynamicCatch) state.catchGrip = (state.catchGrip ?? 0) * Math.exp(-tick / .14);
+    const loaded = state.throughMake || h.netPulse > 0;
+    const damping = Math.exp(-profile.dampRate * (loaded ? 0.3 : 1) * tick);
     state.clock += tick;
     const wind = (env.wind ?? 1) * (gust(state.clock * .55, state.seed) + .25 * gust(state.clock * 1.3, state.seed + 7));
     // Unproject for physical distances; project again before returning to the game.
@@ -542,7 +654,7 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
       const limit = h.inner * 18 * tick;
       if (speed > limit) { vx *= limit / speed; vy *= limit / speed; vz *= limit / speed; }
       n.px = n.x; n.py = n.y; n.prevDepth = n.depth;
-      const memory = released ? 0 : profile.shapeRestore;
+      const memory = released ? 0 : profile.shapeRestore * (loaded ? (profile.dynamicCatch ? 0.18 : 0.15) : 1);
       const lower = Math.pow(rest.row / (NET_ROWS - 1), 2);
       const envScale = profile.envResponse;
       const ax = released ? 0 : clamp(((env.horizontalAccel ?? 0) + (motion?.accelX ?? 0) * 1.6) * envScale, -h.inner * 55 * envScale, h.inner * 55 * envScale);
@@ -560,12 +672,11 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
     bx += moveX; by += moveY;
     if (canTouch) {
       const bottom = hemHeight(h);
-      const crossesTop = fromY < h.y && by >= h.y;
-      // Capture the first underside contact, not the center crossing a hem that
-      // is already moving upward with the ball. No opening changes before contact.
-      const touchesBottom = moveY < 0 && fromY > bottom && by - ball.r <= bottom
-        && bx + ball.r > sideAt(h, bottom, true) && bx - ball.r < sideAt(h, bottom, false);
-      if (!state.inside && crossesTop) {
+      // Entry provenance is geometric, never inferred from a score or from
+      // downward velocity while already below the rim. This is the sole gate
+      // for the strong catch, redirection, speed response and sustained grip.
+      const crossesTop = fromY < h.y && by >= h.y && body.vy > 0;
+      if (crossesTop) {
         const plane = h.y;
         const t = clamp((plane - fromY) / (by - fromY), 0, 1);
         const xAt = fromX + (bx - fromX) * t;
@@ -574,75 +685,125 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
           state.fromBelow = false;
           state.entryVx = body.vx * cos - body.vy * sin;
           state.entryVy = body.vx * sin + body.vy * cos;
-          state.dwellLeft = makeWindow(Math.hypot(state.entryVx, state.entryVy), h.inner);
+          state.entryOmega = body.omega;
+          state.entryOffset = (xAt - h.x) / h.inner;
+          state.impactApplied = false;
+          if (state.catchGrip !== undefined) state.catchGrip = 0;
+          if (profile.dynamicCatch) state.wrapTravel = state.wrapStrength = state.wrapNx = state.wrapNy = 0;
           state.throughMake = true;
+          h.netPulse = 0.7;
         }
       }
       // Upward contact never captures or centers the ball in a virtual sleeve.
-      if (touchesBottom) state.fromBelow = true;
+      if (!state.fromBelow && body.vy < 0 && touchesUnderside(h, ball.r, fromX, fromY, bx, by)) state.fromBelow = true;
       if (state.inside && (by - ball.r > bottom + 1 || by + ball.r < h.y - 1)) {
-        const throughHem = by - ball.r > bottom + 1;
-        if (throughHem && state.throughMake) exitKick = { vx: state.entryVx, vy: state.entryVy };
         state.inside = false; state.fromBelow = false; state.exited = true;
-        state.dwellLeft = 0; state.throughMake = false;
+        state.throughMake = false;
+        if (state.catchGrip !== undefined) state.catchGrip = 0;
+        if (state.wrapTravel !== undefined) state.wrapTravel = state.wrapStrength = state.wrapNx = state.wrapNy = 0;
       }
       if (body.vy >= 0) state.fromBelow = false;
       if (by + ball.r < h.y - 1) state.fromBelow = false;
-      if (state.inside) {
-        // The rim accepts the make. Below it the sleeve closes around the ball,
-        // so a scoring ball is guided down the channel instead of walking out
-        // through the side weave. The cloth still deforms around that channel.
-        const rowU = clamp((by - h.y) / (h.inner * NET_ROW_H), 0, NET_ROWS - 1);
-        const row = Math.min(NET_ROWS - 2, Math.floor(rowU));
-        const ft = rowU - row;
-        const rad = (r: number) => rowShrink(Math.min(r, NET_ROWS - 1)) * h.inner;
-        const channel = (rad(row) * (1 - ft) + rad(row + 1) * ft) * 0.16;
-        const rimDy = by - h.y;
-        let reach = channel;
-        if (Math.abs(rimDy) < ball.r) {
-          // A sphere still overlapping the fixed upper opening must clear it;
-          // otherwise edge projection stretches the first row into long spikes.
-          const section = Math.sqrt(Math.max(0, ball.r * ball.r - rimDy * rimDy));
-          const rimReach = Math.max(h.inner * .08, h.inner - section - h.inner * .04);
-          const rimT = Math.abs(rimDy) / ball.r;
-          reach = rimReach * (1 - rimT) + channel * rimT;
-        }
-        const x = clamp(bx, h.x - reach, h.x + reach);
-        if (x !== bx) {
-          bx = x; moveX = 0; body.vx = 0; corrected = true;
-        }
-        // Ease toward a speed floor only after the center is inside the rim.
-        // Faster entries keep more of their speed and the window itself is
-        // shorter, so a hard make only hiccups. The cap never points the ball
-        // back up the sleeve.
-        if (state.dwellLeft > 0 && moveY > 0 && body.vy > 0 && by > h.y) {
-          const entrySpeed = Math.hypot(state.entryVx, state.entryVy);
-          const floor = makeFloor(entrySpeed, h.inner);
-          if (body.vy > floor) {
-            const blend = 1 - Math.exp(-MAKE_EASE * tick);
-            const next = body.vy + (floor - body.vy) * blend;
-            const scale = next / body.vy;
-            const below = Math.max(0, Math.min(moveY, by - Math.max(fromY, h.y)));
-            by -= below * (1 - scale);
-            moveY *= scale;
-            body.vy = next;
-            corrected = true;
-          }
-          state.dwellLeft = Math.max(0, state.dwellLeft - tick);
-        }
-      }
-      // Outside the sleeve the mesh itself resists. Inside, and on the way up
-      // through the hem, the one-way cloth contact wraps without shoving the ball.
+      // Made balls exchange momentum with the strands. Upward passages keep
+      // the loose, one-way contact so an ascending ball is never captured.
       const mouth = state.inside || state.fromBelow;
       let knots = 0, ropes = 0;
-      if (!mouth) {
+      if (state.inside) {
+        body.x = bx; body.y = by;
+        const vx = body.vx, vy = body.vy;
+        const inertia = 2 / 3 * body.r * body.r;
+        const energy = vx * vx + vy * vy + inertia * body.omega * body.omega;
+        const lateral: ContactLoad = { impulse: 0, nx: 0, ny: 0, weight: 0, closingSpeed: 0, tautness: 0, netVy: 0 };
+        // The loose receiving strands first travel with the ball. Resistance
+        // grows as contact takes up slack; merely crossing the rim cannot kick it.
+        const wrapping = profile.dynamicCatch && !state.impactApplied;
+        const wrapDistance = h.inner * .06;
+        const response = wrapping ? .09 + .25 * clamp((state.wrapTravel ?? 0) / wrapDistance, 0, 1) : 1;
+        knots = contactMake(h, body, tick, profile, true, lateral, response);
+        for (let pass = 0; pass < 8; pass++) {
+          constrain(h, tick, 2, profile.rowPitch);
+          knots += contactMake(h, body, tick, profile, false, lateral, response);
+        }
+        transmitSideLoad(h, lateral.impulse, tick);
+        let strength = catchStrength(h, lateral, profile);
+        if (wrapping && lateral.weight > 1e-8) {
+          state.wrapTravel = (state.wrapTravel ?? 0) + lateral.closingSpeed / lateral.weight * tick;
+          state.wrapStrength = Math.max(state.wrapStrength ?? 0, strength);
+          state.wrapNx = (state.wrapNx ?? 0) + lateral.nx * tick;
+          state.wrapNy = (state.wrapNy ?? 0) + lateral.ny * tick;
+          strength = state.wrapStrength;
+        }
+        const wrapped = !profile.dynamicCatch || ((state.wrapTravel ?? 0) >= wrapDistance && by > h.y + h.inner * .55);
+        if (!state.impactApplied && wrapped && by > h.y && Math.hypot(lateral.nx, lateral.ny) > 1e-4) {
+          // The loaded inner net turns the ball only after it has wrapped it.
+          // The pressure-weighted normal chooses the direction; there is no
+          // random kick or exit animation. Later contacts use sliding friction.
+          let nx = profile.dynamicCatch ? state.wrapNx ?? lateral.nx : lateral.nx;
+          let ny = profile.dynamicCatch ? state.wrapNy ?? lateral.ny : lateral.ny;
+          if (Math.abs(state.entryOffset) < .05 && Math.abs(state.entryVx) < Math.abs(state.entryVy) * .05) nx = 0;
+          const length = Math.hypot(nx, ny);
+          if (length > 1e-4) {
+            nx /= length; ny /= length;
+            const into = body.vx * nx + body.vy * ny;
+            if (into > 0) {
+              const hitVx = body.vx, hitVy = body.vy;
+              const keepNormal = profile.dynamicCatch ? 1 - strength * (.65 + .6 * Math.abs(nx)) : .35 - .6 * Math.abs(nx);
+              const keepTangent = 1 - (profile.dynamicCatch ? .2 : .25) * strength;
+              const tx = body.vx - into * nx, ty = body.vy - into * ny;
+              body.vx = tx * keepTangent + into * keepNormal * nx;
+              body.vy = ty * keepTangent + into * keepNormal * ny;
+              transmitCatchLoad(h, body, hitVx - body.vx, hitVy - body.vy, tick, profile);
+              state.impactApplied = true;
+              if (profile.dynamicCatch) state.catchGrip = strength * strength;
+            }
+          }
+        }
+        if (profile.dynamicCatch && lateral.weight > 1e-8) {
+          // A loaded net takes time to relax. Keep the resistance on real
+          // approaching contacts while the cloth cups the ball, never in free air.
+          // Hanging strands support the downward load. Side contact/friction
+          // above still controls lateral motion; this support must not recenter it.
+          const support = clamp(lateral.ny / lateral.weight * 3, 0, 1);
+          const relative = body.vy - lateral.netVy / lateral.weight;
+          const brake = Math.max(0, Math.min(body.vy, relative))
+            * (1 - Math.exp(-45 * (state.catchGrip ?? 0) * support * tick));
+          body.vy -= brake;
+          transmitCatchLoad(h, body, 0, brake, tick, profile);
+        }
+        // Constraint stabilization is dissipative. It must not manufacture
+        // kinetic energy when many overlapping ropes are projected at once.
+        const after = body.vx * body.vx + body.vy * body.vy + inertia * body.omega * body.omega;
+        if (after > energy && after > 0) {
+          const scale = Math.sqrt(energy / after);
+          body.vx *= scale; body.vy *= scale; body.omega *= scale;
+        }
+        // Heat reduces loss of speed, while preserving the contact's exit angle
+        // and the cloth response. Never restore more than the incoming energy.
+        const braking = clamp(env.brakingScale ?? 1, 0, 1);
+        if (braking < 1) {
+          const speed = Math.hypot(body.vx, body.vy);
+          const limit = Math.min(Math.hypot(vx, vy), Math.sqrt(Math.max(0, energy - inertia * body.omega * body.omega)));
+          if (speed > 1e-8 && limit > speed) {
+            const scale = (speed + (limit - speed) * (1 - braking)) / speed;
+            body.vx *= scale; body.vy *= scale;
+          }
+        }
+        if (knots) {
+          bx = body.x; by = body.y;
+          moveX += (body.vx - vx) * tick;
+          moveY += (body.vy - vy) * tick;
+          corrected = true;
+        }
+      } else if (!mouth) {
+        const vx = body.vx, vy = body.vy;
         const held = resistSleeve(h, ball, body, fromX, fromY, bx, by, tick);
         if (held.hits) {
-          const dx = held.bx - bx, dy = held.by - by;
           bx = held.bx; by = held.by;
-          // Don't keep driving through a strand for the rest of this frame.
-          if (dx * moveX < 0) moveX = 0;
-          if (dy * moveY < 0) moveY *= 0.35;
+          // Continue the remaining substeps with the resolved velocity. Zeroing
+          // an entire axis here freezes tangential travel even after a grazing
+          // ball clears the hem, leaving a visible gap like an invisible wall.
+          moveX += (body.vx - vx) * tick;
+          moveY += (body.vy - vy) * tick;
           corrected = true;
           frictionTime += tick;
         }
@@ -650,20 +811,16 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
         knots = contact(h, body, fromX, fromY, bx, by, tick, profile);
         ropes = contactEdges(h, bx, by, ball.r * 1.025, body.vy < 0);
       }
-      for (let pass = 0; pass < 6; pass++) {
+      for (let pass = 0; !state.inside && pass < 6; pass++) {
         constrain(h, tick, 2, profile.rowPitch);
         if (knots || ropes) contactEdges(h, bx, by, ball.r * 1.025, body.vy < 0);
       }
-      frictionTime += tick * Math.min(1, knots / 6 + ropes / 12);
+      if (!state.inside) frictionTime += tick * Math.min(1, knots / 6 + ropes / 12);
     } else {
       constrain(h, tick, 12, profile.rowPitch);
     }
     constrainVelocity(h);
     pin(h);
-    if (exitKick) {
-      tugAgainstEntry(h, exitKick.vx, exitKick.vy, profile, tick);
-      exitKick = null;
-    }
     for (const n of h.net) {
       n.y += n.depth! * RIM_RY;
       n.py += n.prevDepth! * RIM_RY;
@@ -677,6 +834,6 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
     const drag = Math.exp(-2.8 * frictionTime);
     ball.vx = (body.vx * cos - body.vy * sin) * drag;
     ball.vy = (body.vx * sin + body.vy * cos) * drag;
-    ball.omega *= Math.exp(-1.4 * frictionTime);
+    ball.omega = body.omega * Math.exp(-1.4 * frictionTime);
   }
 }

@@ -37,6 +37,7 @@ export type Particle = {
   hue: number;
   spin: number;
   vr: number;
+  iceShard?: boolean;
 };
 
 export type NetNode = {
@@ -60,9 +61,21 @@ export type NetNode = {
     /** Screen-space velocity when this make entered the rim. */
     entryVx: number;
     entryVy: number;
-    /** Seconds of fall-resistance left while the ball is still in the sleeve. */
-    dwellLeft: number;
-    /** A downward make is in progress and should tug the cloth when it clears the hem. */
+    entryOmega: number;
+    /** Horizontal offset at the rim crossing, in rim radii. */
+    entryOffset: number;
+    /** One visible catch/deflection on the first loaded contact of this make. */
+    impactApplied: boolean;
+    /** Net 3's transient grip while loaded strands still touch the ball. */
+    catchGrip?: number;
+    /** Relative travel into contacted strands while Net 3 takes up its slack. */
+    wrapTravel?: number;
+    /** Peak contact strength retained while those strands wrap the ball. */
+    wrapStrength?: number;
+    /** Resultant load from the receiving strands during wrapping. */
+    wrapNx?: number;
+    wrapNy?: number;
+    /** Confirmed entry from above through the rim opening; scoring cannot arm it. */
     throughMake: boolean;
   };
 };
@@ -113,6 +126,10 @@ export type Hoop = {
   frost: 0 | 1;
   /** Seconds left frozen. */
   frostLeft: number;
+  /** Broken ice net stays absent for the lifetime of this stand. */
+  netShattered?: boolean;
+  /** Let the shot that triggered freezing clear the newly frozen mesh. */
+  frostNetIgnoreBall?: boolean;
   netPulse: number;
   jolt: number;
   joltPower?: number;

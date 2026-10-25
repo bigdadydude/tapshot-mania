@@ -25,6 +25,7 @@ import {
   netRowReleased,
 } from "./net";
 import { NET2_EDGES, net2Depth } from "./net2";
+import { boardHeat, rimArmPoints } from "./rim-arm";
 
 export { NET_COLS, NET_ROWS, NET_ROW_H, RIM_RY } from "./net";
 
@@ -1420,14 +1421,13 @@ function drawBackboard(ctx: CanvasRenderingContext2D, hoop: Hoop, world: World, 
   const orange = neonGreenCourt ? orangeBase : fr > 0 ? mixHex(rgbToHex(orangeBase), "#6eb0e8", fr * 0.85) : orangeBase;
   const orangeHi = neonGreenCourt ? orangeHiBase : fr > 0 ? mixHex(rgbToHex(orangeHiBase), "#a8d8ff", fr * 0.8) : orangeHiBase;
   const orangeLo = neonGreenCourt ? orangeLoBase : fr > 0 ? mixHex(rgbToHex(orangeLoBase), "#3a6a98", fr * 0.85) : orangeLoBase;
-  const attach = left ? hoop.x - hoop.inner * 1.02 : hoop.x + hoop.inner * 1.02;
-  const rimBotY = hoop.y + armH * 0.38;
-  const dy = ch > 0.4 ? (ch - 0.4) * 10 : 0;
+  const arm = rimArmPoints(hoop, {innerEdge: boardFace, armTop, armH, boardBotY});
+  const attach = arm[1]!.x;
+  const dy = arm[0]!.y - armTop;
+  const rimBotY = arm[2]!.y - dy;
   ctx.beginPath();
-  ctx.moveTo(boardFace, armTop + dy);
-  ctx.lineTo(attach, armTop + dy);
-  ctx.lineTo(attach, rimBotY + dy);
-  ctx.lineTo(boardFace, boardBotY + dy);
+  ctx.moveTo(arm[0]!.x, arm[0]!.y);
+  for (let i = 1; i < arm.length; i++) ctx.lineTo(arm[i]!.x, arm[i]!.y);
   ctx.closePath();
   ctx.fillStyle = orange;
   ctx.fill();
@@ -1507,7 +1507,7 @@ function drawRim(ctx: CanvasRenderingContext2D, hoop: Hoop, part: "back" | "fron
 	ctx.restore();
 }
 function drawNet2(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "front", combo: number) {
-	if (!hoop.net.length || hoop.char >= .98) return;
+	if (hoop.netShattered || !hoop.net.length || hoop.char >= .98) return;
 	const look = hoopLook(), heat = hoopHeat(hoop, combo), ch = hoop.char;
 	ctx.save();
 	const alpha = ctx.globalAlpha;
@@ -1520,6 +1520,7 @@ function drawNet2(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "fr
 		const lower = row >= look.netHemFromRow;
 		ctx.strokeStyle = mixHex(lower ? look.netHem : look.net, lower ? look.netHemChar : look.netChar,
 			Math.min(1, Math.max(heat, ch, burn) * 1.08));
+		if (hoop.frostLeft > 0) { ctx.strokeStyle = layer === "front" ? "#d5f7ff" : "#71cbe8"; ctx.lineWidth = 2; }
 		ctx.globalAlpha = alpha
 			* (burn > 0 ? Math.max(.08, 1 - burn) : 1)
 			* (ch > .5 ? Math.max(.12, 1 - (ch - .5) / .5) : 1);
@@ -1545,6 +1546,7 @@ function drawNet2(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "fr
 }
 
 function drawNet(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "front", ball: Ball | null, combo: number, cloth = false) {
+	if (hoop.netShattered) return;
 	if (cloth) { drawNet2(ctx, hoop, layer, combo); return; }
 	if (hoop.net.length === 0) return;
 	const ch = hoop.char;
@@ -1570,6 +1572,7 @@ function drawNet(ctx: CanvasRenderingContext2D, hoop: Hoop, layer: "back" | "fro
 		ctx.strokeStyle = lower ? hem : white;
 		ctx.globalAlpha = (ch > .5 ? Math.max(.12, 1 - (ch - .5) / .5) : 1) * fade;
 		ctx.lineWidth = 1.2;
+		if (hoop.frostLeft > 0) { ctx.strokeStyle = layer === "front" ? "#d5f7ff" : "#71cbe8"; ctx.lineWidth = 2; }
 		ctx.beginPath();
 		for (let x = 0; x < 9; x++) {
 			const p = points[y][x];
@@ -2783,11 +2786,6 @@ function hoopHeat(h: Hoop, _combo?: number) {
 	const burn = h.burning ? Math.min(.92, .48 + h.char * .46) : 0;
 	return Math.max(sear, burn);
 }
-function boardHeat(h: Hoop) {
-	const sear = h.sear >= 3 ? .9 : h.sear >= 2 ? .5 : 0;
-	const burn = h.burning ? Math.min(.92, .48 + h.char * .46) : 0;
-	return Math.max(sear, burn);
-}
 function drawSparks(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, time: number) {
 	for (let i = 0; i < 5; i++) {
 		const a = time * 5.5 + i * 1.3;
@@ -2803,6 +2801,15 @@ function drawSparks(ctx: CanvasRenderingContext2D, x: number, y: number, r: numb
 }
 function drawParticle(ctx: CanvasRenderingContext2D, p: Particle) {
 	const t = p.life / p.max;
+	if (p.iceShard) {
+		ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.spin);
+		ctx.fillStyle = `rgba(185,237,255,${t})`;
+		ctx.strokeStyle = `rgba(244,253,255,${t})`;
+		ctx.lineWidth = .8; ctx.beginPath();
+		ctx.moveTo(-p.size*.7,0); ctx.lineTo(0,-p.size*.4);
+		ctx.lineTo(p.size*.6,p.size*.2); ctx.lineTo(0,p.size*.5);
+		ctx.closePath();ctx.fill();ctx.stroke();ctx.restore();return;
+	}
 	ctx.fillStyle = p.hue >= 80 ? `rgba(220,235,255,${t * 0.85})` : p.hue < 6 ? `rgba(42,38,34,${t})` : p.hue < 14 ? `rgba(138,134,128,${t})` : p.hue < 30 ? `rgba(240,162,74,${t})` : `rgba(232,93,18,${t})`;
 	ctx.beginPath();
 	ctx.arc(p.x, p.y, p.size / 2, 0, Math.PI * 2);

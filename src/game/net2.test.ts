@@ -31,7 +31,8 @@ function shoot(s: ReturnType<typeof setup>, offset = 0, dt = 1 / 120) {
     s.ball.x += s.ball.vx * dt;
     const expected = structuredClone(s.ball);
     stepNet2(s.hoop, s.ball, before.x, before.y, s.world, dt, i * dt, true);
-    assert.ok(Math.hypot(s.ball.vx, s.ball.vy) <= Math.hypot(expected.vx, expected.vy) + 1e-6, "friction cannot add energy");
+    const energy = (b: Ball) => b.vx * b.vx + b.vy * b.vy + 2 / 3 * b.r * b.r * b.omega * b.omega;
+    assert.ok(energy(s.ball) <= energy(expected) + 1e-6, "contact cannot add kinetic energy");
     assert.equal(s.ball.scored, expected.scored, "cloth must not change scoring flags");
     assert.equal(s.ball.hitRim, expected.hitRim);
     excursion = Math.max(excursion, Math.abs(center(s).y - restY));
@@ -39,17 +40,24 @@ function shoot(s: ReturnType<typeof setup>, offset = 0, dt = 1 / 120) {
   return excursion;
 }
 
-test("a make adds local momentum without snapping any node to a preset pose", () => {
+test("scoring cannot arm a passage or overwrite its physical entry", () => {
   const s = setup(); tick(s, 1);
-  s.ball.x += 12; s.ball.y = s.hoop.y + 14;
-  const positions = s.hoop.net.map(n => [n.x, n.y]);
+  s.ball.x += 4; s.ball.y = s.hoop.y + 1; s.ball.omega = 18;
+  const motion = () => s.hoop.net.map(n => [n.x, n.y, n.px, n.py, n.depth, n.prevDepth]);
+  const before = motion();
   tugNet2(s.hoop, s.ball);
-  assert.deepEqual(s.hoop.net.map(n => [n.x, n.y]), positions);
-  const near = s.hoop.net.filter(n => n.x > s.hoop.x && !n.pinned);
-  const far = s.hoop.net.filter(n => n.x < s.hoop.x && !n.pinned);
-  const motion = (nodes: typeof near) => nodes.reduce((v, n) => v + Math.abs(n.y - n.py), 0) / nodes.length;
-  assert.ok(motion(near) > motion(far), "off-center make should pull the nearby side more");
+  assert.deepEqual(motion(), before, "score notifications cannot add an animation impulse");
+  assert.equal(s.hoop.net[0]!.netState!.inside, false, "downward velocity below the rim is not proof of an entry");
+  assert.equal(s.hoop.net[0]!.netState!.throughMake, false);
+  stepNet2(s.hoop, s.ball, s.ball.x, s.hoop.y - 1, s.world, 1 / 120, 0, true, { wind: 0 });
+  const entry = structuredClone(s.hoop.net[0]!.netState!);
+  assert.equal(entry.throughMake, true);
+  assert.ok(entry.entryOmega > 0, "the physical crossing must record the ball's spin");
+  s.ball.vx = 50; s.ball.omega = 2;
+  tugNet2(s.hoop, s.ball);
+  assert.deepEqual(s.hoop.net[0]!.netState, entry, "duplicate scoring cannot overwrite entry");
 });
+
 
 test("ball deforms the hem, then the net settles while its rim stays pinned", () => {
   const s = setup(); tick(s, 2);
@@ -153,10 +161,10 @@ test("a make stays in the sleeve and leaves through the hem", () => {
   const dt = 1 / 120;
   for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
     const label = profile === NET3_PROFILE ? "net3" : "net2";
-    for (const [offset, vx] of [[0, 40], [8, 120], [-6, -90]] as const) {
+    for (const [offset, vx] of [[0, 40], [4, 120], [-4, -90]] as const) {
       const s = settleCloth(profile);
       s.ball.x = s.hoop.x + offset;
-      s.ball.y = s.hoop.y - 45;
+      s.ball.y = s.hoop.y - 1;
       s.ball.vx = vx;
       s.ball.vy = 360;
       let occupied = false, exited = false, maxOff = 0;
@@ -173,31 +181,31 @@ test("a make stays in the sleeve and leaves through the hem", () => {
         } else if (occupied) {
           const hem = Math.max(...s.hoop.net.map(n => n.y));
           assert.ok(s.ball.y > hem - s.ball.r, `${label} offset ${offset} left the sleeve above the hem`);
-          assert.ok(Math.abs(s.ball.x - s.hoop.x) <= s.hoop.inner * 0.3, `${label} offset ${offset} exited the side at x ${s.ball.x}`);
+          assert.ok(Math.abs(s.ball.x - center(s).x) < s.ball.r, `${label} offset ${offset} exited the side at x ${s.ball.x}`);
           exited = true;
           break;
         }
       }
       assert.ok(occupied && exited, `${label} offset ${offset} should score through the hem`);
-      assert.ok(maxOff <= s.hoop.inner * 0.25, `${label} offset ${offset} drifted ${maxOff}px out through the side`);
+      assert.ok(maxOff <= s.hoop.inner * 1.2, `${label} offset ${offset} drifted ${maxOff}px out through the side`);
     }
   }
 });
 
-test("a fast sideways attempt cannot leave the occupied sleeve through its wall", () => {
+test("a fast oblique make transfers side momentum and clears the sleeve", () => {
   const s = setup(); tick(s, 1);
-  s.ball.y = 201; s.ball.vx = 1400; s.ball.vy = 150;
-  tugNet2(s.hoop, s.ball);
-  let sideLimited = false, exited = false;
+  s.ball.y = 199; s.ball.vx = 600; s.ball.vy = 500;
+  let slowed = false, exited = false;
   for (let i = 0; i < 180; i++) {
     advanceBall(s);
     if (s.hoop.net[0]!.netState!.inside) {
-      assert.ok(Math.abs(s.ball.x - s.hoop.x) <= s.hoop.inner * 1.38);
-      if (Math.abs(s.ball.vx) < 1) sideLimited = true;
-    } else { exited = true; break; }
+      assert.ok(Math.abs(s.ball.x - s.hoop.x) <= s.hoop.inner * 1.5);
+      if (s.ball.vx < 400) slowed = true;
+    } else if (s.hoop.net[0]!.netState!.exited) { exited = true; break; }
   }
-  assert.ok(sideLimited && exited);
+  assert.ok(slowed && exited);
 });
+
 
 test("friction slows contact, leaves a remote ball alone, and stops after exit", () => {
   const s = setup(); tick(s, 1);
@@ -222,11 +230,19 @@ test("friction slows contact, leaves a remote ball alone, and stops after exit",
 test("faster makes transfer more momentum; the opening relaxes after release", () => {
   const fast = setup(), slow = setup(); tick(fast, 1); tick(slow, 1);
   const restY = center(fast).y;
+  const peaks = [];
   for (const [s, speed] of [[fast, 850], [slow, 220]] as const) {
-    s.ball.y = 198; s.ball.vy = speed; tugNet2(s.hoop, s.ball);
+    s.ball.y = 199; s.ball.vy = speed;
+    let peak = 0;
+    for (let i = 0; i < 120; i++) {
+      advanceBall(s, 1 / 240);
+      const momentum = s.hoop.net.slice(NET_COLS).reduce((m, n) => m + Math.hypot(n.x - n.px, n.y - n.py) / n.netDt!, 0);
+      peak = Math.max(peak, momentum);
+      if (s.hoop.net[0]!.netState!.exited) break;
+    }
+    peaks.push(peak);
   }
-  const momentum = (s: ReturnType<typeof setup>) => s.hoop.net.slice(NET_COLS).reduce((m, n) => m + n.y - n.py, 0);
-  assert.ok(momentum(fast) > momentum(slow) * 2);
+  assert.ok(peaks[0]! > peaks[1]! * 1.5, `fast ${peaks[0]} slow ${peaks[1]}`);
   let widest = 0;
   for (let i = 0; i < 90; i++) {
     advanceBall(fast);
@@ -348,6 +364,70 @@ test("an incomplete upward entry can fall back out and restore the hanging sleev
   assert.ok(Math.abs(center(s).y - baseline.y) < 1.5, "partial entry must not leave the net inverted");
 });
 
+test("enhanced net reactions require entry from above, even when scoring fires", () => {
+  for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
+    const cases = [
+      {name: "upward passage", x: 200, y: 270, vx: 0, vy: -900, gravity: 0},
+      {name: "partial upward entry falls back", x: 200, y: 255, vx: 0, vy: -140, gravity: 900},
+      {name: "left side", x: 100, y: 215, vx: 650, vy: 0, gravity: 900},
+      {name: "right side", x: 300, y: 215, vx: -650, vy: 0, gravity: 900},
+      {name: "outside rim crossing", x: 250, y: 190, vx: 0, vy: 500, gravity: 900},
+      {name: "already below the rim", x: 200, y: 208, vx: 0, vy: 500, gravity: 0},
+    ];
+    for (const shot of cases) {
+      const s = settleCloth(profile), dt = 1 / 240;
+      Object.assign(s.ball, {x: shot.x, y: shot.y, vx: shot.vx, vy: shot.vy});
+      let touchedUnderside = false;
+      for (let i = 0; i < 150; i++) {
+        const x = s.ball.x, y = s.ball.y;
+        s.ball.vy += shot.gravity * dt;
+        s.ball.x += s.ball.vx * dt; s.ball.y += s.ball.vy * dt;
+        // Neither an early score nor a delayed downward score can prove entry.
+        tugNet2(s.hoop, s.ball, profile);
+        stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, {wind: 0, profile});
+        tugNet2(s.hoop, s.ball, profile);
+        const state = s.hoop.net[0]!.netState!;
+        touchedUnderside ||= state.fromBelow;
+        assert.equal(state.inside, false, `${shot.name}: must not be captured`);
+        assert.equal(state.throughMake, false, `${shot.name}: no downward rim entry`);
+        assert.equal(state.impactApplied, false, `${shot.name}: must not receive the sharp catch`);
+        assert.equal(state.catchGrip ?? 0, 0, `${shot.name}: must not receive sustained grip`);
+      }
+      if (shot.name.startsWith("partial")) assert.ok(touchedUnderside, "the falling-back case must actually enter from underneath");
+    }
+  }
+});
+
+test("a ball that clears the rim upward can qualify on a new downward entry", () => {
+  for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
+    const s = settleCloth(profile), dt = 1 / 240;
+    s.ball.y = 270; s.ball.vy = -600;
+    for (let i = 0; i < 150 && s.ball.y + s.ball.r >= s.hoop.y - 2; i++) {
+      const x = s.ball.x, y = s.ball.y;
+      s.ball.y += s.ball.vy * dt;
+      stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, {wind: 0, profile});
+      assert.equal(s.hoop.net[0]!.netState!.throughMake, false);
+    }
+    assert.ok(s.ball.y + s.ball.r < s.hoop.y, "ball must fully clear the rim first");
+    s.ball.vy = 600;
+    let reentered = false, resisted = false;
+    for (let i = 0; i < 150 && !s.hoop.net[0]!.netState!.impactApplied; i++) {
+      const x = s.ball.x, y = s.ball.y;
+      const vy = s.ball.vy;
+      s.ball.y += s.ball.vy * dt;
+      stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, {wind: 0, profile});
+      reentered ||= s.hoop.net[0]!.netState!.throughMake;
+      resisted ||= s.ball.vy < vy;
+      if (s.hoop.net[0]!.netState!.exited) break;
+    }
+    const state = s.hoop.net[0]!.netState!;
+    assert.ok(reentered && resisted, "the subsequent entry must qualify for contact from inside the net");
+    // The upward pass may leave the hem folded above the rim. A later make
+    // can brush it without reaching a deep wrap, so do not force a catch in air.
+    if (!profile.dynamicCatch) assert.ok(state.impactApplied);
+  }
+});
+
 test("stand hits recoil opposite the incoming direction and weaken with distance", () => {
   for (const [vx, vy] of [[600, 0], [-600, 0], [0, 600], [0, -600], [400, 400]]) {
     const near = setup(); tick(near, 2);
@@ -446,6 +526,43 @@ function settleCloth(profile: NetProfile) {
   return s;
 }
 
+test("offset and oblique underside arrivals lift a resting or swaying hem without a side kick", () => {
+  const dt = 1 / 60;
+  for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
+    const base = settleCloth(profile);
+    for (const recoil of [0, 12, 36]) for (const dir of [-1, 1]) {
+      const resting = structuredClone(base);
+      if (recoil) {
+        strikeNet2(resting.hoop, 200 + dir * 28, 200, dir * 600, 0, 600, profile);
+        for (let i = 0; i < recoil; i++) stepNet2(resting.hoop, resting.ball, 200, 100,
+          resting.world, 1 / 240, 0, false, { wind: 0, profile });
+      }
+      for (const [offset, vx, vy] of [[15, 0, -200], [15, 0, -600], [15, 0, -1000], [45, -300, -600]]) {
+        const s = structuredClone(resting);
+        Object.assign(s.ball, { x: 200 + dir * offset!, y: 310, vx: dir * vx!, vy });
+        let touched = false;
+        for (let i = 0; i < 60 && s.ball.y > s.hoop.y + s.ball.r; i++) {
+          const x = s.ball.x, y = s.ball.y;
+          s.ball.x += s.ball.vx * dt; s.ball.y += s.ball.vy * dt;
+          const expectedX = s.ball.x, expectedY = s.ball.y;
+          stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, { wind: 0, profile });
+          const where = `recoil=${recoil} offset=${dir * offset!} velocity=${dir * vx!},${vy}`;
+          assert.ok(Math.hypot(s.ball.x - expectedX, s.ball.y - expectedY) < 1e-8,
+            `${where}: underside contact pushed the ball away`);
+          assert.ok(Math.abs(s.ball.vx * vy! - s.ball.vy * dir * vx!) < 1e-6,
+            `${where}: underside contact changed the flight direction`);
+          const state = s.hoop.net[0]!.netState!;
+          touched ||= state.fromBelow;
+          assert.equal(state.throughMake, false);
+          assert.equal(state.impactApplied, false);
+          assert.equal(state.catchGrip ?? 0, 0);
+        }
+        assert.ok(touched, "the shot must actually touch the underside");
+      }
+    }
+  }
+});
+
 test("side contact meets the weave, cups it, and does not punch through", () => {
   const dt = 1 / 60;
   for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
@@ -516,7 +633,28 @@ test("side contact meets the weave, cups it, and does not punch through", () => 
   }
 });
 
-test("a slower make hesitates longer than a fast one and still falls through", () => {
+test("a ball grazing the lower side keeps moving with its resolved velocity", () => {
+  const s = settleCloth(NET3_PROFILE), dt = 1 / 60;
+  s.ball.x = 110; s.ball.y = 250; s.ball.vx = 650; s.ball.vy = 0;
+  const step = () => {
+    const x = s.ball.x, y = s.ball.y;
+    s.ball.x += s.ball.vx * dt; s.ball.y += s.ball.vy * dt;
+    stepNet2(s.hoop, s.ball, x, y, s.world, dt, 0, true, {wind: 0, profile: NET3_PROFILE});
+  };
+  // Reach the glancing contact, then slide down past the hem. A side contact
+  // must not discard the rest of the frame's tangential movement.
+  for (let i = 0; i < 6; i++) step();
+  const before = {...s.ball};
+  step();
+  const remainingTravel = Math.min(before.vx, s.ball.vx) * dt;
+  assert.ok(s.ball.x - before.x >= remainingTravel * .9,
+    `side graze froze travel: moved ${s.ball.x - before.x}px with ${s.ball.vx}px/s remaining`);
+  assert.ok(screenRopeDistance(s) - s.ball.r < 1, "contact must stay next to the visible strands, not an air gap");
+  assert.ok(s.ball.y > before.y, "the ball must keep sliding down around the hem");
+  assert.equal(s.hoop.net[0]!.netState!.impactApplied, false, "side contact cannot trigger the top-entry catch");
+});
+
+test("different entry speeds receive bounded resistance and still fall through", () => {
   const dt = 1 / 60;
   const g = 2500;
   const run = (profile: NetProfile, vy0: number, scoreFirst = false) => {
@@ -568,82 +706,304 @@ test("a slower make hesitates longer than a fast one and still falls through", (
         `${label} ${how} center crossed back above the rim`);
       assert.ok(slow.rise < 1 && mid.rise < 1 && fast.rise < 1, `${label} ${how} rose slow ${slow.rise} mid ${mid.rise} fast ${fast.rise}`);
       assert.ok(slow.minVy > 40 && mid.minVy > 40 && fast.minVy > 40, `${label} ${how} stalled in the sleeve`);
-      assert.ok(slow.firstVy / slow.entryVy > 0.5, `${label} ${how} soft cut in one frame to ${slow.firstVy} of ${slow.entryVy}`);
-      assert.ok(slow.minVy / slow.entryVy < 0.78, `${label} ${how} soft held ${slow.minVy} of ${slow.entryVy}`);
+      assert.ok(slow.firstVy / slow.entryVy > 0.25, `${label} ${how} first catch stopped the ball: ${slow.firstVy} of ${slow.entryVy}`);
+      assert.ok(slow.minVy / slow.entryVy < (profile.dynamicCatch ? .9 : .65), `${label} ${how} soft held ${slow.minVy} of ${slow.entryVy}`);
       assert.ok(slow.dwell > 0.08 && slow.dwell < 0.28, `${label} ${how} soft dwell ${slow.dwell}s`);
-      assert.ok(mid.minVy / mid.entryVy < 0.85, `${label} ${how} medium held ${mid.minVy} of ${mid.entryVy}`);
-      assert.ok(mid.dwell > 0.06 && mid.dwell < 0.22, `${label} ${how} medium dwell ${mid.dwell}s`);
-      assert.ok(fast.minVy / fast.entryVy > 0.88, `${label} ${how} hard slowed to ${fast.minVy} from ${fast.entryVy}`);
-      assert.ok(fast.dwell < 0.08, `${label} ${how} hard dwell ${fast.dwell}s`);
-      assert.ok(slow.dwell > fast.dwell * 2.4, `${label} ${how} dwell slow ${slow.dwell}s vs fast ${fast.dwell}s`);
+      assert.ok(mid.minVy / mid.entryVy < (profile.dynamicCatch ? .85 : .65), `${label} ${how} medium held ${mid.minVy} of ${mid.entryVy}`);
+      if (profile.dynamicCatch) assert.ok(slow.minVy / slow.entryVy > fast.minVy / fast.entryVy + .2,
+        "net3 must retain more of a soft make's speed than a hard make's speed");
+      assert.ok(mid.dwell > 0.06 && mid.dwell < (profile.dynamicCatch ? .35 : .22), `${label} ${how} medium dwell ${mid.dwell}s`);
+      assert.ok(fast.minVy / fast.entryVy > (profile.dynamicCatch ? .06 : .15) && fast.minVy / fast.entryVy < 0.65, `${label} ${how} hard catch ${fast.minVy} from ${fast.entryVy}`);
+      assert.ok(fast.dwell < (profile.dynamicCatch ? .3 : .18), `${label} ${how} hard dwell ${fast.dwell}s`);
+      if (!profile.dynamicCatch) assert.ok(slow.dwell > fast.dwell * 1.3, `${label} ${how} dwell slow ${slow.dwell}s vs fast ${fast.dwell}s`);
     }
   }
 });
 
-test("clearing the hem tugs the net opposite the make's entry", () => {
-  const dt = 1 / 120;
-  const g = 900;
-  const hemOf = (net: ReturnType<typeof setup>["hoop"]["net"]) => {
-    const row = net.slice(-NET_COLS);
-    return {
-      x: row.reduce((sum, n) => sum + n.x, 0) / row.length,
-      y: row.reduce((sum, n) => sum + n.y, 0) / row.length,
-    };
-  };
-  for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
-    const label = profile === NET3_PROFILE ? "net3" : "net2";
-    for (const scoreFirst of [false, true]) for (const vx0 of [240, -240]) {
+test("release adds no impulse after the last strand separates", () => {
+  const s = settleCloth(NET2_PROFILE);
+  s.ball.y = 199; s.ball.vx = 240; s.ball.vy = 400;
+  for (let i = 0; i < 120 && !s.hoop.net[0]!.netState!.exited; i++) advanceBall(s);
+  assert.ok(s.hoop.net[0]!.netState!.exited);
+  const free = structuredClone(s);
+  s.ball.y = free.ball.y = 600;
+  for (let i = 0; i < 90; i++) {
+    stepNet2(s.hoop, s.ball, s.ball.x, s.ball.y, s.world, 1 / 120, i / 120, true, {wind: 0});
+    stepNet2(free.hoop, free.ball, free.ball.x, free.ball.y, free.world, 1 / 120, i / 120, false, {wind: 0});
+  }
+  assert.deepEqual(s.hoop.net.map(n=>[n.x,n.y,n.px,n.py]), free.hoop.net.map(n=>[n.x,n.y,n.px,n.py]));
+});
+
+test("contact slows the ball and redirects its exit according to the struck side", () => {
+  const angle = (vx: number, vy: number) => Math.atan2(vx, vy) * 180 / Math.PI;
+  for (const profile of [NET2_PROFILE, NET3_PROFILE]) for (const dt of [1 / 60, 1 / 120, 1 / 240]) {
+    for (const [offset, vx] of [[0, 0], [0, 240], [0, -240], [6, 0], [-6, 0]]) {
       const s = settleCloth(profile);
-      s.ball.x = s.hoop.x - Math.sign(vx0) * 4;
-      s.ball.y = s.hoop.y - 30;
-      s.ball.vx = vx0;
-      s.ball.vy = 400;
-      let entry = { vx: 0, vy: 0 };
-      let seen = false;
-      let caught = false;
-      const how = scoreFirst ? "score" : "cross";
-      for (let i = 0; i < 240 && !caught; i++) {
-        const snap = structuredClone(s);
+      s.ball.x += offset!; s.ball.y = s.hoop.y - 1;
+      s.ball.vx = vx!; s.ball.vy = 500;
+      let exit = false;
+      for (let i = 0; i < Math.round(.4 / dt); i++) {
         const x = s.ball.x, y = s.ball.y;
-        s.ball.vy += g * dt;
-        s.ball.x += s.ball.vx * dt;
-        s.ball.y += s.ball.vy * dt;
-        // The engine scores, and tugs, before the cloth step on the crossing frame.
-        if (scoreFirst && y < s.hoop.y && s.ball.y >= s.hoop.y) tugNet2(s.hoop, s.ball, profile);
-        const was = s.hoop.net[0]!.netState?.inside ?? false;
-        stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, { wind: 0, profile });
-        const state = s.hoop.net[0]!.netState!;
-        if (state.inside) {
-          seen = true;
-          entry = { vx: state.entryVx, vy: state.entryVy };
-        } else if (was && seen) {
-          snap.ball.x = 900; snap.ball.y = 40; snap.ball.vx = 0; snap.ball.vy = 0;
-          stepNet2(snap.hoop, snap.ball, snap.ball.x, snap.ball.y, snap.world, dt, i * dt, false, { wind: 0, profile });
-          let lift = 0, side = 0, minY = Infinity;
-          for (let k = 0; k < 24; k++) {
-            const lx = s.ball.x, ly = s.ball.y;
-            s.ball.vy += g * dt;
-            s.ball.x += s.ball.vx * dt;
-            s.ball.y += s.ball.vy * dt;
-            stepNet2(s.hoop, s.ball, lx, ly, s.world, dt, (i + 1 + k) * dt, true, { wind: 0, profile });
-            stepNet2(snap.hoop, snap.ball, snap.ball.x, snap.ball.y, snap.world, dt, (i + 1 + k) * dt, false, { wind: 0, profile });
-            const a = hemOf(s.hoop.net), b = hemOf(snap.hoop.net);
-            const dx = a.x - b.x, dy = a.y - b.y;
-            if (dy < lift) lift = dy;
-            if (Math.abs(dx) > Math.abs(side)) side = dx;
-            minY = Math.min(minY, ...s.hoop.net.slice(-NET_COLS).map(n => n.y));
-          }
-          assert.ok(lift < -16, `${label} ${how} vx ${vx0} hem lift ${lift}`);
-          assert.ok(side * entry.vx < 0, `${label} ${how} vx ${vx0} kicked ${side} along entry ${entry.vx}`);
-          assert.ok(Math.abs(side) > 4, `${label} ${how} vx ${vx0} sideways tug only ${side}`);
-          assert.ok(minY > s.hoop.y, `${label} ${how} hem crossed above the rim at ${minY}`);
-          caught = true;
+        s.ball.vy += 2500 * dt;
+        s.ball.x += s.ball.vx * dt; s.ball.y += s.ball.vy * dt;
+        stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, {wind:0,profile});
+        if (!s.hoop.net[0]!.netState!.exited) continue;
+        const freeVy = 500 + 2500 * dt * (i + 1);
+        const exitAngle = angle(s.ball.vx, s.ball.vy);
+        assert.ok(Math.hypot(s.ball.vx, s.ball.vy) < Math.hypot(vx!, freeVy) * .8, "cloth must visibly slow the ball compared with free fall");
+        assert.ok(s.ball.vy > 100, "the net must release a downward make");
+        if (vx) {
+          assert.ok(exitAngle * vx < 0 && Math.abs(exitAngle) > (profile.dynamicCatch ? 2 : 3), `a strong side catch should visibly turn the ball back: ${exitAngle}`);
+          assert.ok(Math.abs(s.ball.vx) < Math.abs(vx) * .6, "the deflected ball must lose lateral speed");
+        } else if (offset) {
+          assert.ok(s.ball.vx * offset < 0 && Math.abs(exitAngle) > (profile.dynamicCatch ? 2 : 6), `off-center contact should visibly turn the ball away from that side: ${exitAngle}`);
+        } else {
+          assert.ok(Math.abs(exitAngle) < 1, `symmetric contact must not create a side kick: ${exitAngle}`);
+          assert.ok(s.ball.vy < 500 * (profile.dynamicCatch ? .95 : .85), "a central make should leave slower than it entered despite gravity");
         }
+        exit = true; break;
       }
-      assert.ok(caught, `${label} ${how} vx ${vx0} should leave through the hem`);
+      assert.ok(exit, "contact must not trap the ball");
     }
   }
 });
+
+test("a passage has at most one sharp catch, then slides out without repeated braking pulses", () => {
+  for (const profile of [NET2_PROFILE, NET3_PROFILE]) for (const vx of [0, 240, -240]) {
+    const s = settleCloth(profile), dt = 1 / 480;
+    s.ball.y = 199; s.ball.vx = vx; s.ball.vy = 500;
+    let catches = 0, exited = false;
+    for (let i = 0; i < 480; i++) {
+      const x = s.ball.x, y = s.ball.y;
+      s.ball.vy += 2500 * dt;
+      const before = Math.hypot(s.ball.vx, s.ball.vy);
+      s.ball.x += s.ball.vx * dt; s.ball.y += s.ball.vy * dt;
+      stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, {wind:0,profile});
+      if (Math.hypot(s.ball.vx, s.ball.vy) < before * .65) catches++;
+      if (s.hoop.net[0]!.netState!.exited) { exited = true; break; }
+    }
+    if (profile.dynamicCatch) assert.ok(catches <= 1, "a gentle contact may stay soft but must not brake repeatedly");
+    else assert.equal(catches, 1, "catch must be a single contact event, not a recurring slow-motion effect");
+    assert.ok(s.hoop.net[0]!.netState!.impactApplied, "the pass must reach real loaded contact");
+    assert.ok(exited, "the caught ball must leave the sleeve");
+  }
+});
+
+function speedSensitiveShot(vy: number, ratio: number, dt: number, brakingScale = 1, profile = NET3_PROFILE) {
+  const s = settleCloth(profile);
+  s.ball.y = s.hoop.y - 1; s.ball.vx = vy * ratio; s.ball.vy = vy;
+  let catchRetention = 1, catchTurn = 0, seenCatch = false, sharpCatches = 0;
+  let slowTime = 0;
+  const energy = () => s.ball.vx ** 2 + s.ball.vy ** 2 + 2 / 3 * s.ball.r ** 2 * s.ball.omega ** 2;
+  for (let i = 0; i < Math.ceil(.6 / dt); i++) {
+    const x = s.ball.x, y = s.ball.y;
+    s.ball.vy += 2500 * dt;
+    const before = energy(), speedBefore = Math.hypot(s.ball.vx, s.ball.vy);
+    const angleBefore = Math.atan2(s.ball.vx, s.ball.vy);
+    s.ball.x += s.ball.vx * dt; s.ball.y += s.ball.vy * dt;
+    stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, {wind: 0, profile, brakingScale});
+    assert.ok(energy() <= before + 1e-6, "a stronger catch must not create kinetic energy");
+    const retention = Math.hypot(s.ball.vx, s.ball.vy) / speedBefore;
+    if (retention < .65) sharpCatches++;
+    const state = s.hoop.net[0]!.netState!;
+    if (state.inside && Math.hypot(s.ball.vx, s.ball.vy) < 200) slowTime += dt;
+    if (!seenCatch && state.impactApplied) {
+      seenCatch = true; catchRetention = retention;
+      catchTurn = Math.abs(Math.atan2(s.ball.vx, s.ball.vy) - angleBefore) * 180 / Math.PI;
+    }
+    if (state.exited) {
+      assert.ok(seenCatch && s.ball.vy > 0, "the catch must release downward");
+      assert.ok(s.hoop.net.every(n => Number.isFinite(n.x + n.y + n.depth!)), "cloth must remain finite");
+      return { catchRetention, catchTurn, sharpCatches, slowTime, exitTime: (i + 1) * dt,
+        angle: Math.atan2(s.ball.vx, s.ball.vy) * 180 / Math.PI };
+    }
+  }
+  assert.fail("net3 must release the ball within .6 seconds");
+}
+
+test("fire and blaze progressively reduce net speed loss without adding energy", () => {
+  for (const profile of [NET2_PROFILE, NET3_PROFILE]) for (const sign of [-1, 1]) {
+    const normal = speedSensitiveShot(500,.48*sign,1/240,1,profile);
+    const fire = speedSensitiveShot(500,.48*sign,1/240,.65,profile);
+    const blaze = speedSensitiveShot(500,.48*sign,1/240,.35,profile);
+    assert.ok(fire.catchRetention > normal.catchRetention, JSON.stringify({normal,fire,blaze}));
+    assert.ok(blaze.catchRetention > fire.catchRetention, JSON.stringify({normal,fire,blaze}));
+    assert.ok(fire.catchTurn > 0 && blaze.catchTurn > 0,"contact still redirects the ball");
+  }
+});
+
+test("net3 catches fast oblique entries harder than slow entries at the same angle", () => {
+  for (const dt of [1 / 60, 1 / 120, 1 / 240, 1 / 480]) for (const sign of [-1, 1]) {
+    const slow = speedSensitiveShot(150, .48 * sign, dt);
+    const medium = speedSensitiveShot(500, .48 * sign, dt);
+    const fast = speedSensitiveShot(1200, .48 * sign, dt);
+    assert.ok(slow.catchRetention > .65, `gentle contact lost too much speed: ${JSON.stringify({dt, sign, slow})}`);
+    assert.ok(fast.catchRetention < slow.catchRetention - .25, "high speed must increase the fraction absorbed by the catch");
+    assert.ok(medium.catchTurn > slow.catchTurn + 15 && fast.catchTurn > slow.catchTurn + 35,
+      "harder side hits must change direction more than soft entries");
+    const incomingAngle = Math.atan(.48) * 180 / Math.PI;
+    assert.ok(incomingAngle - fast.angle * sign > 15 && slow.angle * sign > -2,
+      `the fast entry must turn away from its incoming path before sliding out: ${JSON.stringify({dt, sign, slow, fast})}`);
+    if (dt <= 1 / 240) assert.ok(fast.sharpCatches <= 1, "sustained drag must not create another instantaneous catch");
+  }
+});
+
+test("net3 holds a fast side make visibly slow for several frames before release", () => {
+  for (const dt of [1 / 60, 1 / 120, 1 / 240]) {
+    const shot = speedSensitiveShot(500, .48, dt);
+    assert.ok(shot.slowTime >= .05, `slowdown must last at least 3 display frames: ${JSON.stringify(shot)}`);
+    assert.ok(shot.exitTime > .16 && shot.exitTime < .35, "the net should visibly cup the ball, then let it fall");
+  }
+});
+
+test("net3 keeps centered slow and extreme-speed entries symmetric and releases them", () => {
+  for (const speed of [100, 500, 1200, 3000, 8000]) {
+    const result = speedSensitiveShot(speed, 0, 1 / 240);
+    assert.ok(Math.abs(result.angle) < 1, `centered shot ${speed} received a side kick: ${result.angle}`);
+  }
+});
+
+test("net3 yields more when the contacted cloth is already moving with the ball", () => {
+  const collide = (follow: boolean) => {
+    const s = settleCloth(NET3_PROFILE), dt = 1 / 480;
+    s.ball.x += 10; s.ball.y = s.hoop.y + 8; s.ball.vx = 240; s.ball.vy = 500;
+    if (follow) for (const n of s.hoop.net) if (!n.pinned) {
+      n.px = n.x - s.ball.vx * n.netDt!;
+      n.py = n.y - s.ball.vy * n.netDt!;
+    }
+    const x = s.ball.x, y = s.hoop.y - 1;
+    s.ball.x += s.ball.vx * dt; s.ball.y += s.ball.vy * dt;
+    stepNet2(s.hoop, s.ball, x, y, s.world, dt, 0, true, { wind: 0, profile: NET3_PROFILE });
+    return Math.hypot(s.ball.vx, s.ball.vy);
+  };
+  const still = collide(false), following = collide(true);
+  const incoming = Math.hypot(240, 500);
+  assert.ok(incoming - following < (incoming - still) * .8,
+    `following cloth must absorb less during the initial soft wrap: still ${still}, following ${following}`);
+});
+
+test("net3 first carries the inner strands, then turns deeper in the net", () => {
+  for (const dt of [1 / 60, 1 / 120, 1 / 240]) for (const sign of [-1, 1]) {
+    const s = settleCloth(NET3_PROFILE);
+    const rest = structuredClone(s.hoop.net);
+    s.ball.y = 199; s.ball.vx = 240 * sign; s.ball.vy = 500;
+    let wrapped = false, caught = false, early = false, wrapDeformation = 0;
+    for (let i = 0; i < Math.ceil(.15 / dt); i++) {
+      const x = s.ball.x, y = s.ball.y;
+      s.ball.vy += 2500 * dt;
+      const vx = s.ball.vx, vy = s.ball.vy;
+      s.ball.x += vx * dt; s.ball.y += vy * dt;
+      stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, {wind: 0, profile: NET3_PROFILE});
+      const state = s.hoop.net[0]!.netState!;
+      if (s.ball.y < s.hoop.y + s.ball.r * .45) {
+        early = true;
+        assert.ok(s.ball.vx * sign > 180, "the ball must keep travelling toward the receiving inner net");
+        assert.ok(Math.abs(s.ball.x - (200 + 240 * sign * (i + 1) * dt)) < 1,
+          "the rim crossing must not cause an early sideways kink");
+      }
+      if (!state.impactApplied && (state.wrapTravel ?? 0) > 0) {
+        wrapped = true;
+        assert.ok(s.ball.vx * sign > 0, "wrapping must precede reversal");
+        wrapDeformation = Math.max(wrapDeformation,
+          ...s.hoop.net.map((n, k) => Math.hypot(n.x - rest[k]!.x, n.y - rest[k]!.y)));
+      }
+      if (state.impactApplied) {
+        caught = true;
+        assert.ok(wrapped && early, "a real wrapping phase must precede the reaction");
+        assert.ok(wrapDeformation > 1, "the inner cloth must visibly move with the ball before the catch");
+        assert.ok(s.ball.y - s.hoop.y > s.ball.r * .7, "the reaction must occur deeper inside the net");
+        assert.ok((i + 1) * dt >= .025, "the first contact must not immediately reverse the ball");
+        assert.ok(Math.hypot(s.ball.vx, s.ball.vy) < Math.hypot(vx, vy) * .65, "the loaded wrap must still brake firmly");
+        break;
+      }
+    }
+    assert.ok(caught, "a deeper catch must still occur before release");
+  }
+});
+
+test("net3 grip survives replay, pauses in place, and cannot brake a separated ball", () => {
+  const s = settleCloth(NET3_PROFILE), dt = 1 / 240, env = {wind: 0, profile: NET3_PROFILE};
+  s.ball.y = 199; s.ball.vx = 240; s.ball.vy = 500;
+  for (let i = 0; i < 30 && !s.hoop.net[0]!.netState!.impactApplied; i++) {
+    const x = s.ball.x, y = s.ball.y;
+    s.ball.vy += 2500 * dt; s.ball.x += s.ball.vx * dt; s.ball.y += s.ball.vy * dt;
+    stepNet2(s.hoop, s.ball, x, y, s.world, dt, 0, true, env);
+  }
+  assert.ok(s.hoop.net[0]!.netState!.catchGrip! > .5, "the test must begin during a loaded catch");
+  const paused = structuredClone(s);
+  stepNet2(s.hoop, s.ball, s.ball.x, s.ball.y, s.world, 0, 0, true, env);
+  assert.deepEqual(s, paused, "pausing cannot consume grip time");
+  const replay = structuredClone(s);
+  for (const run of [s, replay]) {
+    const x = run.ball.x, y = run.ball.y;
+    run.ball.x += run.ball.vx * dt; run.ball.y += run.ball.vy * dt;
+    stepNet2(run.hoop, run.ball, x, y, run.world, dt, 0, true, env);
+  }
+  assert.deepEqual(s, replay, "rewind must reproduce the same catch");
+  s.ball.x = 900; s.ball.y = 600;
+  const free = structuredClone(s.ball);
+  stepNet2(s.hoop, s.ball, free.x, free.y, s.world, dt, 0, true, env);
+  assert.deepEqual(s.ball, free, "no contact means no residual braking");
+  assert.equal(s.hoop.net[0]!.netState!.catchGrip, 0, "the hem release must clear the grip");
+});
+
+function contactShot(profile: NetProfile, vx: number, omega = 0, dt = 1 / 120) {
+  const s = settleCloth(profile);
+  s.ball.y = 199; s.ball.vx = vx; s.ball.vy = 500; s.ball.omega = omega;
+  let firstSwing = 0, drift = 0, minHem = Infinity, exit = 0;
+  let postExitTravel = 0, lastHemX = 0, postExitMinHem = Infinity;
+  for (let i = 0; i < Math.round(0.7 / dt); i++) {
+    const x = s.ball.x, y = s.ball.y;
+    s.ball.vy += 900 * dt;
+    s.ball.x += s.ball.vx * dt; s.ball.y += s.ball.vy * dt;
+    stepNet2(s.hoop, s.ball, x, y, s.world, dt, i * dt, true, {wind: 0, profile});
+    const hem = center(s);
+    if (i * dt < .12 && Math.abs(hem.x - s.hoop.x) > Math.abs(firstSwing)) firstSwing = hem.x - s.hoop.x;
+    drift = Math.max(drift, Math.abs(hem.x - s.hoop.x));
+    minHem = Math.min(minHem, ...s.hoop.net.slice(-NET_COLS).map(n => n.y - n.depth! * RIM_RY));
+    if (!exit && s.hoop.net[0]!.netState!.exited) exit = (i + 1) * dt;
+    if (exit) {
+      if (lastHemX) postExitTravel += Math.abs(hem.x - lastHemX);
+      lastHemX = hem.x;
+      postExitMinHem = Math.min(postExitMinHem, ...s.hoop.net.slice(-NET_COLS).map(n => n.y - n.depth! * RIM_RY));
+    }
+  }
+  return {s, firstSwing, drift, minHem, exit, postExitTravel, postExitMinHem};
+}
+
+test("centered makes stay symmetric while oblique makes first swing with the ball", () => {
+  for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
+    const centered = contactShot(profile, 0);
+    const right = contactShot(profile, 300), left = contactShot(profile, -300);
+    assert.ok(centered.drift < 1.5, `center drift ${centered.drift}`);
+    assert.ok(right.firstSwing > 3 && left.firstSwing < -3, `swings ${right.firstSwing}, ${left.firstSwing}`);
+    assert.ok(Math.abs(right.firstSwing + left.firstSwing) < 1.5, "mirrored entries should produce similar swings");
+    assert.ok([centered, right, left].every(r => r.exit > 0 && r.exit < (profile.dynamicCatch ? .55 : .35)),
+      `passage times: ${[centered, right, left].map(r => r.exit).join(", ")}`);
+    const hard = contactShot(profile, 900);
+    assert.ok(hard.minHem < hard.s.hoop.y, `strong side impact should be able to curl above the rim: ${hard.minHem}`);
+    if (profile.dynamicCatch) {
+      assert.ok(right.postExitTravel > 5 && left.postExitTravel > 5, "transferred momentum must keep the released net swinging");
+      assert.ok(hard.postExitMinHem < hard.s.hoop.y, "a hard catch must retain enough momentum to flip the hem up after release");
+    }
+  }
+});
+
+test("spin changes the contact response without affecting remote cloth", () => {
+  for (const profile of [NET2_PROFILE, NET3_PROFILE]) {
+    const top = contactShot(profile, 240, 40), back = contactShot(profile, 240, -40);
+    const shapeDelta = Math.max(...top.s.hoop.net.map((n, i) => Math.hypot(n.x - back.s.hoop.net[i]!.x, n.y - back.s.hoop.net[i]!.y)));
+    assert.ok(shapeDelta > .5, `spin response too small: ${shapeDelta}`);
+    assert.equal(top.s.hoop.net[0]!.netState!.entryOmega, 40);
+    assert.equal(back.s.hoop.net[0]!.netState!.entryOmega, -40);
+    const a = settleCloth(profile), b = structuredClone(a);
+    a.ball.omega = 100; b.ball.omega = -100;
+    stepNet2(a.hoop, a.ball, a.ball.x, a.ball.y, a.world, 1 / 60, 0, true, {wind:0,profile});
+    stepNet2(b.hoop, b.ball, b.ball.x, b.ball.y, b.world, 1 / 60, 0, true, {wind:0,profile});
+    assert.deepEqual(a.hoop.net, b.hoop.net, "spin cannot tug a net without touching it");
+  }
+});
+
 
 test("net3 idle hem hangs as deep as net1 while net2 stays shorter", () => {
   const far = { x: 900, y: 40, vx: 0, vy: 0, r: 19, spin: 0, omega: 0, squash: 1, scored: false, hitRim: false, hitBoard: false } as Ball;
