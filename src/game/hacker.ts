@@ -1,4 +1,5 @@
 import type { Hoop } from "./types";
+import { beginHoopRetirement } from "./hoop-retirement.ts";
 
 /** First playable tuning; probabilities are per event, never per frame. */
 export const HACKER = {
@@ -38,18 +39,25 @@ export function hackerIntercept(target: { hackerAttempt?: { epoch: number; block
   return target.hackerAttempt.blocked;
 }
 
+export function retireHackerHoop(h: Hoop) {
+  if (!h.hacker || h.hacker.state === "retiring") return;
+  h.hacker.state = "retiring";
+  beginHoopRetirement(h);
+}
+
 export function settleHackerHoops(hoops: readonly Hoop[], scored: Hoop, random = Math.random) {
   const count = hoops.length;
   const state = scored.hacker;
   if (state?.state === "normal") {
     state.pinned = random() < HACKER.pinChance;
-    state.state = state.pinned ? "pinned" : "retiring";
+    if (state.pinned) state.state = "pinned";
+    else retireHackerHoop(scored);
     state.age = 0;
   }
   const pinned = hackerPinnedCount(hoops);
   for (const h of hoops) {
     if (h.hacker?.state === "pinned" && random() < hackerRetractChance(pinned, h.hacker.age)) {
-      h.hacker.state = "retiring";
+      retireHackerHoop(h);
     }
   }
   return count;
