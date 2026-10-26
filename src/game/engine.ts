@@ -3707,6 +3707,15 @@ export function createGame(
       top: Math.min(g.visY, h.y - 16), bottom: Math.max(g.boardBotY, h.y + h.inner * 1.7) };
   }
 
+  function hackerComboCount() {
+    // An incoming stand reserves a slot, but only earns combo once visible.
+    return hackerHoops.filter(h => {
+      if (h.hacker?.state !== "normal") return true;
+      const b = hackerBounds(h);
+      return b.right > 0 && b.left < world.w;
+    }).length;
+  }
+
   function ensureHackerTarget() {
     if (!hackerAwaken || hackerHoops.length >= HACKER.maxHoops || hackerHoops.some(h => h.hacker?.state === "normal")) return;
     if (hackerSpawnRetry > 0 && hackerHoops.length > 0) return;
@@ -3728,6 +3737,7 @@ export function createGame(
     if (!candidates.length) return; // Retry after a retiring stand clears; never spawn inside it.
     const h = candidates[Math.floor(Math.random() * candidates.length)];
     h.hacker = { state: "normal", pinned: false, age: 0, scored: false };
+    h.x = h.side < 0 ? -90 : world.w + 90;
     h.net = buildNet(h); hackerHoops.push(h); hoop = h;
   }
 
@@ -3739,7 +3749,7 @@ export function createGame(
       if (state.pinned) state.age += dt;
       if (state.scored && Math.hypot(ball.x - h.x, ball.y - h.y) > h.inner + ball.r * 1.5) state.scored = false;
     }
-    hackerHoops = hackerHoops.filter(h => !hoopRetirementDone(h, world.w));
+    hackerHoops = hackerHoops.filter(h => h.hacker?.state !== "retiring" || !hoopRetirementDone(h, world.w));
     ensureHackerTarget();
     if (!hackerHoops.includes(hoop) && hackerHoops.length) hoop = hackerHoops.find(h => h.hacker?.state === "normal") ?? hackerHoops[0];
   }
@@ -3767,8 +3777,13 @@ export function createGame(
     for (const h of hackerHoops) {
       h.hacker = {state: h === hoop ? "normal" : "retiring", pinned:false, age:0, scored: h === scoreGateHoop};
       h.active = true; h.moving = false; h.burning = false;
-      if (h === hoop) { h.couple = true; h.hold = 0; h.targetX = h.x; }
-      h.baseX = h.x; h.baseY = h.y;
+      if (h === hoop) {
+        const entering = (h.x - h.baseX) * h.side > 0;
+        h.couple = true; h.hold = 0;
+        h.targetX = entering ? h.baseX : h.x;
+        h.baseX = h.targetX;
+      } else h.baseX = h.x;
+      h.baseY = h.y;
     }
     other = null;
     callouts.push({text:"觉醒",x:ball.x,y:ball.y-ball.r*2.6,life:1.4,max:1.4,kind:"tag"});
@@ -5779,7 +5794,8 @@ export function createGame(
     if (h.hacker && (hackerAwaken || hackerOutgoing.includes(h))) {
       h.moving = false;
       if (h.hacker.state === "retiring") nudgeNet(h, stepHoopRetirement(h, world.w, dt), 0);
-      return;
+      if (h.hacker.state !== "normal") return;
+      // Unpinned targets enter through the same motion path as ordinary hoops.
     }
     // During blue-pill exit, let the old court clear the new hoop's path.
     if (h === hoop && hackerOutgoing.length && (h.x < 0 || h.x > world.w)) {
@@ -6439,7 +6455,7 @@ export function createGame(
   }) {
     const ghost = opts?.ghost === true;
     const hackerMake = hackerAwaken && !ghost;
-    const hackerCount = hackerMake ? hackerHoops.length : 0;
+    const hackerCount = hackerMake ? hackerComboCount() : 0;
     const hackerScoreStreak = comboCounting ? streak : 0;
     // Clones cannot replace the real ball's final shot or extend its window.
     if (ghost && (buzzer || timeUp)) return;
@@ -7326,7 +7342,7 @@ export function createGame(
             birdBaseBonus,
             extraCourtHoops(),
           );
-          if (phase === "playing" && isHacker()) drawHackerPills(ctx,world,hackerPills,hackerAwaken,paused || buzzer || timeUp,hackerExitPending,hackerHoops.length,hackerBlockFailure(hackerPinnedCount(hackerHoops)));
+          if (phase === "playing" && isHacker()) drawHackerPills(ctx,world,hackerPills,hackerAwaken,paused || buzzer || timeUp,hackerExitPending,hackerComboCount(),hackerBlockFailure(hackerPinnedCount(hackerHoops)));
           if (phase === "playing" && isHacker() && !hackerAwaken) drawHackerGlitch(ctx,hackerPills,ball,
             (x,y,r)=>paintBallSprite(ctx,x,y,r,ball.spin,ballId,time));
           if (phase === "playing" && isRocket()) drawRocket(ctx,world,rocket,ball,time);
@@ -7578,7 +7594,8 @@ export function createGame(
         birds: trainBackdropOn() ? structuredClone(birds) : null,
         birdBaseBonus,
         frostBonus, glassBase, glassProtectionLeft, quantumTunnelLeft, hackerAwaken, hackerExitPending, hackerShotSide,
-        hackerHoops: hackerHoops.map(h => ({x:h.x,y:h.y,side:h.side,inner:h.inner,hold:h.hold,...h.hacker})),
+        hackerHoops: hackerHoops.map(h => ({x:h.x,y:h.y,targetX:h.targetX,side:h.side,inner:h.inner,hold:h.hold,...h.hacker})),
+        hackerComboCount: hackerComboCount(),
         hackerOutgoing: hackerOutgoing.map(h => ({x:h.x,y:h.y,side:h.side,hold:h.hold})),
         hackerBlockFailure: hackerBlockFailure(hackerPinnedCount(hackerHoops)), streak,
         hackerPills: { ...structuredClone(hackerPills), position: hackerPills.pill ? pillPoint(hackerPills.pill,world) : null, button: hackerPillButton(world) },

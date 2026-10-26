@@ -25,6 +25,31 @@ const hooks = `
  auditCourt(dt){stepHackerCourt(dt);for(const h of [...hackerHoops,...hackerOutgoing])stepHoop(h,dt);stepHackerCourt(0);hackerOutgoing=hackerOutgoing.filter(h=>!hoopRetirementDone(h,world.w));},
  auditTap(){paused=false;tapLock=0;ball.x=world.w/2;ball.y=world.floorY-100;tapJump();paused=true;return Math.sign(ball.vx);},
  auditPrimary(index){hoop=hackerHoops[index];},
+ auditSpawnEntry(side,steps=60){
+   hackerShotSide=side<0?1:-1;
+   hoop=makeHoop(world,hackerShotSide,false,1,activeHoopYLimits());
+   hoop.hacker={state:'normal',pinned:false,age:0,scored:false};hackerHoops=[hoop];
+   const old=Math.random;Math.random=()=>.5;
+   try{registerScore({at:hoop});}finally{Math.random=old;}
+   const incoming=hoop,ordinary=structuredClone(hoop);delete ordinary.hacker;
+   const start={x:incoming.x,targetX:incoming.targetX,side:incoming.side,count:hackerHoops.length,combo:hackerComboCount(),netX:incoming.net[0].x};
+   stepHackerCourt(0);
+   const retained=hackerHoops.includes(incoming);
+   const frames=[];
+   for(let i=0;i<steps;i++){
+     stepHoop(incoming,1/60);stepHoop(ordinary,1/60);
+     if([0,3,14,59].includes(i))frames.push({x:incoming.x,ordinaryX:ordinary.x,combo:hackerComboCount(),netX:incoming.net[0].x});
+   }
+   return {start,retained,frames,width:world.w};
+ },
+ auditEntryAwaken(side){
+   beginPlay();madeCount=1;
+   hoop=makeHoop(world,side,false,1,activeHoopYLimits());hoop.x=side<0?-90:world.w+90;hoop.net=buildNet(hoop);
+   const start=hoop.x,target=hoop.targetX;
+   hackerPills.ready=true;enterHackerAwaken();const afterSwitch=hoop.x;
+   for(let i=0;i<60;i++){stepHackerCourt(1/60);stepHoop(hoop,1/60);}
+   paused=true;return {start,afterSwitch,target,after:hoop.x,count:hackerHoops.length};
+ },
  auditWrap(){ball.x=world.w+world.ballR*10;ball.y=world.h/2;ball.vx=200;wrapX();return {side:Math.sign(ball.vx),approach:onApproachSide()};},
  auditPhysics(seconds){paused=false;for(let i=0;i<seconds*120;i++)physics(1/120);paused=true;},
  auditRetirementRestore(){
@@ -88,7 +113,8 @@ try {
     const outgoingRestore=q.auditRetirementRestore();q.auditCourt(.55);const outgoingSlide=q.snapshot();q.auditPhysics(2);const outgoingGone=q.snapshot();
     q.auditSetup(4);q.auditRetire(0);const animStart=q.snapshot();q.auditCourt(.3);const animHold=q.snapshot();q.auditCourt(.45);const animSlide=q.snapshot();q.auditCourt(1);const animGone=q.snapshot();
     q.auditSetup(3);q.auditRetire(0);q.auditCourt(.4);const exitHoldBefore=q.snapshot().hackerHoops[0].hold;q.auditExit();q.auditMake(0);const exitHoldAfter=q.snapshot().hold;
-    return {samples,half,halfMake,gone,sweep,exiting,exit,minute,restored,expired,physical,projectiles,taps,firstDirection,beforeReplacement,afterReplacement,wrap,awakeRestore,exitDirection,outgoingStart,outgoingHold,outgoingRestore,outgoingSlide,outgoingGone,animStart,animHold,animSlide,animGone,exitHoldBefore,exitHoldAfter};
+    const entries=[],switchEntries=[];for(const side of [-1,1]){q.auditSetup(1);entries.push(q.auditSpawnEntry(side));switchEntries.push(q.auditEntryAwaken(side));}
+    return {samples,half,halfMake,gone,sweep,exiting,exit,minute,restored,expired,physical,projectiles,taps,firstDirection,beforeReplacement,afterReplacement,wrap,awakeRestore,exitDirection,outgoingStart,outgoingHold,outgoingRestore,outgoingSlide,outgoingGone,animStart,animHold,animSlide,animGone,exitHoldBefore,exitHoldAfter,entries,switchEntries};
   });
   for(let i=0;i<4;i++){const r=results.samples[i];assert.equal(r.after.streak-r.before.streak,i+1);assert.equal(r.after.score-r.before.score,results.samples[0].after.score);assert.equal(r.after.timer,7);assert.equal(r.after.madeCount-r.before.madeCount,1);assert.ok(r.after.count<=4);}
   assert.equal(results.samples[3].after.count,4);
@@ -112,6 +138,15 @@ try {
   assert.ok(results.animSlide.hackerHoops[0].x>results.animHold.hackerHoops[0].x);assert.equal(results.animSlide.hackerHoops.length,4);
   assert.ok(results.animGone.hackerHoops.every(h=>h.state!=='retiring'));
   assert.equal(results.exitHoldBefore,results.exitHoldAfter);
+  for(const e of results.entries){
+    assert.equal(e.start.count,2);assert.equal(e.start.combo,1);assert.equal(e.retained,true);
+    assert.equal(e.start.x,e.start.side<0?-90:e.width+90);
+    const direction=-e.start.side;
+    assert.ok((e.frames[0].x-e.start.x)*direction>0);assert.ok((e.start.targetX-e.frames[0].x)*direction>0);
+    for(const f of e.frames){assert.equal(f.x,f.ordinaryX);assert.ok(Math.abs((f.netX-e.start.netX)-(f.x-e.start.x))<1e-6);}
+    assert.ok(Math.abs(e.frames.at(-1).x-e.start.targetX)<1);assert.equal(e.frames.at(-1).combo,2);
+  }
+  for(const e of results.switchEntries){assert.equal(e.start,e.afterSwitch);assert.ok(Math.abs(e.after-e.target)<1);assert.equal(e.count,1);}
   await p.evaluate(()=>{window.__tq.auditSetup(4);window.__tq.auditUnpause();});
   await p.waitForTimeout(150);
   await p.evaluate(()=>window.__tq.auditFreeze());
@@ -120,6 +155,12 @@ try {
   await p.screenshot({path:'screenshots/hacker-awakening/hacker-exit-hold-'+name+'.png'});
   await p.evaluate(()=>window.__tq.auditCourt(.77));
   await p.screenshot({path:'screenshots/hacker-awakening/hacker-exit-slide-'+name+'.png'});
+  await p.evaluate(()=>{window.__tq.auditSetup(1);window.__tq.auditSpawnEntry(-1,0);window.__tq.auditShow();});
+  await p.screenshot({path:'screenshots/hacker-awakening/hacker-entry-start-'+name+'.png'});
+  await p.evaluate(()=>window.__tq.auditCourt(4/60));
+  await p.screenshot({path:'screenshots/hacker-awakening/hacker-entry-slide-'+name+'.png'});
+  await p.evaluate(()=>window.__tq.auditCourt(.35));
+  await p.screenshot({path:'screenshots/hacker-awakening/hacker-entry-end-'+name+'.png'});
   await p.evaluate(()=>window.__tq.auditSetup(2));
   const click=await p.evaluate(()=>{const s=window.__tq.snapshot(),w=s.world,p=s.hackerPills.button;window.__tq.auditUnpause();return {x:w.ox+p.x,y:w.oy+p.y};});
   // Canvas coordinates are projected through its bounding rect below.
