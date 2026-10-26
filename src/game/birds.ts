@@ -9,6 +9,7 @@ type Edge = "left" | "right" | "top" | "bottom";
 type View = Pick<World, "w" | "h" | "floorY" | "ballR">;
 type Body = { x: number; y: number; vx: number; vy: number; r: number };
 export type Bird = Body & {
+  hackerAttempt?: { epoch: number; blocked: boolean };
   id: number; kind: BirdKind; mode: BirdMode;
   px: number; py: number; age: number; modeTime: number; flap: number;
   dir: number; baseY: number; attackIn: number; hiddenByCloud: boolean;
@@ -37,6 +38,7 @@ export function createBirds(): BirdState {
 export type BirdSkills = {
   unobservable?: boolean;
   lethal?: boolean;
+  hackerBlock?: (bird: Bird) => boolean;
   burn?: boolean;
   frostChance?: number;
   hole?: { x: number; y: number; r: number };
@@ -424,7 +426,7 @@ export function collideBirds(s: BirdState, ball: Body, prevX: number, prevY: num
     return "shattered" as const;
   }
   const catching = b.kind === "eagle" && !stomp && !(b.mode === "climb" && !nearest.claw);
-  if (skills.lethal || skills.burn || skills.block?.(catching, nx, ny)) {
+  if (skills.lethal || skills.burn || skills.hackerBlock?.(b) || skills.block?.(catching, nx, ny)) {
     b.burnt = Boolean(skills.burn); stunBird(s, b); b.rewarded = true;
     return "knockdown" as const;
   }

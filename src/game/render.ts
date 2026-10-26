@@ -317,6 +317,7 @@ export function drawScene(
   timeControl: { energy: number; active: boolean; disabled: boolean } | null = null,
   birds: BirdState | null = null,
   birdBaseBonus = 0,
+  extraHoops: Hoop[] = [],
 ) {
 	const birdHeld = birds !== null && birdOwnsBall(birds);
 	ctx.save();
@@ -366,16 +367,15 @@ export function drawScene(
 	if (gfx.ballShadow && !birdHeld) drawGroundShadow(ctx, ball, world);
 	if (chain) drawChain(ctx, chain, true);
 	if (showHud && !greenWash) drawCountdown(ctx, world, timer01, buzzer, barLabel);
-	const distH = Math.hypot(ball.x - hoop.x, ball.y - hoop.y);
-	const distO = other ? Math.hypot(ball.x - other.x, ball.y - other.y) : Infinity;
-	const ballWithOther = Boolean(other && distO < distH);
+	const stands = [hoop, ...(other ? [other] : []), ...extraHoops];
+	const nearest = stands.reduce((best,h) => Math.hypot(ball.x-h.x,ball.y-h.y) < Math.hypot(ball.x-best.x,ball.y-best.y) ? h : best, hoop);
 	if (greenWash) {
 		applyGreenNightWash(ctx, world);
 		drawSparseCodeRain(ctx, world, time);
 		neonGreenCourt = true;
 	}
-	if (other) drawHoopStack(ctx, other, world, ballWithOther && !birdHeld ? ball : null, combo, time, gfx.particles ? trail : [], gfx, ballId);
-	drawHoopStack(ctx, hoop, world, ballWithOther || birdHeld ? null : ball, combo, time, gfx.particles ? trail : [], gfx, ballId);
+	for (const h of stands) if (h !== nearest) drawHoopStack(ctx,h,world,null,combo,time,gfx.particles ? trail : [],gfx,ballId);
+	drawHoopStack(ctx,nearest,world,birdHeld ? null : ball,combo,time,gfx.particles ? trail : [],gfx,ballId);
 	neonGreenCourt = false;
 	if (backdrop === "train") drawTrainSmoke(ctx, world);
 	if (hacker) drawHackerPad(ctx, hackerPadLayout(world), hacker.dir);

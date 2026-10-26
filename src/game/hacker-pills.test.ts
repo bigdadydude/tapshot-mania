@@ -33,10 +33,10 @@ test('fast first crossing never collects; second crossing does, wraps do not rev
  const fresh=setup();stepHackerPill(fresh.s,world,{x:-20,y:p.y,r:20},{x:470,y:p.y},.01);
  assert.equal(fresh.s.pill?.revealed,false);
 });
-test('blue retains single-contact pickup and nearby reveal',()=>{
+test('awakening cannot collect or reveal world pills; exit belongs to the button',()=>{
  const {s,p}=setup(),near={x:p.x-70,y:p.y,r:20};
- stepHackerPill(s,world,near,near,.01,true);assert.equal(s.pill?.revealed,true);
- assert.equal(stepHackerPill(s,world,{...p,r:20},near,.01,true),true);
+ stepHackerPill(s,world,near,near,.01,true);assert.equal(s.pill?.revealed,false);
+ assert.equal(stepHackerPill(s,world,{...p,r:20},near,.01,true),false);
 });
 test('glitch gets faster closer to a hidden red pill, then stops on reveal',()=>{
  const {s,p}=setup(),near={x:p.x-70,y:p.y,r:20},far={x:p.x-190,y:p.y,r:20};

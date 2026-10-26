@@ -102,6 +102,7 @@ export type Ball = {
 };
 
 export type Hoop = {
+  hacker?: import("./hacker").HackerHoop;
   sootLeft?: number;
   side: -1 | 1;
   x: number;

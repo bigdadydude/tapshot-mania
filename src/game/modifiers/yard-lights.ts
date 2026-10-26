@@ -60,6 +60,7 @@ type Trace = {
 };
 
 type Bolt = {
+  hackerAttempt?: { epoch: number; blocked: boolean };
   x: number;
   y: number;
   vx: number;
@@ -1177,7 +1178,7 @@ export function createYardLights(): StageModifier {
           continue;
         }
 
-        if (awaken && Math.hypot(b.x - ball.x, b.y - ball.y) <= nearR + b.r) {
+        if (awaken && Math.hypot(b.x - ball.x, b.y - ball.y) <= nearR + b.r && (host.tryHackerBlock?.(b) ?? true)) {
           b.faceAng = Math.atan2(b.vy, b.vx);
           b.vx = 0;
           b.vy = 0;

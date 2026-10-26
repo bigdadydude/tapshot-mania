@@ -38,14 +38,12 @@ export function stepHackerPill(s:HackerPills,w:World,b:Body,previous:{x:number;y
     s.glitchPhase+=rate*dt;
     if(s.glitchPhase>=1){s.glitchPhase%=1;s.glitchLeft=0.055;s.glitchIndex++;}
   }
-  const p=s.pill;if(!p)return false;
+  const p=s.pill;if(!p || awake)return false;
   p.grace=Math.max(0,p.grace-dt);
   const point=pillPoint(p,w),distance=segmentDistance(b,previous,point,w);
   const pickup=b.r+11,outer=Math.max(pickup+26,b.r*2.5);
   const outside=Math.hypot(b.x-point.x,b.y-point.y)>outer+8;
-  if(awake) {
-    if(distance<Math.max(100,b.r*5))p.revealed=true;
-  } else {
+  {
     if(p.grace>0)return false;
     if(!p.revealed) {
       if(distance<=outer){p.revealed=true;p.redPass=outside?'armed':'leaving';s.glitchLeft=0;s.glitchPhase=0;}
@@ -79,15 +77,21 @@ function capsule(ctx:CanvasRenderingContext2D,x:number,y:number,blue:boolean,sca
   ctx.beginPath();ctx.moveTo(0,-6);ctx.lineTo(0,6);ctx.stroke();
   ctx.fillStyle='#ffffffaa';ctx.beginPath();ctx.roundRect(-7,-4,12,2,1);ctx.fill();ctx.restore();
 }
-export function drawHackerPills(ctx:CanvasRenderingContext2D,w:World,s:HackerPills,awake:boolean,disabled:boolean) {
+export function drawHackerPills(ctx:CanvasRenderingContext2D,w:World,s:HackerPills,awake:boolean,disabled:boolean,exitPending=false,hoopCount=0,blockFailure=0) {
   ctx.save();
-  if(s.pill?.revealed){const p=pillPoint(s.pill,w);capsule(ctx,p.x,p.y,awake);}
-  if(s.ready){
+  if(!awake && s.pill?.revealed){const p=pillPoint(s.pill,w);capsule(ctx,p.x,p.y,awake);}
+  if(s.ready || awake){
     const p=hackerPillButton(w);ctx.globalAlpha=disabled?0.4:1;
-    ctx.fillStyle='#171e26e8';ctx.strokeStyle='#ff6275';ctx.lineWidth=2;
-    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();ctx.stroke();capsule(ctx,p.x,p.y,false,1.2);
+    ctx.fillStyle='#171e26e8';ctx.strokeStyle=awake?'#58c6ff':'#ff6275';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();ctx.stroke();capsule(ctx,p.x,p.y,awake,1.2);
     ctx.font='700 12px sans-serif';ctx.textAlign='center';ctx.fillStyle='#fff0e4';
-    ctx.strokeStyle='#171e26';ctx.lineWidth=3;ctx.strokeText('点击觉醒',p.x,p.y+43);ctx.fillText('点击觉醒',p.x,p.y+43);
+    ctx.strokeStyle='#171e26';ctx.lineWidth=3;const label=awake ? (exitPending?'进球退出':'蓝药丸') : '点击觉醒';
+    ctx.strokeText(label,p.x,p.y+43);ctx.fillText(label,p.x,p.y+43);
+    if(awake){
+      ctx.font='700 13px sans-serif';
+      const info=`连击 +${hoopCount} · 拦截失败 ${Math.round(blockFailure*100)}%`;
+      ctx.strokeText(info,p.x,p.y-40);ctx.fillText(info,p.x,p.y-40);
+    }
   }
   ctx.restore();
 }
