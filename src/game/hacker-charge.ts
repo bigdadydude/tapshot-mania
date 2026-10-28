@@ -5,6 +5,8 @@ export const HACKER_CHARGE_COLORS = ["#5CE1FF", "#00FF41", "#C77DFF"] as const;
 export const HACKER_CHARGE = {
   layers: 3,
   makesPerLayer: 5,
+  idleGraceSeconds: 3,
+  idleLayersPerSecond: 0.2,
   /**
    * Seconds to empty one full layer while held.
    * Not a locked spec value — only the 5-make layer size is locked.
@@ -33,6 +35,7 @@ export type HackerCharge = {
   holding: boolean;
   holdStart: number;
   drained: number;
+  idleSeconds: number;
 };
 
 export type HackerFlight =
@@ -47,24 +50,37 @@ export function chargeCap() {
 }
 
 export function createHackerCharge(): HackerCharge {
-  return { makes: 0, holding: false, holdStart: 0, drained: 0 };
+  return { makes: 0, holding: false, holdStart: 0, drained: 0, idleSeconds: 0 };
 }
 
 /** Snapshot form: never resume a finger-less hold after rewind. */
 export function settledHackerCharge(s: HackerCharge): HackerCharge {
-  if (!s.holding) return { makes: s.makes, holding: false, holdStart: 0, drained: 0 };
-  return { makes: s.holdStart, holding: false, holdStart: 0, drained: 0 };
+  return { makes: s.makes, holding: false, holdStart: 0, drained: 0, idleSeconds: s.idleSeconds };
 }
 
-export function addHackerMake(s: HackerCharge) {
-  if (s.holding || s.makes >= chargeCap()) return false;
-  s.makes += 1;
+export function addHackerMake(s: HackerCharge, earnsCharge = true) {
+  s.idleSeconds = 0;
+  if (!earnsCharge || s.holding || s.makes >= chargeCap()) return false;
+  s.makes = Math.min(chargeCap(), s.makes + 1);
   return true;
+}
+
+/** Game time only: a make renews the grace period, inputs never do. */
+export function stepChargeDecay(s: HackerCharge, dt: number) {
+  if (dt <= 0) return;
+  const grace = HACKER_CHARGE.idleGraceSeconds;
+  const before = Math.max(0, s.idleSeconds - grace);
+  s.idleSeconds += dt;
+  const active = Math.max(0, s.idleSeconds - grace) - before;
+  const loss = active * HACKER_CHARGE.makesPerLayer * HACKER_CHARGE.idleLayersPerSecond;
+  s.makes = Math.max(0, s.makes - loss);
+  // Passive loss is separate from the refundable manual spend.
+  if (s.holding) s.drained = Math.min(s.drained, s.makes);
 }
 
 export function chargeDisplayMakes(s: HackerCharge) {
   if (!s.holding) return s.makes;
-  return Math.max(0, s.holdStart - s.drained);
+  return Math.max(0, s.makes - s.drained);
 }
 
 /** Fill ratio 0..1 for layer 1, layer 2, layer 3. */
@@ -87,7 +103,7 @@ export function beginChargeHold(s: HackerCharge) {
 export function stepChargeHold(s: HackerCharge, dt: number) {
   if (!s.holding || dt <= 0) return;
   const rate = HACKER_CHARGE.makesPerLayer / HACKER_CHARGE.layerDrainSeconds;
-  s.drained = Math.min(s.holdStart, s.drained + rate * dt);
+  s.drained = Math.min(s.makes, s.drained + rate * dt);
 }
 
 /**
@@ -103,13 +119,13 @@ export function releaseChargeHold(s: HackerCharge): ChargeEffect {
   const fullLayers = Math.floor((start + SPEND_EPS) / per);
   const partial = start - fullLayers * per;
   const intoFull = Math.max(0, drained - partial);
-  const wholeSpent = Math.min(fullLayers, Math.floor((intoFull + SPEND_EPS) / per));
+  const wholeSpent = Math.min(fullLayers, Math.floor((intoFull + SPEND_EPS) / per), Math.floor((s.makes + SPEND_EPS) / per));
   let effect: ChargeEffect = "none";
   if (wholeSpent >= 3 && fullLayers >= 3) effect = "rain";
   else if (wholeSpent >= 2) effect = "lock";
   else if (wholeSpent >= 1) effect = "arrow";
   const spentLayers = effect === "rain" ? 3 : effect === "lock" ? 2 : effect === "arrow" ? 1 : 0;
-  s.makes = Math.max(0, start - spentLayers * per);
+  s.makes = Math.max(0, s.makes - spentLayers * per);
   s.holding = false;
   s.holdStart = 0;
   s.drained = 0;
@@ -185,15 +201,6 @@ export function drawHackerCharge(
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.25;
     ctx.strokeRect(x + 0.5, y0 + 0.5, Math.max(0, segW - 1), Math.max(0, segH - 1));
-    ctx.strokeStyle = "rgba(0,0,0,0.38)";
-    ctx.lineWidth = 1;
-    for (let t = 1; t < HACKER_CHARGE.makesPerLayer; t++) {
-      const tx = x + (segW * t) / HACKER_CHARGE.makesPerLayer;
-      ctx.beginPath();
-      ctx.moveTo(tx, y0 + 1);
-      ctx.lineTo(tx, y0 + segH - 1);
-      ctx.stroke();
-    }
   }
   ctx.font = "700 11px 'Noto Sans SC', sans-serif";
   ctx.textAlign = "left";

@@ -37,7 +37,7 @@ import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { type HackerDir } from "./hacker-pad";
-import { HACKER_CHARGE, HACKER_RIPPLE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawHackerLensWarps, drawLandingArrow, pointerOnChargeMeter, releaseChargeHold, settledHackerCharge, stepAimArrow, stepChargeHold, stepHackerRipples, type HackerCharge, type HackerFlight, type HackerRipple } from "./hacker-charge";
+import { HACKER_CHARGE, HACKER_RIPPLE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawHackerLensWarps, drawLandingArrow, pointerOnChargeMeter, releaseChargeHold, settledHackerCharge, stepAimArrow, stepChargeDecay, stepChargeHold, stepHackerRipples, type HackerCharge, type HackerFlight, type HackerRipple } from "./hacker-charge";
 import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
 import { parseBalanceImport, mergeBalanceStores, automaticStrength, loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
@@ -5300,6 +5300,7 @@ export function createGame(
       stepRewind(dt);
       return;
     }
+    if (phase === "playing" && !paused && isHacker()) stepChargeDecay(hackerCharge, dt);
     if (phase === "playing") glassProtectionLeft = Math.max(0, glassProtectionLeft - dt);
     if (!birdOwnsBall(birds)) stepVector(dt);
     else if (isVector() && vector.pointer !== null) vector.held += dt;
@@ -6819,7 +6820,7 @@ export function createGame(
     }
 
     madeCount += 1;
-    if (!ghost && isHacker() && !hackerAwaken) addHackerMake(hackerCharge);
+    if (!ghost && isHacker()) addHackerMake(hackerCharge, !hackerAwaken);
     if (trainBackdropOn()) startTrainScroll();
     if (!ghost) {
       // Dynamic hoop: +0.4% chance per make, cap 50%; scoring a mover raises speed hi.

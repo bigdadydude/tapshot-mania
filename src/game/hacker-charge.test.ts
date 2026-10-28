@@ -16,7 +16,59 @@ import {
   stepHackerRipples,
   releaseChargeHold,
   stepChargeHold,
+  stepChargeDecay,
+  settledHackerCharge,
 } from "./hacker-charge.ts";
+
+test("decay starts after three seconds and drains one point per second", () => {
+  const s = filled(15);
+  stepChargeDecay(s, 3);
+  assert.equal(s.makes, 15);
+  stepChargeDecay(s, 1);
+  assert.equal(s.makes, 14);
+  stepChargeDecay(s, 4);
+  assert.equal(s.makes, 10);
+  stepChargeDecay(s, 100);
+  assert.equal(s.makes, 0);
+});
+
+test("crossing the grace boundary only drains the excess time, independent of step size", () => {
+  const a = filled(10), b = filled(10);
+  stepChargeDecay(a, 2.9); stepChargeDecay(a, 0.3);
+  for (let i = 0; i < 192; i++) stepChargeDecay(b, 1 / 60);
+  assert.ok(Math.abs(a.makes - 9.8) < 1e-9);
+  assert.ok(Math.abs(a.makes - b.makes) < 1e-9);
+  stepChargeDecay(a, 0); stepChargeDecay(a, -1);
+  assert.ok(Math.abs(a.makes - 9.8) < 1e-9);
+});
+
+test("makes renew grace even at cap, and fractional charge cannot overflow", () => {
+  const s = filled(15);
+  stepChargeDecay(s, 2.9); addHackerMake(s); stepChargeDecay(s, 3);
+  assert.equal(s.makes, 15);
+  stepChargeDecay(s, 0.4); addHackerMake(s);
+  assert.equal(s.makes, 15);
+  stepChargeDecay(s, 4); addHackerMake(s, false);
+  assert.equal(s.makes, 14); // Awakening make resets grace without charging.
+  stepChargeDecay(s, 3);
+  assert.equal(s.makes, 14);
+});
+
+test("holding and refunding cannot restore passive loss or spend it as a layer", () => {
+  const s = filled(10);
+  stepChargeDecay(s, 3); beginChargeHold(s);
+  stepChargeHold(s, 0.2); stepChargeDecay(s, 1);
+  assert.equal(settledHackerCharge(s).makes, 9);
+  assert.equal(settledHackerCharge(s).idleSeconds, 4);
+  assert.equal(releaseChargeHold(s), "none");
+  assert.equal(s.makes, 9);
+  stepChargeDecay(s, 1);
+  assert.equal(s.makes, 8);
+  const full = filled(15);
+  stepChargeDecay(full, 3); drain(full, 15); stepChargeDecay(full, 1);
+  assert.equal(releaseChargeHold(full), "lock");
+  assert.equal(full.makes, 4);
+});
 
 function filled(makes: number) {
   const s = createHackerCharge();
