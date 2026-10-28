@@ -9,7 +9,8 @@ import {
   chargeDisplayMakes,
   chargeLayerRatios,
   createHackerCharge,
-  hitChargeMeter,
+  chargeHoldArmed,
+  hitHackerBall,
   releaseChargeHold,
   stepChargeHold,
 } from "./hacker-charge.ts";
@@ -114,8 +115,11 @@ test("holding blocks new makes and an empty meter does not start a hold", () => 
   assert.equal(beginChargeHold(empty), false);
 });
 
-test("the meter hit target sits in the top-left", () => {
-  const world = { w: 390 };
-  assert.equal(hitChargeMeter(world, 20, 24), true);
-  assert.equal(hitChargeMeter(world, 300, 400), false);
+test("only the ball is a hold target, and a short press is not armed yet", () => {
+  const ball = { x: 200, y: 400, r: 22 };
+  assert.equal(hitHackerBall(ball, 200, 400), true);
+  assert.equal(hitHackerBall(ball, 200, 400 + ball.r + HACKER_CHARGE.ballHoldSlop), true);
+  assert.equal(hitHackerBall(ball, 20, 24), false);
+  assert.equal(chargeHoldArmed(HACKER_CHARGE.holdArmSeconds - 0.02), false);
+  assert.equal(chargeHoldArmed(HACKER_CHARGE.holdArmSeconds), true);
 });

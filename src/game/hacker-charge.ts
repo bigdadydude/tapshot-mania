@@ -15,6 +15,14 @@ export const HACKER_CHARGE = {
   flyLaunch: 2.2,
   /** Initial drop speed in screen-heights per second once a landing is chosen. */
   flyDrop: 0.85,
+  /**
+   * A press on the ball shorter than this stays a tap-jump.
+   * At/after this, the ball freezes and the meter drains.
+   * Not a locked spec value — only there so 点跳 and hold-to-spend can share the ball.
+   */
+  holdArmSeconds: 0.18,
+  /** Extra pixels around the ball so a finger still counts as holding it. */
+  ballHoldSlop: 18,
 } as const;
 
 export type ChargeEffect = "none" | "arrow" | "lock" | "rain";
@@ -113,18 +121,16 @@ export function chargeMeterLayout(world: { w: number }) {
   const h = 18;
   const x = 10;
   const y = 16;
-  return {
-    x,
-    y,
-    w,
-    h,
-    hit: { x: x - 8, y: y - 8, w: w + 16, h: h + 28 },
-  };
+  return { x, y, w, h };
 }
 
-export function hitChargeMeter(world: { w: number }, x: number, y: number) {
-  const b = chargeMeterLayout(world).hit;
-  return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+/** True when the pointer is on the ball (plus a small finger slop). The meter is not a target. */
+export function hitHackerBall(ball: { x: number; y: number; r: number }, x: number, y: number) {
+  return Math.hypot(x - ball.x, y - ball.y) <= ball.r + HACKER_CHARGE.ballHoldSlop;
+}
+
+export function chargeHoldArmed(elapsed: number) {
+  return elapsed >= HACKER_CHARGE.holdArmSeconds;
 }
 
 export function drawHackerCharge(
@@ -180,7 +186,7 @@ export function drawHackerCharge(
   ctx.strokeStyle = "rgba(6, 12, 16, 0.9)";
   ctx.fillStyle = opts.awake ? HACKER_CHARGE_COLORS[1] : "#f4fbff";
   // Rain exit (phone ring / long-press) is not locked. This line is status, not a button.
-  const label = opts.awake ? "矩阵 · 撤离未开放" : opts.aiming ? "点上沿定落点" : s.holding ? "松手结算" : "按住耗气";
+  const label = opts.awake ? "矩阵 · 撤离未开放" : opts.aiming ? "点上沿定落点" : s.holding ? "松手结算" : "按住球";
   const labelY = box.y + box.h + 4;
   ctx.strokeText(label, box.x, labelY);
   ctx.fillText(label, box.x, labelY);

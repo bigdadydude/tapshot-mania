@@ -184,7 +184,7 @@ pMul(k) =
 | `quantum` | 量子球 | `/game/balls/quantum0.png` | 每进球按连击%隧穿（1连1%…≥100必中）；成功 6s 穿篮架 | 默认 phys | `quantumTunnelLeft`；跳过板/撑碰撞 | ✅ |
 | `time` | 时间球 | `/game/balls/time.png` | 进球按剩余钟比例充能；长按快退最多 5s；绝杀禁用 | 默认 phys | 能量上限 100=满 5s；`TIME_*` | ✅ |
 | `vector` | 矢量球 | `/game/balls/vector.png` | 首球后储能 cap 1500；短按耗 250 定向脉冲；长按 1s 全爆发（≥40），释能×5 为消耗换算；大招后 10s 不能储；>1000 漏能 | `jumpUp/Fwd=1` | PR#21：短脉冲 `pulse=0.16`、`pulseSpeed=0.7`、抵达后停 `pulseHold=0.08` | ✅ |
-| `rain` | 骇客球 | （程序绿绘） | 晴天每 5 进球满一层气，最多三层；按住气条耗整层：1 层飞天点落点、2 层锁筐，都带深水；3 层进代码雨。雨中撤离未开放 | `jumpUp/Fwd=1, grav=0.98, ball=1.04, air=0.96` | `codeRain`；觉醒改 refill 逻辑 | ✅ |
+| `rain` | 骇客球 | （程序绿绘） | 晴天每 5 进球满一层气，最多三层；点按起跳，按住球耗整层：1 层飞天点落点、2 层锁筐，都带深水；3 层进代码雨。气条只显示。雨中撤离未开放 | `jumpUp/Fwd=1, grav=0.98, ball=1.04, air=0.96` | `codeRain`；觉醒改 refill 逻辑 | ✅ |
 | `lava` | 燃烧球 | `/game/balls/lava.webp` | 「什么味道？…」→ 连击升温给额外分并可点燃对面筐 | 默认 phys；`heat:true` | `canHeat`；热度阶段 +1/+2/+3 | ✅ |
 | `frost` | 冰冻球 | `/game/balls/frost.png` | 连击抬冻筐概率；首冻 4s 续冻 3s；灌冻筐叠基础分 | 默认 phys | `FROST_*`；冻中进球 `frostGain=2` | ✅ |
 | `champ` | 冠军球 | （程序绘） | 存剩余时间 20%；耗尽开双倍冠军时刻；**不可 1分钟** | `jumpUp/Fwd=0.95, grav=0.95, ball=0.9, hoop=0.9, rim/boardFric=1.1` | `CHAMP_BANK_RATE=0.2`；冠军中不 refill 钟 | ✅ |

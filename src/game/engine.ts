@@ -37,7 +37,7 @@ import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { type HackerDir } from "./hacker-pad";
-import { HACKER_CHARGE, addHackerMake, beginChargeHold, chargeDisplayMakes, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawLandingArrow, hitChargeMeter, releaseChargeHold, settledHackerCharge, stepChargeHold, type HackerCharge, type HackerFlight } from "./hacker-charge";
+import { HACKER_CHARGE, addHackerMake, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawLandingArrow, hitHackerBall, releaseChargeHold, settledHackerCharge, stepChargeHold, type HackerCharge, type HackerFlight } from "./hacker-charge";
 import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
 import { parseBalanceImport, mergeBalanceStores, automaticStrength, loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
@@ -983,6 +983,8 @@ export function createGame(
   let hackerFlight: HackerFlight | null = null;
   let hackerDeepArmed: "arrow" | "lock" | null = null;
   let hackerSpendPointer: number | null = null;
+  /** Press on the ball that has not yet crossed the hold threshold. */
+  let hackerBallPress: { id: number; held: number } | null = null;
   let hackerAimPointer: number | null = null;
   let hackerPin: { x: number; y: number } | null = null;
   let hackerAwaken = false;
@@ -1187,6 +1189,7 @@ export function createGame(
     hackerFlight = snapshot.hackerFlight ? { ...snapshot.hackerFlight } : null;
     hackerDeepArmed = snapshot.hackerDeepArmed;
     hackerSpendPointer = null;
+    hackerBallPress = null;
     hackerAimPointer = null;
     hackerPin = hackerFlight?.kind === "aim" ? { x: hackerFlight.landX, y: -ball.r - 28 } : null;
     score = snapshot.score;
@@ -3771,6 +3774,7 @@ export function createGame(
     hackerFlight = null;
     hackerDeepArmed = null;
     hackerSpendPointer = null;
+    hackerBallPress = null;
     hackerAimPointer = null;
     hackerPin = null;
   }
@@ -3889,6 +3893,12 @@ export function createGame(
     hackerDeepArmed = "arrow";
     hackerPin = null;
     hackerAimPointer = null;
+  }
+
+  function canArmHackerSpend() {
+    return isHacker() && !hackerAwaken && !hackerFlight && !hackerCharge.holding && hackerCharge.makes > 0
+      && phase === "playing" && !paused && !buzzer && !timeUp
+      && !birdOwnsBall(birds) && !stageMod.holdsBall?.();
   }
 
   function beginHackerSpend(pointerId: number) {
@@ -4278,12 +4288,11 @@ export function createGame(
       try { canvas.setPointerCapture(e.pointerId); } catch { /* detached canvas */ }
       return;
     }
-    if (phase === "playing" && isHacker() && !hackerAwaken && !hackerFlight) {
+    if (canArmHackerSpend()) {
       const point = pointerWorld(e);
-      if (hitChargeMeter(world, point.x, point.y)) {
-        if (beginHackerSpend(e.pointerId)) {
-          try { canvas.setPointerCapture(e.pointerId); } catch { /* detached canvas */ }
-        }
+      if (hitHackerBall(ball, point.x, point.y)) {
+        hackerBallPress = { id: e.pointerId, held: 0 };
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* detached canvas */ }
         return;
       }
     }
@@ -4444,7 +4453,18 @@ export function createGame(
 
   function onUp(e: PointerEvent) {
     if (hackerSpendPointer === e.pointerId) {
+      hackerBallPress = null;
       endHackerSpend();
+      return;
+    }
+    if (hackerBallPress?.id === e.pointerId) {
+      const press = hackerBallPress;
+      hackerBallPress = null;
+      const tap = e.type !== "pointercancel" && e.type !== "lostpointercapture" && !chargeHoldArmed(press.held);
+      if (tap) {
+        noteBalanceClick();
+        tapJump(e.pointerId);
+      }
       return;
     }
     if (hackerAimPointer === e.pointerId) {
@@ -4529,6 +4549,7 @@ export function createGame(
     if (phase !== "playing" || paused) return;
     paused = true;
     cancelVectorInput();
+    hackerBallPress = null;
     emitHud();
   }
 
@@ -5516,6 +5537,17 @@ export function createGame(
       let hackerScripted = false;
       let hackerLockFall = false;
       if (phase === "playing" && isHacker()) {
+        if (hackerBallPress && !hackerCharge.holding) {
+          if (!canArmHackerSpend()) hackerBallPress = null;
+          else {
+            hackerBallPress.held += dt;
+            if (chargeHoldArmed(hackerBallPress.held)) {
+              const id = hackerBallPress.id;
+              hackerBallPress = null;
+              beginHackerSpend(id);
+            }
+          }
+        }
         if (hackerCharge.holding) stepChargeHold(hackerCharge, dt);
         const flight = hackerFlight;
         hackerLockFall = flight?.kind === "fall" && flight.effect === "lock";
@@ -7573,6 +7605,7 @@ export function createGame(
   function onVis() {
     if (document.visibilityState !== "visible") {
       cancelVectorInput();
+      hackerBallPress = null;
       if (hackerSpendPointer !== null) endHackerSpend();
     }
     if (document.visibilityState === "visible") {
