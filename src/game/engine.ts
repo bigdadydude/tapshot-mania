@@ -37,7 +37,7 @@ import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { type HackerDir } from "./hacker-pad";
-import { HACKER_CHARGE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawLandingArrow, pointerOnChargeMeter, releaseChargeHold, settledHackerCharge, stepAimArrow, stepChargeHold, type HackerCharge, type HackerFlight } from "./hacker-charge";
+import { HACKER_CHARGE, HACKER_RIPPLE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawHackerRipples, drawLandingArrow, pointerOnChargeMeter, releaseChargeHold, settledHackerCharge, stepAimArrow, stepChargeHold, stepHackerRipples, type HackerCharge, type HackerFlight, type HackerRipple } from "./hacker-charge";
 import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
 import { parseBalanceImport, mergeBalanceStores, automaticStrength, loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
@@ -987,6 +987,8 @@ export function createGame(
   let hackerBallPress: { id: number; t0: number } | null = null;
   /** Mid-layer release: ball stays put, then falls. */
   let hackerFailFreeze = 0;
+  let hackerRipples: HackerRipple[] = [];
+  let hackerRipplePulse = 0;
   let hackerAimPointer: number | null = null;
   let hackerPin: { x: number; y: number } | null = null;
   let hackerAwaken = false;
@@ -1193,6 +1195,8 @@ export function createGame(
     hackerSpendPointer = null;
     hackerBallPress = null;
     hackerFailFreeze = 0;
+    hackerRipples = [];
+    hackerRipplePulse = 0;
     hackerAimPointer = null;
     hackerPin = hackerFlight?.kind === "aim" ? { x: hackerFlight.landX, y: -ball.r - 28 } : null;
     score = snapshot.score;
@@ -3786,6 +3790,12 @@ export function createGame(
   function resetHackerMeter() {
     hackerCharge = createHackerCharge();
     clearHackerGesture();
+    hackerRipples = [];
+    hackerRipplePulse = 0;
+  }
+
+  function spawnHackerRipple(kind: HackerRipple["kind"]) {
+    hackerRipples.push({ x: ball.x, y: ball.y, age: 0, kind });
   }
 
   function leaveHackerAwaken(scored: Hoop) {
@@ -3917,6 +3927,8 @@ export function createGame(
     ball.vx = 0;
     ball.vy = 0;
     ball.omega = 0;
+    hackerRipplePulse = 0;
+    spawnHackerRipple("burst");
     noteBalanceSkillInput();
     return true;
   }
@@ -3931,6 +3943,7 @@ export function createGame(
       ball.vx = 0;
       ball.vy = 0;
       ball.omega = 0;
+      spawnHackerRipple("burst");
       return;
     }
     hackerPin = null;
@@ -5554,7 +5567,15 @@ export function createGame(
             beginHackerSpend(id);
           }
         }
-        if (hackerCharge.holding) stepChargeHold(hackerCharge, dt);
+        if (hackerCharge.holding) {
+          stepChargeHold(hackerCharge, dt);
+          hackerRipplePulse += dt;
+          if (hackerRipplePulse >= HACKER_RIPPLE.pulseEvery) {
+            hackerRipplePulse = 0;
+            spawnHackerRipple("pulse");
+          }
+        }
+        hackerRipples = stepHackerRipples(hackerRipples, dt);
         const flight = hackerFlight;
         if (flight?.kind === "aim") {
           const minX = ball.r;
@@ -7572,6 +7593,7 @@ export function createGame(
             extraCourtHoops(),
           );
           if (phase === "playing" && isHacker()) {
+            if (hackerRipples.length) drawHackerRipples(ctx, hackerRipples, ball.r);
             drawHackerCharge(ctx, world, hackerCharge, {
               disabled: paused || buzzer || timeUp,
               awake: hackerAwaken,

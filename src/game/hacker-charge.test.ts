@@ -12,6 +12,8 @@ import {
   aimTimedOut,
   chargeHoldArmed,
   stepAimArrow,
+  hackerRippleVisibleRings,
+  stepHackerRipples,
   releaseChargeHold,
   stepChargeHold,
 } from "./hacker-charge.ts";
@@ -122,6 +124,15 @@ test("drain waits until the press is longer than 0.3s", () => {
   assert.equal(chargeHoldArmed(0.31), true);
 });
 
+test("spend ripples are hollow staggered rings and then expire", () => {
+  assert.equal(hackerRippleVisibleRings(0, 0.68), 0);
+  assert.equal(hackerRippleVisibleRings(0.16, 0.68) >= 2, true);
+  const gone = stepHackerRipples([{ x: 0, y: 0, age: 0.6, kind: "burst" }], 0.2);
+  assert.equal(gone.length, 0);
+  const live = stepHackerRipples([{ x: 1, y: 2, age: 0, kind: "pulse" }], 0.1);
+  assert.equal(live.length, 1);
+  assert.equal(live[0]!.age, 0.1);
+});
 test("the aim arrow moves on its own, bounces, and times out at 3s", () => {
   assert.equal(HACKER_CHARGE.aimTimeoutSeconds, 3);
   assert.equal(HACKER_CHARGE.failFreezeSeconds, 0.2);

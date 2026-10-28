@@ -209,6 +209,80 @@ export function drawHackerCharge(
   ctx.restore();
 }
 
+/** Glass-shock ripples for the spend freeze. Presentation only. */
+export const HACKER_RIPPLE = {
+  burstLife: 0.68,
+  pulseLife: 0.46,
+  pulseEvery: 0.7,
+  rings: 3,
+  ringLag: 0.07,
+} as const;
+
+export type HackerRipple = { x: number; y: number; age: number; kind: "burst" | "pulse" };
+
+export function hackerRippleLife(kind: HackerRipple["kind"]) {
+  return kind === "burst" ? HACKER_RIPPLE.burstLife : HACKER_RIPPLE.pulseLife;
+}
+
+export function stepHackerRipples(list: readonly HackerRipple[], dt: number): HackerRipple[] {
+  const next: HackerRipple[] = [];
+  for (const ripple of list) {
+    const age = ripple.age + Math.max(0, dt);
+    if (age < hackerRippleLife(ripple.kind)) next.push({ ...ripple, age });
+  }
+  return next;
+}
+
+/** Expanding hollow rings. Returns how many rings are visible, for tests. */
+export function hackerRippleVisibleRings(age: number, life: number) {
+  let n = 0;
+  for (let i = 0; i < HACKER_RIPPLE.rings; i++) {
+    const t = (age - i * HACKER_RIPPLE.ringLag) / life;
+    if (t > 0 && t < 1) n++;
+  }
+  return n;
+}
+
+export function drawHackerRipples(ctx: CanvasRenderingContext2D, list: readonly HackerRipple[], ballR: number) {
+  if (!list.length) return;
+  const green = HACKER_CHARGE_COLORS[1];
+  ctx.save();
+  for (const ripple of list) {
+    const life = hackerRippleLife(ripple.kind);
+    const strength = ripple.kind === "burst" ? 0.82 : 0.34;
+    ctx.save();
+    ctx.translate(ripple.x, ripple.y);
+    for (let i = 0; i < HACKER_RIPPLE.rings; i++) {
+      const t = (ripple.age - i * HACKER_RIPPLE.ringLag) / life;
+      if (t <= 0 || t >= 1) continue;
+      const radius = ballR * (1.15 + t * (ripple.kind === "burst" ? 5.4 : 3.2));
+      const alpha = strength * (1 - t) * (1 - t);
+      const wobble = 0.018 * (1 - t);
+      ctx.beginPath();
+      const steps = 40;
+      for (let s = 0; s <= steps; s++) {
+        const a = (s / steps) * Math.PI * 2;
+        const rr = radius * (1 + wobble * Math.sin(a * 5 + i));
+        const x = Math.cos(a) * rr;
+        const y = Math.sin(a) * rr * 0.94;
+        if (s === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = green;
+      ctx.lineWidth = Math.max(1.2, 3.2 * (1 - t));
+      ctx.stroke();
+      ctx.globalAlpha = alpha * 0.55;
+      ctx.strokeStyle = "#EFFFF4";
+      ctx.lineWidth = Math.max(0.6, 1.2 * (1 - t));
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 /** Downward marker on the top edge. `x` is the landing column. */
 export function drawLandingArrow(ctx: CanvasRenderingContext2D, x: number, y = 2) {
   ctx.save();
