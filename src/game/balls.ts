@@ -41,7 +41,7 @@ export type BallKit = {
   vector?: boolean;
   rocket?: boolean;
   super?: boolean;
-  /** Hacker ball: hidden red/blue pills switch the code world. */
+  /** Hacker ball: fair-weather charge meter spends into a fly shot or the code rain. */
   codeRain?: boolean;
   /** Quantum ball: high-combo chance to phase through the basket rig. */
   quantum?: boolean;
@@ -191,7 +191,7 @@ export const BALLS: BallKit[] = [
   {
     id: "rain",
     name: "骇客球",
-    skill: "首球后随机生成隐藏红药丸，越接近glitch越频繁；首次经过显形，离开后再次接近可收集，第二次错过则换位置重新隐藏。点击红药丸觉醒：进球概率定住篮架，场上最多4架，先得分再按场上架数增加连击；架数越多、定住越久越易收回，架数越多拦截越易失败。觉醒进球不续时；点击蓝药丸后进球退出并重置投篮钟（1分钟模式不补时）",
+    skill: "晴天每进5球满一层气，最多三层。按住左上角气条时球停、气只减。松手须扣完整层：1层飞天，点上沿箭头定落点并带深水；2层飞天锁筐落下并带深水；3层进入代码雨（世界变了）。半层松手补回。不满三层按到底最多锁筐，并返还多扣的气。雨中撤离尚未开放",
     heat: false,
     codeRain: true,
     wrap: "ground",

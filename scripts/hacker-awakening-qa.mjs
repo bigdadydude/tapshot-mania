@@ -6,7 +6,7 @@ const browser = await chromium.launch({channel:'msedge',headless:true});
 const hooks = `
  auditSetup(n=1,mode='classic'){
    playMode=mode;applyBall('rain');beginPlay();paused=false;madeCount=1;timerArmed=true;timerMax=10;timer=7;
-   hackerPills.ready=true;enterHackerAwaken();hackerHoops=[];
+   enterHackerAwaken();hackerHoops=[];
    for(let i=0;i<n;i++){
      const h=makeHoop(world,i%2?-1:1,false,1,activeHoopYLimits());
      h.y=h.baseY=world.h*(i<2?.28:.66);h.net=buildNet(h);
@@ -46,7 +46,7 @@ const hooks = `
    beginPlay();madeCount=1;
    hoop=makeHoop(world,side,false,1,activeHoopYLimits());hoop.x=side<0?-90:world.w+90;hoop.net=buildNet(hoop);
    const start=hoop.x,target=hoop.targetX;
-   hackerPills.ready=true;enterHackerAwaken();const afterSwitch=hoop.x;
+   enterHackerAwaken();const afterSwitch=hoop.x;
    for(let i=0;i<60;i++){stepHackerCourt(1/60);stepHoop(hoop,1/60);}
    paused=true;return {start,afterSwitch,target,after:hoop.x,count:hackerHoops.length};
  },
@@ -162,15 +162,18 @@ try {
   await p.evaluate(()=>window.__tq.auditCourt(.35));
   await p.screenshot({path:'screenshots/hacker-awakening/hacker-entry-end-'+name+'.png'});
   await p.evaluate(()=>window.__tq.auditSetup(2));
-  const click=await p.evaluate(()=>{const s=window.__tq.snapshot(),w=s.world,p=s.hackerPills.button;window.__tq.auditUnpause();return {x:w.ox+p.x,y:w.oy+p.y};});
-  // Canvas coordinates are projected through its bounding rect below.
+  const beforeClick=await p.evaluate(()=>window.__tq.snapshot());
+  assert.equal(beforeClick.hackerPills,undefined);
+  assert.ok(beforeClick.hackerCharge);
+  assert.equal(beforeClick.hackerExitPending,false);
+  const click=await p.evaluate(()=>{const s=window.__tq.snapshot(),w=s.world;window.__tq.auditUnpause();return {x:w.ox+w.w/2,y:w.oy+w.floorY*0.72};});
   await p.waitForTimeout(100);
   const box=await p.locator('canvas').first().boundingBox();
   await p.mouse.click(box.x+click.x,box.y+click.y);
   await p.evaluate(()=>window.__tq.auditFreeze());
   const clicked=await p.evaluate(()=>window.__tq.snapshot());
-  assert.equal(clicked.hackerExitPending,true);assert.equal(clicked.hackerAwaken,true);assert.ok(clicked.timer<=7);
-  assert.deepEqual(errors,[]);console.log(name,'PASS',JSON.stringify({scores:results.samples.map(r=>r.after),sweep:results.sweep,exitTimer:results.exit.timer,button:true}));
+  assert.equal(clicked.hackerExitPending,false);assert.equal(clicked.hackerAwaken,true);assert.ok(clicked.timer<=7);
+  assert.deepEqual(errors,[]);console.log(name,'PASS',JSON.stringify({scores:results.samples.map(r=>r.after),sweep:results.sweep,exitTimer:results.exit.timer,button:false}));
   await p.close();
  }
 }finally{await browser.close();}
