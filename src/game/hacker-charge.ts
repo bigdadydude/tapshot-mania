@@ -21,11 +21,8 @@ export const HACKER_CHARGE = {
   aimTimeoutSeconds: 3,
   /** Mid-layer release holds the ball still, then lets it fall. Locked. */
   failFreezeSeconds: 0.2,
-  /**
-   * How fast the aim arrow sweeps, in court-widths per second.
-   * The 3s timeout is locked; this speed is only so the arrow is visibly moving.
-   */
-  arrowWidthsPerSecond: 0.55,
+  /** Court-widths per second. The 3s timeout stays locked. */
+  arrowWidthsPerSecond: 1,
 } as const;
 
 export type ChargeEffect = "none" | "arrow" | "lock" | "rain";
