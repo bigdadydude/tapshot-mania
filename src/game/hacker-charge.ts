@@ -233,53 +233,129 @@ export function stepHackerRipples(list: readonly HackerRipple[], dt: number): Ha
   return next;
 }
 
-/** Expanding hollow rings. Returns how many rings are visible, for tests. */
-export function hackerRippleVisibleRings(age: number, life: number) {
-  let n = 0;
+export type LensBand = {
+  x: number;
+  y: number;
+  radius: number;
+  half: number;
+  strength: number;
+};
+
+/** Expanding convex-lens bands. Strength is world pixels of radial refraction. */
+export function hackerLensBands(ripple: HackerRipple, ballR: number): LensBand[] {
+  const life = hackerRippleLife(ripple.kind);
+  const reach = ripple.kind === "burst" ? 5.6 : 3.6;
+  const peak = ballR * (ripple.kind === "burst" ? 0.62 : 0.32);
+  const bands: LensBand[] = [];
   for (let i = 0; i < HACKER_RIPPLE.rings; i++) {
-    const t = (age - i * HACKER_RIPPLE.ringLag) / life;
-    if (t > 0 && t < 1) n++;
+    const t = (ripple.age - i * HACKER_RIPPLE.ringLag) / life;
+    if (t <= 0 || t >= 1) continue;
+    bands.push({
+      x: ripple.x,
+      y: ripple.y,
+      radius: ballR * (1.45 + t * reach),
+      half: ballR * (0.38 + 0.22 * (1 - t)),
+      strength: peak * Math.sin(t * Math.PI),
+    });
   }
-  return n;
+  return bands;
 }
 
-export function drawHackerRipples(ctx: CanvasRenderingContext2D, list: readonly HackerRipple[], ballR: number) {
-  if (!list.length) return;
-  const green = HACKER_CHARGE_COLORS[1];
-  ctx.save();
-  for (const ripple of list) {
-    const life = hackerRippleLife(ripple.kind);
-    const strength = ripple.kind === "burst" ? 0.82 : 0.34;
-    ctx.save();
-    ctx.translate(ripple.x, ripple.y);
-    for (let i = 0; i < HACKER_RIPPLE.rings; i++) {
-      const t = (ripple.age - i * HACKER_RIPPLE.ringLag) / life;
-      if (t <= 0 || t >= 1) continue;
-      const radius = ballR * (1.15 + t * (ripple.kind === "burst" ? 5.4 : 3.2));
-      const alpha = strength * (1 - t) * (1 - t);
-      const wobble = 0.018 * (1 - t);
-      ctx.beginPath();
-      const steps = 40;
-      for (let s = 0; s <= steps; s++) {
-        const a = (s / steps) * Math.PI * 2;
-        const rr = radius * (1 + wobble * Math.sin(a * 5 + i));
-        const x = Math.cos(a) * rr;
-        const y = Math.sin(a) * rr * 0.94;
-        if (s === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.closePath();
-      ctx.globalAlpha = alpha;
-      ctx.strokeStyle = green;
-      ctx.lineWidth = Math.max(1.2, 3.2 * (1 - t));
-      ctx.stroke();
-      ctx.globalAlpha = alpha * 0.55;
-      ctx.strokeStyle = "#EFFFF4";
-      ctx.lineWidth = Math.max(0.6, 1.2 * (1 - t));
-      ctx.stroke();
-    }
-    ctx.restore();
+/**
+ * Refract the already-drawn court through expanding convex bands.
+ * Samples the live framebuffer; does not paint hollow rings.
+ */
+export function drawHackerLensWarps(
+  ctx: CanvasRenderingContext2D,
+  source: HTMLCanvasElement,
+  space: { ox: number; oy: number; cssW: number; w: number; h: number },
+  list: readonly HackerRipple[],
+  ballR: number,
+) {
+  const bands: LensBand[] = [];
+  for (const ripple of list) bands.push(...hackerLensBands(ripple, ballR));
+  if (!bands.length || space.cssW < 8 || source.width < 8) return;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const band of bands) {
+    const reach = band.radius + band.half + band.strength + 2;
+    minX = Math.min(minX, band.x - reach);
+    minY = Math.min(minY, band.y - reach);
+    maxX = Math.max(maxX, band.x + reach);
+    maxY = Math.max(maxY, band.y + reach);
   }
+  minX = Math.max(0, Math.floor(minX));
+  minY = Math.max(0, Math.floor(minY));
+  maxX = Math.min(space.w, Math.ceil(maxX));
+  maxY = Math.min(space.h, Math.ceil(maxY));
+  const bw = maxX - minX;
+  const bh = maxY - minY;
+  if (bw < 2 || bh < 2 || bw * bh > 280000) return;
+  const dpr = source.width / space.cssW;
+  const sx0 = Math.max(0, Math.floor((space.ox + minX) * dpr));
+  const sy0 = Math.max(0, Math.floor((space.oy + minY) * dpr));
+  const sx1 = Math.min(source.width, Math.ceil((space.ox + maxX) * dpr));
+  const sy1 = Math.min(source.height, Math.ceil((space.oy + maxY) * dpr));
+  const sw = sx1 - sx0;
+  const sh = sy1 - sy0;
+  if (sw < 2 || sh < 2 || sw * sh > 420000) return;
+  let src: ImageData;
+  try {
+    src = ctx.getImageData(sx0, sy0, sw, sh);
+  } catch {
+    return;
+  }
+  const dst = new ImageData(new Uint8ClampedArray(src.data), sw, sh);
+  const s = src.data;
+  const o = dst.data;
+  const sample = (fx: number, fy: number, i: number) => {
+    const x = Math.max(0, Math.min(sw - 1, fx));
+    const y = Math.max(0, Math.min(sh - 1, fy));
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const x1 = Math.min(sw - 1, x0 + 1);
+    const y1 = Math.min(sh - 1, y0 + 1);
+    const tx = x - x0;
+    const ty = y - y0;
+    const i00 = (y0 * sw + x0) * 4;
+    const i10 = (y0 * sw + x1) * 4;
+    const i01 = (y1 * sw + x0) * 4;
+    const i11 = (y1 * sw + x1) * 4;
+    const a = (1 - tx) * (1 - ty);
+    const b = tx * (1 - ty);
+    const c = (1 - tx) * ty;
+    const d = tx * ty;
+    o[i] = s[i00]! * a + s[i10]! * b + s[i01]! * c + s[i11]! * d;
+    o[i + 1] = s[i00 + 1]! * a + s[i10 + 1]! * b + s[i01 + 1]! * c + s[i11 + 1]! * d;
+    o[i + 2] = s[i00 + 2]! * a + s[i10 + 2]! * b + s[i01 + 2]! * c + s[i11 + 2]! * d;
+  };
+  for (let py = 0; py < sh; py++) {
+    const wy = (sy0 + py + 0.5) / dpr - space.oy;
+    for (let px = 0; px < sw; px++) {
+      const wx = (sx0 + px + 0.5) / dpr - space.ox;
+      let shiftX = 0;
+      let shiftY = 0;
+      for (const band of bands) {
+        const dx = wx - band.x;
+        const dy = wy - band.y;
+        const dist = Math.hypot(dx, dy);
+        const inner = band.radius - band.half;
+        const outer = band.radius + band.half;
+        if (dist <= inner || dist >= outer || dist < 0.001) continue;
+        const u = (dist - inner) / (outer - inner);
+        const push = band.strength * Math.sin(u * Math.PI);
+        shiftX -= (dx / dist) * push;
+        shiftY -= (dy / dist) * push;
+      }
+      if (shiftX === 0 && shiftY === 0) continue;
+      sample(px + 0.5 + shiftX * dpr, py + 0.5 + shiftY * dpr, (py * sw + px) * 4);
+    }
+  }
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.putImageData(dst, sx0, sy0);
   ctx.restore();
 }
 

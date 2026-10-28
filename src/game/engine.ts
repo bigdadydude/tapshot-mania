@@ -37,7 +37,7 @@ import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { type HackerDir } from "./hacker-pad";
-import { HACKER_CHARGE, HACKER_RIPPLE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawHackerRipples, drawLandingArrow, pointerOnChargeMeter, releaseChargeHold, settledHackerCharge, stepAimArrow, stepChargeHold, stepHackerRipples, type HackerCharge, type HackerFlight, type HackerRipple } from "./hacker-charge";
+import { HACKER_CHARGE, HACKER_RIPPLE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawHackerLensWarps, drawLandingArrow, pointerOnChargeMeter, releaseChargeHold, settledHackerCharge, stepAimArrow, stepChargeHold, stepHackerRipples, type HackerCharge, type HackerFlight, type HackerRipple } from "./hacker-charge";
 import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
 import { parseBalanceImport, mergeBalanceStores, automaticStrength, loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
@@ -7593,7 +7593,7 @@ export function createGame(
             extraCourtHoops(),
           );
           if (phase === "playing" && isHacker()) {
-            if (hackerRipples.length) drawHackerRipples(ctx, hackerRipples, ball.r);
+            if (hackerRipples.length) drawHackerLensWarps(ctx, canvas, world, hackerRipples, ball.r);
             drawHackerCharge(ctx, world, hackerCharge, {
               disabled: paused || buzzer || timeUp,
               awake: hackerAwaken,

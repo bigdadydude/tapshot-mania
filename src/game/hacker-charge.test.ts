@@ -12,7 +12,7 @@ import {
   aimTimedOut,
   chargeHoldArmed,
   stepAimArrow,
-  hackerRippleVisibleRings,
+  hackerLensBands,
   stepHackerRipples,
   releaseChargeHold,
   stepChargeHold,
@@ -124,9 +124,12 @@ test("drain waits until the press is longer than 0.3s", () => {
   assert.equal(chargeHoldArmed(0.31), true);
 });
 
-test("spend ripples are hollow staggered rings and then expire", () => {
-  assert.equal(hackerRippleVisibleRings(0, 0.68), 0);
-  assert.equal(hackerRippleVisibleRings(0.16, 0.68) >= 2, true);
+test("spend ripples are staggered lens bands that bend pixels, then expire", () => {
+  const early = hackerLensBands({ x: 40, y: 50, age: 0.16, kind: "burst" }, 20);
+  assert.ok(early.length >= 2);
+  assert.ok(early.every((band) => band.strength > 0 && band.half > 0));
+  assert.ok(early[0]!.radius > early[1]!.radius);
+  assert.equal(hackerLensBands({ x: 0, y: 0, age: 0, kind: "burst" }, 20).length, 0);
   const gone = stepHackerRipples([{ x: 0, y: 0, age: 0.6, kind: "burst" }], 0.2);
   assert.equal(gone.length, 0);
   const live = stepHackerRipples([{ x: 1, y: 2, age: 0, kind: "pulse" }], 0.1);
