@@ -983,8 +983,8 @@ export function createGame(
   let hackerFlight: HackerFlight | null = null;
   let hackerDeepArmed: "arrow" | "lock" | null = null;
   let hackerSpendPointer: number | null = null;
-  /** Screen long-press that has not yet crossed 0.3s. */
-  let hackerBallPress: { id: number; held: number } | null = null;
+  /** Screen press. Jump is decided on release, never by waiting out 0.3s. */
+  let hackerBallPress: { id: number; t0: number } | null = null;
   /** Mid-layer release: ball stays put, then falls. */
   let hackerFailFreeze = 0;
   let hackerAimPointer: number | null = null;
@@ -4118,32 +4118,32 @@ export function createGame(
     }
   }
 
-  function tapJump(pointerId: number = -1) {
-    if (birdOwnsBall(birds)) return;
-    if (!booted) return;
+  function tapJump(pointerId: number = -1): boolean {
+    if (birdOwnsBall(birds)) return false;
+    if (!booted) return false;
     if (phase === "title") {
       audio.unlock();
       beginPlay();
     }
-    if (phase !== "playing") return;
-    if (paused) return;
-    if (isHacker() && (hackerCharge.holding || hackerFlight)) return;
-    if (vector.burst > 0) return;
-    if (isSuper() && superIsFrozen(superBall)) return;
-    if (stageMod.holdsBall?.()) return;
+    if (phase !== "playing") return false;
+    if (paused) return false;
+    if (isHacker() && (hackerCharge.holding || hackerFlight)) return false;
+    if (vector.burst > 0) return false;
+    if (isSuper() && superIsFrozen(superBall)) return false;
+    if (stageMod.holdsBall?.()) return false;
     const heroClutch =
       isRogueMode() && rogueRun && hasHeroMoment(rogueRun) && (buzzer || timeUp);
     const champClutch = isChamp() && buzzer && buzzerTimer > 0;
-    if (champClutch && champClutchControlled) return;
-    if ((buzzer || timeUp) && !heroClutch && !champClutch) return;
-    if (tapLock > 0) return;
-    if (ballHidden() && !onApproachSide() && !stageMod.allowHiddenTap?.()) return;
+    if (champClutch && champClutchControlled) return false;
+    if ((buzzer || timeUp) && !heroClutch && !champClutch) return false;
+    if (tapLock > 0) return false;
+    if (ballHidden() && !onApproachSide() && !stageMod.allowHiddenTap?.()) return false;
     if (shotOpen && !shotMade && !shotMissed) {
       if (comboRescue === "spent") {
         // Both rescue rounds are spent; another input starts a new attempt.
         comboRescue = "approach";
         breakComboStreak();
-        if (paused) return;
+        if (paused) return false;
       } else if (comboRescue === "contact") {
         comboRescue = "rescue";
       } else if (comboRescue === "secondContact") {
@@ -4185,7 +4185,7 @@ export function createGame(
       audio.whoosh(0.5);
       stageMod.onTap?.(modifierHost());
       emitHud();
-      return;
+      return true;
     }
     breakComboOnMissJump();
     hint = false;
@@ -4214,6 +4214,7 @@ export function createGame(
     audio.whoosh(0.5);
     stageMod.onTap?.(modifierHost());
     emitHud();
+    return true;
   }
 
   function pointerWorld(e: PointerEvent) {
@@ -4303,7 +4304,8 @@ export function createGame(
     if (canArmHackerSpend()) {
       const point = pointerWorld(e);
       if (!pointerOnChargeMeter(world, point.x, point.y)) {
-        hackerBallPress = { id: e.pointerId, held: 0 };
+        // Time the press only. A short release jumps in this pointerup, not after 0.3s.
+        hackerBallPress = { id: e.pointerId, t0: performance.now() };
         try { canvas.setPointerCapture(e.pointerId); } catch { /* detached canvas */ }
         return;
       }
@@ -4467,11 +4469,16 @@ export function createGame(
     if (hackerBallPress?.id === e.pointerId) {
       const press = hackerBallPress;
       hackerBallPress = null;
-      const tap = e.type !== "pointercancel" && e.type !== "lostpointercapture" && !chargeHoldArmed(press.held);
-      if (tap) {
-        noteBalanceClick();
-        tapJump(e.pointerId);
+      const elapsed = (performance.now() - press.t0) / 1000;
+      const cancelled = e.type === "pointercancel" || e.type === "lostpointercapture";
+      if (cancelled) return;
+      if (elapsed > HACKER_CHARGE.holdArmSeconds) {
+        if (!hackerCharge.holding) beginHackerSpend(press.id);
+        endHackerSpend();
+        return;
       }
+      noteBalanceClick();
+      tapJump(e.pointerId);
       return;
     }
     if ((buzzer || timeUp) && isRocket() && rocket.pointer === e.pointerId) return;
@@ -5539,14 +5546,12 @@ export function createGame(
       let hackerLockFall = false;
       if (phase === "playing" && isHacker()) {
         if (hackerBallPress && !hackerCharge.holding) {
+          const elapsed = (performance.now() - hackerBallPress.t0) / 1000;
           if (!canArmHackerSpend()) hackerBallPress = null;
-          else {
-            hackerBallPress.held += dt;
-            if (chargeHoldArmed(hackerBallPress.held)) {
-              const id = hackerBallPress.id;
-              hackerBallPress = null;
-              beginHackerSpend(id);
-            }
+          else if (chargeHoldArmed(elapsed)) {
+            const id = hackerBallPress.id;
+            hackerBallPress = null;
+            beginHackerSpend(id);
           }
         }
         if (hackerCharge.holding) stepChargeHold(hackerCharge, dt);
