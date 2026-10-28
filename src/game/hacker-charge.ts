@@ -15,14 +15,17 @@ export const HACKER_CHARGE = {
   flyLaunch: 2.2,
   /** Initial drop speed in screen-heights per second once a landing is chosen. */
   flyDrop: 0.85,
+  /** Drain starts only after the press has lasted longer than this. Locked. */
+  holdArmSeconds: 0.3,
+  /** Arrow aim gives up and drops at the current X after this. Locked. */
+  aimTimeoutSeconds: 3,
+  /** Mid-layer release holds the ball still, then lets it fall. Locked. */
+  failFreezeSeconds: 0.2,
   /**
-   * A press on the ball shorter than this stays a tap-jump.
-   * At/after this, the ball freezes and the meter drains.
-   * Not a locked spec value — only there so 点跳 and hold-to-spend can share the ball.
+   * How fast the aim arrow sweeps, in court-widths per second.
+   * The 3s timeout is locked; this speed is only so the arrow is visibly moving.
    */
-  holdArmSeconds: 0.18,
-  /** Extra pixels around the ball so a finger still counts as holding it. */
-  ballHoldSlop: 18,
+  arrowWidthsPerSecond: 0.55,
 } as const;
 
 export type ChargeEffect = "none" | "arrow" | "lock" | "rain";
@@ -37,7 +40,7 @@ export type HackerCharge = {
 
 export type HackerFlight =
   | { kind: "rise"; effect: "arrow" | "lock" }
-  | { kind: "aim"; landX: number }
+  | { kind: "aim"; landX: number; dir: -1 | 1; age: number }
   | { kind: "fall"; effect: "arrow" | "lock" };
 
 const SPEND_EPS = 1e-4;
@@ -124,13 +127,29 @@ export function chargeMeterLayout(world: { w: number }) {
   return { x, y, w, h };
 }
 
-/** True when the pointer is on the ball (plus a small finger slop). The meter is not a target. */
-export function hitHackerBall(ball: { x: number; y: number; r: number }, x: number, y: number) {
-  return Math.hypot(x - ball.x, y - ball.y) <= ball.r + HACKER_CHARGE.ballHoldSlop;
+/** True only after the press has lasted longer than 0.3s. */
+export function chargeHoldArmed(elapsed: number) {
+  return elapsed > HACKER_CHARGE.holdArmSeconds;
 }
 
-export function chargeHoldArmed(elapsed: number) {
-  return elapsed >= HACKER_CHARGE.holdArmSeconds;
+export function aimTimedOut(age: number) {
+  return age >= HACKER_CHARGE.aimTimeoutSeconds;
+}
+
+/** Ping-pong the aim arrow. The player does not drag it. */
+export function stepAimArrow(landX: number, dir: -1 | 1, dt: number, minX: number, maxX: number) {
+  const span = Math.max(1, maxX - minX);
+  let x = landX + dir * span * HACKER_CHARGE.arrowWidthsPerSecond * Math.max(0, dt);
+  let next = dir;
+  if (x >= maxX) { x = maxX; next = -1; }
+  else if (x <= minX) { x = minX; next = 1; }
+  return { landX: x, dir: next };
+}
+
+/** Display rect only. A press here must not start a spend. */
+export function pointerOnChargeMeter(world: { w: number }, x: number, y: number) {
+  const box = chargeMeterLayout(world);
+  return x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h + 18;
 }
 
 export function drawHackerCharge(
@@ -186,7 +205,7 @@ export function drawHackerCharge(
   ctx.strokeStyle = "rgba(6, 12, 16, 0.9)";
   ctx.fillStyle = opts.awake ? HACKER_CHARGE_COLORS[1] : "#f4fbff";
   // Rain exit (phone ring / long-press) is not locked. This line is status, not a button.
-  const label = opts.awake ? "矩阵 · 撤离未开放" : opts.aiming ? "点上沿定落点" : s.holding ? "松手结算" : "按住球";
+  const label = opts.awake ? "矩阵 · 撤离未开放" : opts.aiming ? "点一下落下" : s.holding ? "松手结算" : "长按耗气";
   const labelY = box.y + box.h + 4;
   ctx.strokeText(label, box.x, labelY);
   ctx.fillText(label, box.x, labelY);

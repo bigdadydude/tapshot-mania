@@ -37,7 +37,7 @@ import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { type HackerDir } from "./hacker-pad";
-import { HACKER_CHARGE, addHackerMake, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawLandingArrow, hitHackerBall, releaseChargeHold, settledHackerCharge, stepChargeHold, type HackerCharge, type HackerFlight } from "./hacker-charge";
+import { HACKER_CHARGE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawLandingArrow, pointerOnChargeMeter, releaseChargeHold, settledHackerCharge, stepAimArrow, stepChargeHold, type HackerCharge, type HackerFlight } from "./hacker-charge";
 import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
 import { parseBalanceImport, mergeBalanceStores, automaticStrength, loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
@@ -983,8 +983,10 @@ export function createGame(
   let hackerFlight: HackerFlight | null = null;
   let hackerDeepArmed: "arrow" | "lock" | null = null;
   let hackerSpendPointer: number | null = null;
-  /** Press on the ball that has not yet crossed the hold threshold. */
+  /** Screen long-press that has not yet crossed 0.3s. */
   let hackerBallPress: { id: number; held: number } | null = null;
+  /** Mid-layer release: ball stays put, then falls. */
+  let hackerFailFreeze = 0;
   let hackerAimPointer: number | null = null;
   let hackerPin: { x: number; y: number } | null = null;
   let hackerAwaken = false;
@@ -1190,6 +1192,7 @@ export function createGame(
     hackerDeepArmed = snapshot.hackerDeepArmed;
     hackerSpendPointer = null;
     hackerBallPress = null;
+    hackerFailFreeze = 0;
     hackerAimPointer = null;
     hackerPin = hackerFlight?.kind === "aim" ? { x: hackerFlight.landX, y: -ball.r - 28 } : null;
     score = snapshot.score;
@@ -3775,6 +3778,7 @@ export function createGame(
     hackerDeepArmed = null;
     hackerSpendPointer = null;
     hackerBallPress = null;
+    hackerFailFreeze = 0;
     hackerAimPointer = null;
     hackerPin = null;
   }
@@ -3865,13 +3869,15 @@ export function createGame(
       hackerPin = null;
       return;
     }
-    const landX = clamp(ball.x, ball.r, world.w - ball.r);
+    const minX = ball.r;
+    const maxX = world.w - ball.r;
+    const landX = clamp(ball.x, minX, maxX);
     ball.x = landX;
     ball.y = -ball.r - 28;
     ball.vx = 0;
     ball.vy = 0;
     hackerPin = { x: landX, y: ball.y };
-    hackerFlight = { kind: "aim", landX };
+    hackerFlight = { kind: "aim", landX, dir: landX < world.w * 0.5 ? 1 : -1, age: 0 };
     hackerDeepArmed = "arrow";
   }
 
@@ -3906,6 +3912,7 @@ export function createGame(
     if (birdOwnsBall(birds) || stageMod.holdsBall?.()) return false;
     if (!beginChargeHold(hackerCharge)) return false;
     hackerSpendPointer = pointerId;
+    hackerFailFreeze = 0;
     hackerPin = { x: ball.x, y: ball.y };
     ball.vx = 0;
     ball.vy = 0;
@@ -3918,8 +3925,16 @@ export function createGame(
     if (!hackerCharge.holding) return;
     hackerSpendPointer = null;
     const effect = releaseChargeHold(hackerCharge);
+    if (effect === "none") {
+      hackerFailFreeze = HACKER_CHARGE.failFreezeSeconds;
+      hackerPin = { x: ball.x, y: ball.y };
+      ball.vx = 0;
+      ball.vy = 0;
+      ball.omega = 0;
+      return;
+    }
     hackerPin = null;
-    if (effect === "none") return;
+    hackerFailFreeze = 0;
     if (effect === "rain") {
       enterHackerAwaken();
       return;
@@ -4136,6 +4151,7 @@ export function createGame(
       }
     }
     if (champClutch) champClutchControlled = true;
+    hackerFailFreeze = 0;
     cancelVectorInput();
     vector.coast = 0;
     if (!shotOpen || shotMade || shotMissed) vector.powered = false;
@@ -4281,16 +4297,12 @@ export function createGame(
     if (phase === "over") return;
     e.preventDefault();
     if (phase === "playing" && isHacker() && hackerFlight?.kind === "aim") {
-      const point = pointerWorld(e);
-      const landX = clamp(point.x, ball.r, world.w - ball.r);
-      hackerAimPointer = e.pointerId;
-      hackerFlight = { kind: "aim", landX };
-      try { canvas.setPointerCapture(e.pointerId); } catch { /* detached canvas */ }
+      confirmHackerLanding(hackerFlight.landX);
       return;
     }
     if (canArmHackerSpend()) {
       const point = pointerWorld(e);
-      if (hitHackerBall(ball, point.x, point.y)) {
+      if (!pointerOnChargeMeter(world, point.x, point.y)) {
         hackerBallPress = { id: e.pointerId, held: 0 };
         try { canvas.setPointerCapture(e.pointerId); } catch { /* detached canvas */ }
         return;
@@ -4433,11 +4445,6 @@ export function createGame(
       const p=pointerWorld(e),c=rocketLayout(world.w,world.h,world.floorY);
       rocket.steer=clamp((p.x-c.x)/c.half,-1,1);e.preventDefault();return;
     }
-    if (hackerAimPointer === e.pointerId && hackerFlight?.kind === "aim") {
-      const point = pointerWorld(e);
-      hackerFlight = { kind: "aim", landX: clamp(point.x, ball.r, world.w - ball.r) };
-      return;
-    }
     if (vector.pointer === e.pointerId) {
       const p = pointerWorld(e), b = vectorLayout(world.w, world.h, world.floorY);
       if (Math.abs(p.x-b.x)>b.r*2.15+20 || p.y<b.y+8-b.r*2.15-20 || p.y>b.y+47) {
@@ -4465,12 +4472,6 @@ export function createGame(
         noteBalanceClick();
         tapJump(e.pointerId);
       }
-      return;
-    }
-    if (hackerAimPointer === e.pointerId) {
-      const landX = hackerFlight?.kind === "aim" ? hackerFlight.landX : ball.x;
-      hackerAimPointer = null;
-      confirmHackerLanding(landX);
       return;
     }
     if ((buzzer || timeUp) && isRocket() && rocket.pointer === e.pointerId) return;
@@ -5550,8 +5551,20 @@ export function createGame(
         }
         if (hackerCharge.holding) stepChargeHold(hackerCharge, dt);
         const flight = hackerFlight;
-        hackerLockFall = flight?.kind === "fall" && flight.effect === "lock";
-        if (hackerCharge.holding || flight?.kind === "aim") {
+        if (flight?.kind === "aim") {
+          const minX = ball.r;
+          const maxX = Math.max(minX + 1, world.w - ball.r);
+          const moved = stepAimArrow(flight.landX, flight.dir, dt, minX, maxX);
+          const age = flight.age + dt;
+          hackerFlight = { kind: "aim", landX: moved.landX, dir: moved.dir, age };
+          hackerPin = { x: moved.landX, y: ball.y };
+          if (aimTimedOut(age)) confirmHackerLanding(moved.landX);
+        }
+        const flightNow = hackerFlight;
+        const failHold = hackerFailFreeze > 0;
+        if (failHold) hackerFailFreeze = Math.max(0, hackerFailFreeze - dt);
+        hackerLockFall = flightNow?.kind === "fall" && flightNow.effect === "lock";
+        if (hackerCharge.holding || flightNow?.kind === "aim" || failHold) {
           hackerScripted = true;
           if (hackerPin) { ball.x = hackerPin.x; ball.y = hackerPin.y; }
           ball.vx = 0; ball.vy = 0; ball.omega = 0;

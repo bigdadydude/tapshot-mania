@@ -9,8 +9,9 @@ import {
   chargeDisplayMakes,
   chargeLayerRatios,
   createHackerCharge,
+  aimTimedOut,
   chargeHoldArmed,
-  hitHackerBall,
+  stepAimArrow,
   releaseChargeHold,
   stepChargeHold,
 } from "./hacker-charge.ts";
@@ -115,11 +116,21 @@ test("holding blocks new makes and an empty meter does not start a hold", () => 
   assert.equal(beginChargeHold(empty), false);
 });
 
-test("only the ball is a hold target, and a short press is not armed yet", () => {
-  const ball = { x: 200, y: 400, r: 22 };
-  assert.equal(hitHackerBall(ball, 200, 400), true);
-  assert.equal(hitHackerBall(ball, 200, 400 + ball.r + HACKER_CHARGE.ballHoldSlop), true);
-  assert.equal(hitHackerBall(ball, 20, 24), false);
-  assert.equal(chargeHoldArmed(HACKER_CHARGE.holdArmSeconds - 0.02), false);
-  assert.equal(chargeHoldArmed(HACKER_CHARGE.holdArmSeconds), true);
+test("drain waits until the press is longer than 0.3s", () => {
+  assert.equal(HACKER_CHARGE.holdArmSeconds, 0.3);
+  assert.equal(chargeHoldArmed(0.3), false);
+  assert.equal(chargeHoldArmed(0.31), true);
+});
+
+test("the aim arrow moves on its own, bounces, and times out at 3s", () => {
+  assert.equal(HACKER_CHARGE.aimTimeoutSeconds, 3);
+  assert.equal(HACKER_CHARGE.failFreezeSeconds, 0.2);
+  assert.equal(aimTimedOut(2.99), false);
+  assert.equal(aimTimedOut(3), true);
+  const forward = stepAimArrow(10, 1, 0.2, 0, 100);
+  assert.ok(forward.landX > 10);
+  assert.equal(forward.dir, 1);
+  const bounced = stepAimArrow(99, 1, 1, 0, 100);
+  assert.equal(bounced.landX, 100);
+  assert.equal(bounced.dir, -1);
 });
