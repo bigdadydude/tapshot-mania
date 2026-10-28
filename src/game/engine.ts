@@ -4304,8 +4304,10 @@ export function createGame(
     if (canArmHackerSpend()) {
       const point = pointerWorld(e);
       if (!pointerOnChargeMeter(world, point.x, point.y)) {
-        // Time the press only. A short release jumps in this pointerup, not after 0.3s.
+        // Same instant as other balls. Holding past 0.3s interrupts this jump into a spend.
         hackerBallPress = { id: e.pointerId, t0: performance.now() };
+        noteBalanceClick();
+        tapJump(e.pointerId);
         try { canvas.setPointerCapture(e.pointerId); } catch { /* detached canvas */ }
         return;
       }
@@ -4472,13 +4474,11 @@ export function createGame(
       const elapsed = (performance.now() - press.t0) / 1000;
       const cancelled = e.type === "pointercancel" || e.type === "lostpointercapture";
       if (cancelled) return;
-      if (elapsed > HACKER_CHARGE.holdArmSeconds) {
-        if (!hackerCharge.holding) beginHackerSpend(press.id);
+      // Jump already fired on pointer down. A short release must not jump again.
+      if (elapsed > HACKER_CHARGE.holdArmSeconds && !hackerCharge.holding) {
+        beginHackerSpend(press.id);
         endHackerSpend();
-        return;
       }
-      noteBalanceClick();
-      tapJump(e.pointerId);
       return;
     }
     if ((buzzer || timeUp) && isRocket() && rocket.pointer === e.pointerId) return;
