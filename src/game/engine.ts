@@ -6719,12 +6719,11 @@ export function createGame(
     const toilet = ghost ? false : rimHits >= 3;
     const lucky = ghost ? false : hitBoardTop;
     if (!ghost && hackerDeepArmed) {
+      // Arrow and lock both promise deep water on this make, even if the ball clips the rim or board.
       wentOffTop = true;
-      if (hackerDeepArmed === "lock") {
-        ball.hitRim = false;
-        ball.hitBoard = false;
-        swish = true;
-      }
+      ball.hitRim = false;
+      ball.hitBoard = false;
+      swish = true;
       hackerDeepArmed = null;
       if (hackerFlight?.kind === "fall") hackerFlight = null;
     }
