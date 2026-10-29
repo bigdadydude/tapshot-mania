@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createBirds, spawnBirdWave, stepBirds, rollBirdWave, collideBirds, collideBirdGantries, birdOwnsBall, birdBehindCloud, eagleWarningLit, type BirdKind } from "./birds.ts";
 import type { TrainGantry } from "./train-gantry.ts";
-import { hackerIntercept } from "./hacker.ts";
 const world = { w: 390, h: 844, floorY: 646, ballR: 19.5 };
 const body = () => ({ x: 190, y: 400, vx: 0, vy: 0, r: 19.5 });
 test("wave odds start at 20/10/5 percent and each basket adds two percentage points", () => {
@@ -39,12 +38,12 @@ function scene(kind: BirdKind) {
   return { s, b, ball: body() };
 }
 
-test("hacker interception success knocks down an eagle; failure preserves its catch", () => {
+test("a block callback knocks down an eagle; refusing it preserves the catch", () => {
   for (const success of [false, true]) {
     const { s, b, ball } = scene("eagle");
     ball.x = b.x; ball.y = b.y; ball.vy = -200;
     const result = collideBirds(s, ball, b.x, b.y + 60, {
-      hackerBlock: target => hackerIntercept(target, 1, 4, () => success ? 0.9 : 0.1),
+      block: () => success,
     });
     assert.equal(result, success ? "knockdown" : "caught");
     assert.equal(s.carrier, success ? null : b.id);

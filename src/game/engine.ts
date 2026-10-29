@@ -1,4 +1,3 @@
-import { HACKER, hackerPinnedCount, hackerBlockFailure, hackerIntercept, settleHackerHoops, hackerSpaceClear, retireHackerHoop } from "./hacker";
 import { HOOP_HOLD, hoopRetirementDone, stepHoopRetirement } from "./hoop-retirement";
 import { stepTrainSmoke } from "./train-smoke";
 import { createAntiRecovery, launchAntiRecovery, scoreAntiRecovery, stepAntiRecovery, antiRecoveryIgnoresHoops, type AntiRecovery } from "./anti-recovery";
@@ -992,13 +991,6 @@ export function createGame(
   let hackerAimPointer: number | null = null;
   let hackerPin: { x: number; y: number } | null = null;
   let hackerAwaken = false;
-  let hackerHoops: Hoop[] = [];
-  let hackerOutgoing: Hoop[] = [];
-  let hackerShotSide: -1 | 1 = 1;
-  let hackerExitPending = false;
-  let hackerEpoch = 0;
-  let hackerSpawnRetry = 0;
-  const hackerStepScores = new Set<Hoop>();
   /** Energy, gesture ownership and flight state of the Vector Ball. */
   let rocket = createRocket();
   let vector = createVector();
@@ -1051,14 +1043,6 @@ export function createGame(
     quantumTunnelLeft: number;
     mazeRespawnLeft: number;
     hackerAwaken: boolean;
-    hackerHoops: Hoop[];
-    hackerOutgoing: Hoop[];
-    hackerShotSide: -1 | 1;
-    hackerPrimary: number;
-    hackerGate: number;
-    hackerExitPending: boolean;
-    hackerEpoch: number;
-    hackerSpawnRetry: number;
     hackerCharge: HackerCharge;
     hackerFlight: HackerFlight | null;
     hackerDeepArmed: "arrow" | "lock" | null;
@@ -1116,9 +1100,6 @@ export function createGame(
     rewindHistory.push({
       hackerAwaken, hackerCharge: settledHackerCharge(hackerCharge),
       hackerFlight: hackerFlight ? { ...hackerFlight } : null, hackerDeepArmed,
-      hackerHoops: structuredClone(hackerHoops), hackerPrimary: hackerHoops.indexOf(hoop),
-      hackerOutgoing: structuredClone(hackerOutgoing), hackerShotSide,
-      hackerGate: scoreGateHoop ? hackerHoops.indexOf(scoreGateHoop) : -1, hackerExitPending, hackerEpoch, hackerSpawnRetry,
       ball: structuredClone(ball),
       traffic: structuredClone(traffic),
       hoop: structuredClone(hoop),
@@ -1183,12 +1164,6 @@ export function createGame(
     quantumTunnelLeft = snapshot.quantumTunnelLeft;
     mazeRespawnLeft = snapshot.mazeRespawnLeft;
     hackerAwaken = snapshot.hackerAwaken;
-    hackerHoops = structuredClone(snapshot.hackerHoops);
-    hackerOutgoing = structuredClone(snapshot.hackerOutgoing); hackerShotSide = snapshot.hackerShotSide;
-    hackerExitPending = snapshot.hackerExitPending; hackerEpoch = snapshot.hackerEpoch; hackerSpawnRetry = snapshot.hackerSpawnRetry;
-    if (hackerAwaken && hackerHoops.length) { hoop = hackerHoops[snapshot.hackerPrimary] ?? hackerHoops[0]; other = null; }
-    if (snapshot.hackerGate >= 0) scoreGateHoop = hackerHoops[snapshot.hackerGate];
-    hackerStepScores.clear();
     hackerCharge = { ...snapshot.hackerCharge };
     hackerFlight = snapshot.hackerFlight ? { ...snapshot.hackerFlight } : null;
     hackerDeepArmed = snapshot.hackerDeepArmed;
@@ -1347,7 +1322,7 @@ export function createGame(
 
   function refillShotClock() {
     // Minute mode keeps a fixed 60s clock �?no per-make shrink/refill.
-    if (isMinuteMode() || hackerAwaken) return;
+    if (isMinuteMode()) return;
     champHalfClock = false;
     const decay = activeDecay();
     timerMax = Math.max(TIMER_MIN, timerMax * decay);
@@ -1642,7 +1617,7 @@ export function createGame(
   }
 
   function shotSide(): -1 | 1 {
-    return hackerAwaken ? hackerShotSide : hoop.side;
+    return hoop.side;
   }
 
   function jumpVx() {
@@ -1752,8 +1727,6 @@ export function createGame(
       ) => {
         paintBallSprite(ctx, x, y, r, spin, ballId, time);
       },
-      isHackerAwaken: () => hackerAwaken,
-      tryHackerBlock: (target: { hackerAttempt?: { epoch: number; blocked: boolean } }) => hackerIntercept(target, hackerEpoch, hackerPinnedCount(hackerHoops)),
       isMaze: () => isMaze(),
       onProjectileImpact: (vx: number, vy: number) => {
         if(isSuper()) {
@@ -2659,7 +2632,7 @@ export function createGame(
     if (!isBolt()) resetBoltRun();
     if (!isHacker()) {
       hackerDir = null;
-      hackerAwaken = false; hackerHoops = []; hackerOutgoing = []; hackerShotSide = 1; hackerExitPending = false; resetHackerMeter();
+      hackerAwaken = false; resetHackerMeter();
       hackerSpeed = HACKER_SPEED_BASE;
       clearSparseCodeRain();
     }
@@ -2983,7 +2956,6 @@ export function createGame(
     return {
       unobservable: quantumTunnelLeft > 0,
       lethal: isBolt() && (Boolean(boltStorm) || (boltCharge > 90 && !ball.scored)),
-      hackerBlock: hackerAwaken ? target => hackerIntercept(target, hackerEpoch, hackerPinnedCount(hackerHoops)) : undefined,
       burn: !hackerAwaken && heatN() >= STAGE_IGNITE,
       frostChance: isFrost() ? frostChance() : 0,
       hole: holeOn ? { x: holeX, y: holeY, r: holeR } : undefined,
@@ -3074,7 +3046,7 @@ export function createGame(
     streak = 0;
     hint = true;
     hackerDir = null;
-    hackerAwaken = false; hackerHoops = []; hackerOutgoing = []; hackerShotSide = 1; hackerExitPending = false; resetHackerMeter();
+    hackerAwaken = false; resetHackerMeter();
     vector = createVector(); superBall = createSuper();
     rocket = createRocket();
     quantumTunnelLeft = 0;
@@ -3245,7 +3217,7 @@ export function createGame(
     buzzer = false;
     buzzerTimer = 0;
     hackerDir = null;
-    hackerAwaken = false; hackerHoops = []; hackerOutgoing = []; hackerShotSide = 1; hackerExitPending = false; resetHackerMeter();
+    hackerAwaken = false; resetHackerMeter();
     vector = createVector(); superBall = createSuper();
     rocket = createRocket();
     quantumTunnelLeft = 0;
@@ -3717,64 +3689,11 @@ export function createGame(
   }
 
   function courtHoops(): Hoop[] {
-    return hackerAwaken ? hackerHoops : [hoop, ...(other ? [other] : []), ...hackerOutgoing];
+    return [hoop, ...(other ? [other] : [])];
   }
 
   function extraCourtHoops(): Hoop[] {
-    return hackerAwaken ? hackerHoops.filter(h => h !== hoop) : hackerOutgoing;
-  }
-
-  function hackerBounds(h: Hoop) {
-    const g = boardGeom(h, world);
-    return { left: Math.min(g.visX, h.x - h.inner - 12), right: Math.max(g.visX + g.visW, h.x + h.inner + 12),
-      top: Math.min(g.visY, h.y - 16), bottom: Math.max(g.boardBotY, h.y + h.inner * 1.7) };
-  }
-
-  function hackerComboCount() {
-    // An incoming stand reserves a slot, but only earns combo once visible.
-    return hackerHoops.filter(h => {
-      if (h.hacker?.state !== "normal") return true;
-      const b = hackerBounds(h);
-      return b.right > 0 && b.left < world.w;
-    }).length;
-  }
-
-  function ensureHackerTarget() {
-    if (!hackerAwaken || hackerHoops.length >= HACKER.maxHoops || hackerHoops.some(h => h.hacker?.state === "normal")) return;
-    if (hackerSpawnRetry > 0 && hackerHoops.length > 0) return;
-    hackerSpawnRetry = 0.25;
-    const limits = activeHoopYLimits();
-    const sides: (-1 | 1)[] = [hackerShotSide, hackerShotSide < 0 ? 1 : -1];
-    const candidates: Hoop[] = [];
-    const occupied = hackerHoops.map(hackerBounds);
-    for (const side of sides) {
-      const template = makeHoop(world, side, false, madeCount, limits);
-      for (let i = 0; i < 24; i++) {
-        const h: Hoop = { ...template, net: [] };
-        h.y = h.baseY = limits.minY + (limits.maxY - limits.minY) * (i / 23);
-        if (!hackerSpaceClear(hackerBounds(h), occupied, 16)) continue;
-        candidates.push(h);
-      }
-      if (candidates.length) break;
-    }
-    if (!candidates.length) return; // Retry after a retiring stand clears; never spawn inside it.
-    const h = candidates[Math.floor(Math.random() * candidates.length)];
-    h.hacker = { state: "normal", pinned: false, age: 0, scored: false };
-    h.x = h.side < 0 ? -90 : world.w + 90;
-    h.net = buildNet(h); hackerHoops.push(h); hoop = h;
-  }
-
-  function stepHackerCourt(dt: number) {
-    if (!hackerAwaken) return;
-    hackerSpawnRetry = Math.max(0, hackerSpawnRetry - dt);
-    for (const h of hackerHoops) {
-      const state = h.hacker!;
-      if (state.pinned) state.age += dt;
-      if (state.scored && Math.hypot(ball.x - h.x, ball.y - h.y) > h.inner + ball.r * 1.5) state.scored = false;
-    }
-    hackerHoops = hackerHoops.filter(h => h.hacker?.state !== "retiring" || !hoopRetirementDone(h, world.w));
-    ensureHackerTarget();
-    if (!hackerHoops.includes(hoop) && hackerHoops.length) hoop = hackerHoops.find(h => h.hacker?.state === "normal") ?? hackerHoops[0];
+    return [];
   }
 
   function clearHackerGesture() {
@@ -3798,41 +3717,16 @@ export function createGame(
     hackerRipples.push({ x: ball.x, y: ball.y, age: 0, kind });
   }
 
-  function leaveHackerAwaken(scored: Hoop) {
-    hackerAwaken = false; hackerExitPending = false;
-    // Retain every visible stand until its ordinary exit animation finishes.
-    hackerOutgoing = hackerHoops.filter(h => h !== scored);
-    for (const h of hackerOutgoing) { retireHackerHoop(h); h.active = false; }
-    hackerHoops = []; hoop = scored; other = null;
-    hoop.active = true;
-    clearHackerGesture();
-    hackerDir = null; hackerRimSlide = null;
-    callouts.push({text:"返回现实",x:ball.x,y:ball.y-ball.r*2,life:1,max:1,kind:"tag"});
-  }
-
   function enterHackerAwaken() {
     // TODO(hacker-rain-exit): phone-ring / long-press evacuate is not locked.
     // The shot clock still ends the run, so the matrix cannot soft-lock the player.
     // Do not restore a blue pill as the exit.
     if (!isHacker() || hackerAwaken || phase !== "playing" || buzzer || timeUp) return;
     clearHackerGesture();
-    hackerAwaken = true; hackerExitPending = false; hackerEpoch++; hackerSpawnRetry = 0; hint = false;
-    hackerDir = null; hackerRimSlide = null;
-    hackerShotSide = hoop.side;
-    hackerHoops = [hoop, ...(other ? [other] : []), ...hackerOutgoing];
-    hackerOutgoing = [];
-    for (const h of hackerHoops) {
-      h.hacker = {state: h === hoop ? "normal" : "retiring", pinned:false, age:0, scored: h === scoreGateHoop};
-      h.active = true; h.moving = false; h.burning = false;
-      if (h === hoop) {
-        const entering = (h.x - h.baseX) * h.side > 0;
-        h.couple = true; h.hold = 0;
-        h.targetX = entering ? h.baseX : h.x;
-        h.baseX = h.targetX;
-      } else h.baseX = h.x;
-      h.baseY = h.y;
-    }
-    other = null;
+    hackerAwaken = true;
+    hint = false;
+    hackerDir = null;
+    hackerRimSlide = null;
     callouts.push({text:"世界变了",x:ball.x,y:ball.y-ball.r*2.6,life:1.4,max:1.4,kind:"tag"});
     emitHud();
   }
@@ -4614,7 +4508,7 @@ export function createGame(
     resetTrainScroll();
     ball.sootLeft = 0;
     hackerDir = null;
-    hackerAwaken = false; hackerHoops = []; hackerOutgoing = []; hackerShotSide = 1; hackerExitPending = false; resetHackerMeter();
+    hackerAwaken = false; resetHackerMeter();
     vector = createVector(); superBall = createSuper();
     rocket = createRocket();
     quantumTunnelLeft = 0;
@@ -5455,18 +5349,10 @@ export function createGame(
       }
     }
 
-    hackerStepScores.clear();
-    stepHackerCourt(dt);
     // Capture by identity before any stand/modifier motion, including the other hoop.
     const scoringRimStarts = new Map<Hoop, { x: number; y: number }>();
     for (const h of courtHoops()) scoringRimStarts.set(h, { x: h.x, y: h.y });
     stepHoop(hoop, dt);
-    if (hackerAwaken) {
-      for (const h of hackerHoops) if (h !== hoop) stepHoop(h, dt);
-      stepHackerCourt(0); // Remove fully withdrawn stands before this step can award their combo.
-    }
-    for (const h of hackerOutgoing) stepHoop(h, dt);
-    hackerOutgoing = hackerOutgoing.filter(h => !hoopRetirementDone(h, world.w));
     tickFrost(hoop, dt, false);
     if (phase === "playing" && !paused && !birdOwnsBall(birds)) {
       stageMod.update(dt, modifierHost());
@@ -6028,17 +5914,6 @@ export function createGame(
   }
 
   function stepHoop(h: Hoop, dt: number) {
-    if (h.hacker && (hackerAwaken || hackerOutgoing.includes(h))) {
-      h.moving = false;
-      if (h.hacker.state === "retiring") nudgeNet(h, stepHoopRetirement(h, world.w, dt), 0);
-      if (h.hacker.state !== "normal") return;
-      // Unpinned targets enter through the same motion path as ordinary hoops.
-    }
-    // While extra stands are still leaving, keep the new hoop from spawning on top of them.
-    if (h === hoop && hackerOutgoing.length && (h.x < 0 || h.x > world.w)) {
-      const occupied = [...hackerOutgoing, ...(other ? [other] : [])];
-      if (occupied.length >= HACKER.maxHoops || !hackerSpaceClear(hackerBounds({ ...h, x: h.targetX }), occupied.map(hackerBounds), 16)) return;
-    }
     if (h.jolt > 0) h.jolt = Math.max(0, h.jolt - dt / 0.28);
     // Frozen stands stay locked in place — no travel, no baseY settle.
     if (h.frostLeft > 0 && h.frost > 0) {
@@ -6583,20 +6458,6 @@ export function createGame(
   function checkScore(rimStarts?: ReadonlyMap<Hoop, { x: number; y: number }>) {
     if (phase !== "playing") return;
     if (anti2ReturnLocked()) return;
-    if (hackerAwaken) {
-      const hits = hackerHoops.filter(h => (!rimStarts || rimStarts.has(h)) && !h.hacker?.scored && !hackerStepScores.has(h) && stageMod.canScore(h) && rimPassage(h, ball, {x:prevBallX,y:prevBallY}, true, rimStarts?.get(h)) === "down");
-      const fraction = (h: Hoop) => {
-        const start = rimStarts?.get(h)?.y ?? h.y;
-        return (start - prevBallY) / ((ball.y - prevBallY) - (h.y - start) || 1);
-      };
-      hits.sort((a,b) => fraction(a) - fraction(b));
-      for (const h of hits) {
-        if (!hackerAwaken || phase !== "playing" || !hackerHoops.includes(h)) break;
-        hackerStepScores.add(h); h.hacker!.scored = true;
-        registerScore({at:h});
-      }
-      return;
-    }
     if (ball.scored) return;
     const bothWays = legacyHole();
     if (tryRimPlaneScore(hoop, bothWays, rimStarts?.get(hoop))) return;
@@ -6607,7 +6468,7 @@ export function createGame(
 
   /** Only a fresh crossing inside the opening can register a make. */
   function tryRimPlaneScore(h: Hoop, bothWays: boolean, previousRim?: { x: number; y: number }): boolean {
-    if (hackerStepScores.has(h) || !stageMod.canScore(h)) return false;
+    if (!stageMod.canScore(h)) return false;
     const passage = rimPassage(h, ball, { x: prevBallX, y: prevBallY }, true, previousRim);
     if (!passage) return false;
     if (passage === "up") {
@@ -6695,9 +6556,6 @@ export function createGame(
     at?: { x: number; y: number; inner: number } | Hoop;
   }) {
     const ghost = opts?.ghost === true;
-    const hackerMake = hackerAwaken && !ghost;
-    const hackerCount = hackerMake ? hackerComboCount() : 0;
-    const hackerScoreStreak = comboCounting ? streak : 0;
     // Clones cannot replace the real ball's final shot or extend its window.
     if (ghost && (buzzer || timeUp)) return;
     const clutch = !ghost && buzzer;
@@ -6706,7 +6564,6 @@ export function createGame(
     const champClockPenalty = champReward && champClutchControlled;
     const scoredHoop = opts?.at ?? hoop;
     if (!ghost) {
-      if (hackerMake) hackerShotSide = hackerShotSide < 0 ? 1 : -1;
       if ("net" in scoredHoop) (scoredHoop as Hoop).comboScored = true;
       ball.scored = true;
       if (holeOn && isAnti2()) scoreAntiRecovery(antiRecovery);
@@ -6781,7 +6638,7 @@ export function createGame(
       !bunshinGhost && isRogueMode() && rogueRun && rogueRun.buffComboLeft > 0
         ? (catalogOf("comboboost")?.comboBoostAdd ?? 3)
         : null;
-    if (!hackerMake) streak = streakAfterMake({ streak, comboCounting, bunshinGhost, comboBoost });
+    streak = streakAfterMake({ streak, comboCounting, bunshinGhost, comboBoost });
     comboCounting = true;
     comboClock = 0;
     if (!ghost) {
@@ -6843,12 +6700,10 @@ export function createGame(
       if (!timerArmed) timerArmed = true;
       audio.swish();
       audio.score(swish, 0);
-      tugNet(hackerMake ? scoredHoop as Hoop : hoop, ghost ? undefined : ball);
-      if (hackerMake) { streak = hackerScoreStreak + hackerCount; combo = Math.max(combo, streak); settleHackerHoops(hackerHoops, scoredHoop as Hoop); }
-      if (hackerMake && hackerExitPending) leaveHackerAwaken(scoredHoop as Hoop);
+      tugNet(hoop, ghost ? undefined : ball);
       refillShotClock();
       prisonShackleBest = Math.max(prisonShackleBest, streak);
-      if (!ghost) nextHoop(hackerMake ? hackerShotSide : undefined);
+      if (!ghost) nextHoop();
       emitHud();
       if (streak >= prisonTarget) enterPrisonFree(Math.max(prisonShackleBest, streak));
       return;
@@ -6866,7 +6721,7 @@ export function createGame(
     }
 
     // 基础�?+ 连击得分；混乱药丸只改基础分，连击分与后续加成照常
-    const streakPart = hackerMake ? hackerScoreStreak : streak;
+    const streakPart = streak;
     let basePart = isGlass() ? glassBase : isMaze() ? mazeBaseBonus : 0;
     if (isRogueMode() && rogueRun && hasChaosBase(rogueRun) && !bunshinGhost && !ninjaGhost) {
       basePart = Math.floor(Math.random() * 26) - 10;
@@ -6963,11 +6818,6 @@ export function createGame(
       champDoublePending = false;
     }
     score += gain;
-    if (hackerMake) {
-      streak = hackerScoreStreak + hackerCount;
-      combo = Math.max(combo, streak);
-      settleHackerHoops(hackerHoops, scoredHoop as Hoop);
-    }
     if(!ghost && isSuper()) superScore(superBall,superShieldScore);
     if (!ghost && balanceSession) {
       const plainCore = bunshinGhost || ninjaGhost ? 0 : basePart + streakPart + extra + (freed ? prisonBonus : 0) + (clutch && !ninjaGhost ? 5 : 0);
@@ -7060,7 +6910,7 @@ export function createGame(
     const popY = scoredHoop.y;
     const popInner = scoredHoop.inner;
     if (!ghost) {
-      tugNet(hackerMake ? scoredHoop as Hoop : hoop, ball);
+      tugNet(hoop, ball);
     } else {
       const near =
         (other && Math.hypot(other.x - popX, other.y - popY) < popInner * 2.5 ? other : null) ||
@@ -7119,12 +6969,11 @@ export function createGame(
         kind: "tag",
       });
     }
-    if (finalMinuteMake || (hackerMake && clutch && !hackerExitPending)) {
+    if (finalMinuteMake) {
       // Keep the scored basket and its net; never spawn a replacement stand.
       gameOver({ quiet: true });
       return;
     }
-    if (hackerMake && hackerExitPending) leaveHackerAwaken(scoredHoop as Hoop);
     refillShotClock();
     if (champReward) {
       champDoublePending = true;
@@ -7151,9 +7000,7 @@ export function createGame(
         });
         frostSmoke(hoop);
       }
-      if (hackerMake) {
-        nextHoop(hackerShotSide);
-      } else if (!stageMod.onScored(modifierHost())) {
+      if (!stageMod.onScored(modifierHost())) {
         nextHoop();
         if (!isFrost() && other && stage >= 2) {
           const sear = (stage === 2 ? 1 : stage === 3 ? 2 : 3) as 1 | 2 | 3;
@@ -7184,17 +7031,11 @@ export function createGame(
   }
 
   function nextHoop(nextSideOverride?: -1 | 1) {
-    if (hackerAwaken) {
-      hackerSpawnRetry = 0; ensureHackerTarget();
-      ball.hitRim = false; ball.hitBoard = false; overRim = otherOverRim = false;
-      return;
-    }
     const scored = hoop;
-    const alreadyRetiring = scored.hacker?.state === "retiring";
-    delete scored.hacker;
     scored.moving = false;
     scored.jolt = 0;
-    if (!alreadyRetiring) { scored.couple = true; scored.targetX = scored.x; }
+    scored.couple = true;
+    scored.targetX = scored.x;
 
     const nextSide: -1 | 1 = nextSideOverride ?? (scored.side < 0 ? 1 : -1);
     const frozenOther = other && other.frostLeft > 0 ? other : null;
@@ -7208,7 +7049,7 @@ export function createGame(
     } else {
       scored.active = false;
       // Shattered stands are already dismissed (couple false).
-      if (scored.couple && !alreadyRetiring) scored.hold = HOOP_HOLD;
+      if (scored.couple) scored.hold = HOOP_HOLD;
     }
 
     if (frozenOther) {
@@ -7859,11 +7700,7 @@ export function createGame(
         trainWarnings: trainBackdropOn() ? getTrainGantryWarnings(world, getTrainScroll()) : [],
         birds: trainBackdropOn() ? structuredClone(birds) : null,
         birdBaseBonus,
-        frostBonus, glassBase, glassProtectionLeft, quantumTunnelLeft, hackerAwaken, hackerExitPending, hackerShotSide,
-        hackerHoops: hackerHoops.map(h => ({x:h.x,y:h.y,targetX:h.targetX,side:h.side,inner:h.inner,hold:h.hold,...h.hacker})),
-        hackerComboCount: hackerComboCount(),
-        hackerOutgoing: hackerOutgoing.map(h => ({x:h.x,y:h.y,side:h.side,hold:h.hold})),
-        hackerBlockFailure: hackerBlockFailure(hackerPinnedCount(hackerHoops)), streak,
+        frostBonus, glassBase, glassProtectionLeft, quantumTunnelLeft, hackerAwaken, streak,
         hackerCharge: {
           ...hackerCharge,
           display: chargeDisplayMakes(hackerCharge),
