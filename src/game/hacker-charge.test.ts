@@ -15,6 +15,10 @@ import {
   hackerLensBands,
   stepHackerRipples,
   releaseChargeHold,
+  releaseRainCharge,
+  chargeIsFull,
+  splitRainScore,
+  stepRainScoreDrips,
   stepChargeHold,
   stepChargeDecay,
   settledHackerCharge,
@@ -199,4 +203,37 @@ test("the aim arrow moves on its own, bounces, and times out at 3s", () => {
   const bounced = stepAimArrow(99, 1, 1, 0, 100);
   assert.equal(bounced.landX, 100);
   assert.equal(bounced.dir, -1);
+});
+
+test("rain spend keeps the remainder and does not restore a partial layer", () => {
+  const rain = filled(7);
+  drain(rain, 2.4);
+  releaseRainCharge(rain);
+  assert.ok(Math.abs(rain.makes - 4.6) < 1e-6);
+  assert.equal(rain.holding, false);
+  const fair = filled(7);
+  drain(fair, 2.4);
+  assert.equal(releaseChargeHold(fair), "none");
+  assert.equal(fair.makes, 7);
+});
+
+test("a full bar is three layers and a drip dies with its own hoop", () => {
+  assert.equal(chargeIsFull(filled(15)), true);
+  const almost = createHackerCharge();
+  almost.makes = 14.9;
+  assert.equal(chargeIsFull(almost), false);
+  assert.deepEqual(splitRainScore(4), { now: 1, later: 3 });
+  assert.deepEqual(splitRainScore(0), { now: 0, later: 0 });
+  const first = stepRainScoreDrips(
+    [
+      { slot: 0, left: 0.5, remain: 2 },
+      { slot: 1, left: 0.5, remain: 1 },
+    ],
+    0.5,
+    () => true,
+  );
+  assert.equal(first.scored, 2);
+  const second = stepRainScoreDrips(first.drips, 0.5, (slot) => slot === 0);
+  assert.equal(second.scored, 1);
+  assert.equal(second.drips.length, 0);
 });

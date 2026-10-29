@@ -111,6 +111,104 @@ export function stepChargeHold(s: HackerCharge, dt: number) {
  * The incomplete top layer, and any layer still in progress on release, are restored.
  * Fewer than 3 full layers cannot open the rain; holding to empty still yields at most lock.
  */
+/** Rain treats the three segments as one bar. Spent charge stays spent. */
+export const HACKER_RAIN = {
+  dripSeconds: 0.5,
+  hoopGraceSeconds: 3,
+  vanishSeconds: 0.32,
+} as const;
+
+export function releaseRainCharge(s: HackerCharge) {
+  if (!s.holding) return;
+  const spent = Math.min(s.makes, s.drained);
+  s.makes = Math.max(0, s.makes - spent);
+  s.holding = false;
+  s.holdStart = 0;
+  s.drained = 0;
+}
+
+export function chargeIsFull(s: HackerCharge) {
+  return chargeDisplayMakes(s) + SPEND_EPS >= chargeCap();
+}
+
+/** Immediate bank is 1 when the make is worth at least 1. The rest drips. */
+export function splitRainScore(gain: number) {
+  if (!(gain > 0)) return { now: gain, later: 0 };
+  return { now: 1, later: gain - 1 };
+}
+
+export type RainDrip = { left: number; remain: number; slot: number };
+
+export function stepRainScoreDrips(
+  drips: readonly RainDrip[],
+  dt: number,
+  alive: (slot: number) => boolean,
+) {
+  let scored = 0;
+  const next: RainDrip[] = [];
+  for (const drip of drips) {
+    if (!alive(drip.slot) || drip.remain <= 0) continue;
+    let left = drip.left - Math.max(0, dt);
+    let remain = drip.remain;
+    while (remain > 0 && left <= 1e-8) {
+      remain -= 1;
+      scored += 1;
+      left += HACKER_RAIN.dripSeconds;
+    }
+    if (remain > 0) next.push({ slot: drip.slot, left, remain });
+  }
+  return { drips: next, scored };
+}
+
+export function rainPhoneLayout(world: { w: number; h: number }) {
+  const w = 62;
+  const h = 86;
+  const x = Math.round((world.w - w) / 2);
+  const y = Math.round(world.h - h - 22);
+  return { x, y, w, h };
+}
+
+export function pointerOnRainPhone(world: { w: number; h: number }, x: number, y: number) {
+  const box = rainPhoneLayout(world);
+  const pad = 12;
+  return x >= box.x - pad && x <= box.x + box.w + pad && y >= box.y - pad && y <= box.y + box.h + pad;
+}
+
+export function drawRainPhone(ctx: CanvasRenderingContext2D, world: { w: number; h: number }) {
+  const box = rainPhoneLayout(world);
+  ctx.save();
+  ctx.translate(box.x, box.y);
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.beginPath();
+  ctx.ellipse(box.w / 2, box.h + 4, box.w * 0.42, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#141414";
+  ctx.strokeStyle = "#2a2a2a";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, box.w, box.h, 12);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#0c1a12";
+  ctx.fillRect(8, 8, box.w - 16, 22);
+  ctx.strokeStyle = "#00FF41";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(8.5, 8.5, box.w - 17, 21);
+  ctx.fillStyle = "#d7d7d7";
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 3; col++) {
+      ctx.beginPath();
+      ctx.arc(16 + col * 15, 42 + row * 12, 3.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.fillStyle = "#00FF41";
+  ctx.beginPath();
+  ctx.arc(box.w / 2, box.h - 10, 4.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 export function releaseChargeHold(s: HackerCharge): ChargeEffect {
   if (!s.holding) return "none";
   const per = HACKER_CHARGE.makesPerLayer;
@@ -209,7 +307,9 @@ export function drawHackerCharge(
   ctx.strokeStyle = "rgba(6, 12, 16, 0.9)";
   ctx.fillStyle = opts.awake ? HACKER_CHARGE_COLORS[1] : "#f4fbff";
   // Rain exit (phone ring / long-press) is not locked. This line is status, not a button.
-  const label = opts.awake ? "矩阵 · 撤离未开放" : opts.aiming ? "点一下落下" : s.holding ? "松手结算" : "长按耗气";
+  const label = opts.awake
+    ? chargeIsFull(s) ? "点电话撤离" : s.holding ? "松手留筐" : "长按留筐"
+    : opts.aiming ? "点一下落下" : s.holding ? "松手结算" : "长按耗气";
   const labelY = box.y + box.h + 4;
   ctx.strokeText(label, box.x, labelY);
   ctx.fillText(label, box.x, labelY);

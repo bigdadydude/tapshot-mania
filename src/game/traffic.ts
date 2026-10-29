@@ -253,6 +253,23 @@ export function updateTrafficHackerSlide(state: TrafficState, world: World, ball
   ball.vy = closest.nx * desired.speed * slide.turn;
 }
 
+/** Cars already inside the near-miss band drop once. No cars means no combo. */
+export function rainClearTraffic(state: TrafficState, world: World, ball: Ball) {
+  let dropped = 0;
+  for (const v of state.vehicles) {
+    if (v.burnt !== undefined || v.absorbed) continue;
+    const gap = trafficClearance(v, world, ball);
+    if (gap > ball.r * 2) continue;
+    v.burnt = 0;
+    v.burning = false;
+    v.frozenLeft = 0;
+    v.burnLaunch = { vx: v.dir * world.w * 0.15, vy: -world.h * 0.42, spin: v.dir * 3 };
+    state.encounters[v.id] = { close: false, awarded: true, blocked: true };
+    dropped += 1;
+  }
+  return dropped;
+}
+
 /** Arm within one ball diameter; award once after safely leaving that range. Contact breaks the streak. */
 export function stepTrafficNearMiss(state: TrafficState, world: World, ball: Ball, ignored = false) {
   const ids = new Set(state.vehicles.map(v => v.id));
