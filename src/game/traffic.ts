@@ -255,6 +255,7 @@ export function updateTrafficHackerSlide(state: TrafficState, world: World, ball
 
 /** Cars already inside the near-miss band drop once. No cars means no combo. */
 export function rainClearTraffic(state: TrafficState, world: World, ball: Ball) {
+  if (state.vehicles.length === 0) return 0;
   let dropped = 0;
   for (const v of state.vehicles) {
     if (v.burnt !== undefined || v.absorbed) continue;

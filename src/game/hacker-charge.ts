@@ -139,11 +139,14 @@ export function splitRainScore(gain: number) {
 
 export type RainDrip = { left: number; remain: number; slot: number };
 
+/** Each tick pays the live streak (at least 1). `remain` is still the tick count from the make. */
 export function stepRainScoreDrips(
   drips: readonly RainDrip[],
   dt: number,
   alive: (slot: number) => boolean,
+  points = 1,
 ) {
+  const payout = Math.max(1, points);
   let scored = 0;
   const next: RainDrip[] = [];
   for (const drip of drips) {
@@ -152,7 +155,7 @@ export function stepRainScoreDrips(
     let remain = drip.remain;
     while (remain > 0 && left <= 1e-8) {
       remain -= 1;
-      scored += 1;
+      scored += payout;
       left += HACKER_RAIN.dripSeconds;
     }
     if (remain > 0) next.push({ slot: drip.slot, left, remain });
@@ -368,9 +371,13 @@ export function hackerLensBands(ripple: HackerRipple, ballR: number): LensBand[]
   return bands;
 }
 
+let lensCanvas: HTMLCanvasElement | null = null;
+let lensCtx: CanvasRenderingContext2D | null = null;
+let lensDst: ImageData | null = null;
+
 /**
  * Refract the already-drawn court through expanding convex bands.
- * Samples the live framebuffer; does not paint hollow rings.
+ * Reads a half-resolution copy of the band, not the full frame, and reuses that buffer.
  */
 export function drawHackerLensWarps(
   ctx: CanvasRenderingContext2D,
@@ -381,7 +388,7 @@ export function drawHackerLensWarps(
 ) {
   const bands: LensBand[] = [];
   for (const ripple of list) bands.push(...hackerLensBands(ripple, ballR));
-  if (!bands.length || space.cssW < 8 || source.width < 8) return;
+  if (!bands.length || space.cssW < 8 || source.width < 8 || typeof document === "undefined") return;
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -408,28 +415,46 @@ export function drawHackerLensWarps(
   const sw = sx1 - sx0;
   const sh = sy1 - sy0;
   if (sw < 2 || sh < 2 || sw * sh > 420000) return;
+  const scale = sw * sh > 48000 ? 0.5 : 1;
+  const dw = Math.max(2, Math.ceil(sw * scale));
+  const dh = Math.max(2, Math.ceil(sh * scale));
+  if (!lensCanvas || !lensCtx) {
+    lensCanvas = document.createElement("canvas");
+    lensCtx = lensCanvas.getContext("2d", { willReadFrequently: true });
+  }
+  if (!lensCtx || !lensCanvas) return;
+  if (lensCanvas.width !== dw || lensCanvas.height !== dh) {
+    lensCanvas.width = dw;
+    lensCanvas.height = dh;
+    lensDst = null;
+  }
+  lensCtx.setTransform(1, 0, 0, 1, 0, 0);
+  lensCtx.clearRect(0, 0, dw, dh);
+  lensCtx.drawImage(source, sx0, sy0, sw, sh, 0, 0, dw, dh);
   let src: ImageData;
   try {
-    src = ctx.getImageData(sx0, sy0, sw, sh);
+    src = lensCtx.getImageData(0, 0, dw, dh);
   } catch {
     return;
   }
-  const dst = new ImageData(new Uint8ClampedArray(src.data), sw, sh);
+  if (!lensDst || lensDst.width !== dw || lensDst.height !== dh) lensDst = new ImageData(dw, dh);
+  const dst = lensDst;
+  dst.data.set(src.data);
   const s = src.data;
   const o = dst.data;
   const sample = (fx: number, fy: number, i: number) => {
-    const x = Math.max(0, Math.min(sw - 1, fx));
-    const y = Math.max(0, Math.min(sh - 1, fy));
+    const x = Math.max(0, Math.min(dw - 1, fx));
+    const y = Math.max(0, Math.min(dh - 1, fy));
     const x0 = Math.floor(x);
     const y0 = Math.floor(y);
-    const x1 = Math.min(sw - 1, x0 + 1);
-    const y1 = Math.min(sh - 1, y0 + 1);
+    const x1 = Math.min(dw - 1, x0 + 1);
+    const y1 = Math.min(dh - 1, y0 + 1);
     const tx = x - x0;
     const ty = y - y0;
-    const i00 = (y0 * sw + x0) * 4;
-    const i10 = (y0 * sw + x1) * 4;
-    const i01 = (y1 * sw + x0) * 4;
-    const i11 = (y1 * sw + x1) * 4;
+    const i00 = (y0 * dw + x0) * 4;
+    const i10 = (y0 * dw + x1) * 4;
+    const i01 = (y1 * dw + x0) * 4;
+    const i11 = (y1 * dw + x1) * 4;
     const a = (1 - tx) * (1 - ty);
     const b = tx * (1 - ty);
     const c = (1 - tx) * ty;
@@ -438,31 +463,35 @@ export function drawHackerLensWarps(
     o[i + 1] = s[i00 + 1]! * a + s[i10 + 1]! * b + s[i01 + 1]! * c + s[i11 + 1]! * d;
     o[i + 2] = s[i00 + 2]! * a + s[i10 + 2]! * b + s[i01 + 2]! * c + s[i11 + 2]! * d;
   };
-  for (let py = 0; py < sh; py++) {
-    const wy = (sy0 + py + 0.5) / dpr - space.oy;
-    for (let px = 0; px < sw; px++) {
-      const wx = (sx0 + px + 0.5) / dpr - space.ox;
+  for (let py = 0; py < dh; py++) {
+    const wy = (sy0 + (py + 0.5) / scale) / dpr - space.oy;
+    const row = py * dw;
+    for (let px = 0; px < dw; px++) {
+      const wx = (sx0 + (px + 0.5) / scale) / dpr - space.ox;
       let shiftX = 0;
       let shiftY = 0;
       for (const band of bands) {
         const dx = wx - band.x;
         const dy = wy - band.y;
-        const dist = Math.hypot(dx, dy);
         const inner = band.radius - band.half;
         const outer = band.radius + band.half;
-        if (dist <= inner || dist >= outer || dist < 0.001) continue;
+        const dist2 = dx * dx + dy * dy;
+        if (dist2 <= inner * inner || dist2 >= outer * outer || dist2 < 1e-6) continue;
+        const dist = Math.sqrt(dist2);
         const u = (dist - inner) / (outer - inner);
         const push = band.strength * Math.sin(u * Math.PI);
         shiftX -= (dx / dist) * push;
         shiftY -= (dy / dist) * push;
       }
       if (shiftX === 0 && shiftY === 0) continue;
-      sample(px + 0.5 + shiftX * dpr, py + 0.5 + shiftY * dpr, (py * sw + px) * 4);
+      sample(px + 0.5 + shiftX * dpr * scale, py + 0.5 + shiftY * dpr * scale, (row + px) * 4);
     }
   }
+  lensCtx.putImageData(dst, 0, 0);
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.putImageData(dst, sx0, sy0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(lensCanvas, sx0, sy0, sw, sh);
   ctx.restore();
 }
 

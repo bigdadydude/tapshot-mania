@@ -3744,9 +3744,11 @@ export function createGame(
     h.moving = false;
     h.couple = true;
     h.active = true;
-    h.hold = HOOP_HOLD;
     h.targetX = h.baseX;
-    const dx = (h.baseX - h.x) * (1 - Math.exp(-11 * dt));
+    if (h.hold !== HOOP_HOLD) h.hold = HOOP_HOLD;
+    const gap = h.baseX - h.x;
+    if (Math.abs(gap) < 0.6) return;
+    const dx = gap * (1 - Math.exp(-11 * dt));
     h.x += dx;
     nudgeNet(h, dx, 0);
   }
@@ -3773,6 +3775,7 @@ export function createGame(
       live.map((drip, index) => ({ slot: index, left: drip.left, remain: drip.remain })),
       dt,
       () => true,
+      Math.max(1, streak),
     );
     rainDrips = stepped.drips.flatMap((drip) => {
       const source = live[drip.slot];

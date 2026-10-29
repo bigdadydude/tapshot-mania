@@ -236,4 +236,9 @@ test("a full bar is three layers and a drip dies with its own hoop", () => {
   const second = stepRainScoreDrips(first.drips, 0.5, (slot) => slot === 0);
   assert.equal(second.scored, 1);
   assert.equal(second.drips.length, 0);
+  const boosted = stepRainScoreDrips([{ slot: 0, left: 0.5, remain: 2 }], 1, () => true, 6);
+  assert.equal(boosted.scored, 12);
+  assert.equal(boosted.drips.length, 0);
+  const floor = stepRainScoreDrips([{ slot: 0, left: 0.5, remain: 1 }], 0.5, () => true, 0);
+  assert.equal(floor.scored, 1);
 });
