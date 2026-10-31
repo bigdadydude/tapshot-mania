@@ -139,14 +139,12 @@ export function splitRainScore(gain: number) {
 
 export type RainDrip = { left: number; remain: number; slot: number };
 
-/** Each tick pays the live streak (at least 1). `remain` is still the tick count from the make. */
+/** Each live tick pays a flat +1. `scored` is the tick count; dead hoops add nothing. */
 export function stepRainScoreDrips(
   drips: readonly RainDrip[],
   dt: number,
   alive: (slot: number) => boolean,
-  points = 1,
 ) {
-  const payout = Math.max(1, points);
   let scored = 0;
   const next: RainDrip[] = [];
   for (const drip of drips) {
@@ -155,7 +153,7 @@ export function stepRainScoreDrips(
     let remain = drip.remain;
     while (remain > 0 && left <= 1e-8) {
       remain -= 1;
-      scored += payout;
+      scored += 1;
       left += HACKER_RAIN.dripSeconds;
     }
     if (remain > 0) next.push({ slot: drip.slot, left, remain });

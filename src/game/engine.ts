@@ -3775,7 +3775,6 @@ export function createGame(
       live.map((drip, index) => ({ slot: index, left: drip.left, remain: drip.remain })),
       dt,
       () => true,
-      Math.max(1, streak),
     );
     rainDrips = stepped.drips.flatMap((drip) => {
       const source = live[drip.slot];
@@ -3783,6 +3782,10 @@ export function createGame(
     });
     if (stepped.scored <= 0) return;
     score += stepped.scored;
+    streak += stepped.scored;
+    comboCounting = true;
+    comboClock = 0;
+    combo = Math.max(combo, streak);
     const stand = rainDrips[0]?.hoop ?? hoop;
     callouts.push({
       text: `+${stepped.scored}`,
@@ -5621,14 +5624,14 @@ export function createGame(
         if (hackerAwaken && !hackerCharge.holding && hackerHoopGrace > 0) {
           hackerHoopGrace = Math.max(0, hackerHoopGrace - dt);
         }
+        if (hackerAwaken) {
+          const birdsDropped = trainBackdropOn() ? rainDropBirds(birds, ball) : 0;
+          const carsDropped = trafficEnabled() ? rainClearTraffic(traffic, world, ball) : 0;
+          noteRainDropCombo(birdsDropped + carsDropped);
+        }
         if (hackerCharge.holding) {
           stepChargeHold(hackerCharge, dt);
           if (hackerAwaken && chargeDisplayMakes(hackerCharge) <= 1e-4) endHackerSpend();
-          if (hackerCharge.holding && hackerAwaken) {
-            const birdsDropped = trainBackdropOn() ? rainDropBirds(birds, ball) : 0;
-            const carsDropped = trafficEnabled() ? rainClearTraffic(traffic, world, ball) : 0;
-            noteRainDropCombo(birdsDropped + carsDropped);
-          }
           hackerRipplePulse += dt;
           if (hackerRipplePulse >= HACKER_RIPPLE.pulseEvery) {
             hackerRipplePulse = 0;
