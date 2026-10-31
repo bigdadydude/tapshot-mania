@@ -306,6 +306,25 @@ export function stepBirds(s: BirdState, w: View, ball: Body, dt: number, allowSp
 function canBeStunned(b: Bird) {
   return b.mode !== "fall" && b.mode !== "stunned" && b.mode !== "outside" && b.mode !== "carry" && b.mode !== "frozen" && b.mode !== "absorbing" && b.mode !== "shattered";
 }
+/** Birds already inside the collision radius drop once. Empty scenes add nothing. */
+export function rainDropBirds(s: BirdState, ball: { x: number; y: number; r: number }) {
+  if (s.birds.length === 0) return 0;
+  let dropped = 0;
+  for (const b of s.birds) {
+    const carrying = b.mode === "carry" && s.carrier === b.id;
+    if (!carrying && (!canBeStunned(b) || b.rewarded)) continue;
+    if (Math.hypot(b.x - ball.x, b.y - ball.y) > b.r + ball.r) continue;
+    if (carrying) {
+      if (releaseBirdCarrier(s)) dropped += 1;
+      continue;
+    }
+    stunBird(s, b);
+    b.rewarded = true;
+    dropped += 1;
+  }
+  return dropped;
+}
+
 /** A skill interrupts the carrying pair before ordinary collision immunity resumes. */
 export function releaseBirdCarrier(s: BirdState) {
   const b = s.birds.find(b => b.id === s.carrier);

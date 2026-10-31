@@ -1,3 +1,4 @@
+import { HOOP_HOLD, hoopRetirementDone, stepHoopRetirement } from "./hoop-retirement";
 import { stepTrainSmoke } from "./train-smoke";
 import { createAntiRecovery, launchAntiRecovery, scoreAntiRecovery, stepAntiRecovery, antiRecoveryIgnoresHoops, type AntiRecovery } from "./anti-recovery";
 import { BUZZER_WINDOW, BUZZER_SPEED, hasBuzzerChance } from "./buzzer";
@@ -5,7 +6,7 @@ import { miniMeStreakPerStack, streakAfterMake } from "./make-streak";
 import { touchesAntimatter } from "./antimatter-pickup";
 import { getTrainTunnel, restoreTrainTunnel, stepTrainTunnel, tunnelPassing, tunnelReserved, tunnelHoopMin, tunnelGeometry, collideTunnel } from "./train-tunnel.ts";
 import { collideTrainGantries, getTrainGantries, getTrainGantryWarnings } from "./train-gantry.ts";
-import { createBirds, stepBirds, collideBirds, collideFrozenBirds, releaseBirdCarrier, type BirdSkills, collideBirdGantries, birdOwnsBall, spawnBirdWave, type BirdKind, type BirdState } from "./birds.ts";
+import { createBirds, stepBirds, collideBirds, collideFrozenBirds, releaseBirdCarrier, rainDropBirds, type BirdSkills, collideBirdGantries, birdOwnsBall, spawnBirdWave, type BirdKind, type BirdState } from "./birds.ts";
 import { createRocket, rocketLayout, releaseRocket, stepRocket, refillRocket, drawRocket } from "./rocket";
 import { SUPER, createSuper, superSwipe, superImpact, superBirdImpact, superToggle, superPulseShield, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper, drawSuperGhosts, drawSuperGas, drawSuperAura, superIsFrozen } from "./super";
 import { VECTOR, createVector, vectorLayout, vectorRecover, vectorMake, vectorRelease, vectorHold, cancelVectorPress, drawVector, vectorBurstSpeed, vectorChargeScale, vectorFinishBurst, stepVectorLeak, vectorLeakBounce } from "./vector";
@@ -35,14 +36,14 @@ import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { type HackerDir } from "./hacker-pad";
-import { createHackerPills, spawnHackerPill, stepHackerPill, drawHackerPills, drawHackerGlitch, hitHackerPillButton, hackerPillButton, pillPoint } from "./hacker-pills";
+import { HACKER_CHARGE, HACKER_RAIN, HACKER_RIPPLE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeIsFull, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawHackerLensWarps, drawLandingArrow, drawRainPhone, pointerOnChargeMeter, pointerOnRainPhone, releaseChargeHold, releaseRainCharge, settledHackerCharge, splitRainScore, stepAimArrow, stepChargeDecay, stepChargeHold, stepHackerRipples, stepRainScoreDrips, type HackerCharge, type HackerFlight, type HackerRipple, type RainDrip } from "./hacker-charge";
 import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
 import { parseBalanceImport, mergeBalanceStores, automaticStrength, loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
 import { DEFAULT_MAZE, DEFAULT_PHYS, clampMaze, clampPhys, clampPhysKey, wantDevQuery, type DevCmd, type DevMaze, type DevPhys, type DevSceneId } from "./dev";
 import { createModifier, modifierName, type ModifierId, type StageModifier } from "./modifiers";
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
-import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
+import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, rainClearTraffic, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
@@ -86,7 +87,6 @@ const TIMER_DECAY = 0.972;
 const GRAF_IN = 1.2;
 const COMBO_STOP = 6;
 const COMBO_DROP = 2;
-const HOOP_HOLD = 0.72;
 const FIRE_HOLD = 1.35;
 const FROST_DUR_FIRST = 4;
 const FROST_DUR_REFRESH = 3;
@@ -978,8 +978,24 @@ export function createGame(
   let boltTrail: { x: number; y: number }[] = [];
   let hackerDir: HackerDir | null = null;
   let hackerRimSlide: { dir: HackerDir; hoop: Hoop; turn: -1 | 1 } | null = null;
-  let hackerPills = createHackerPills();
+  let hackerCharge = createHackerCharge();
+  let hackerFlight: HackerFlight | null = null;
+  let hackerDeepArmed: "arrow" | "lock" | null = null;
+  let hackerSpendPointer: number | null = null;
+  /** Screen press. Jump is decided on release, never by waiting out 0.3s. */
+  let hackerBallPress: { id: number; t0: number } | null = null;
+  /** Mid-layer release: ball stays put, then falls. */
+  let hackerFailFreeze = 0;
+  let hackerRipples: HackerRipple[] = [];
+  let hackerRipplePulse = 0;
+  let hackerAimPointer: number | null = null;
+  let hackerPin: { x: number; y: number } | null = null;
   let hackerAwaken = false;
+  /** Seconds a rain stand stays after a spend ends. Refreshed, never stacked. */
+  let hackerHoopGrace = 0;
+  /** Positive: ball is hidden. Zero: falling into the primary hoop. */
+  let hackerSkyDrop: number | null = null;
+  let rainDrips: { hoop: Hoop; left: number; remain: number }[] = [];
   /** Energy, gesture ownership and flight state of the Vector Ball. */
   let rocket = createRocket();
   let vector = createVector();
@@ -1032,7 +1048,12 @@ export function createGame(
     quantumTunnelLeft: number;
     mazeRespawnLeft: number;
     hackerAwaken: boolean;
-    hackerPills: ReturnType<typeof createHackerPills>;
+    hackerCharge: HackerCharge;
+    hackerHoopGrace: number;
+    hackerSkyDrop: number | null;
+    rainDrips: { slot: 0 | 1; left: number; remain: number }[];
+    hackerFlight: HackerFlight | null;
+    hackerDeepArmed: "arrow" | "lock" | null;
     score: number;
     combo: number;
     streak: number;
@@ -1085,7 +1106,14 @@ export function createGame(
     if (rewindSampleLeft > 0) return;
     rewindSampleLeft = REWIND_SAMPLE_SECONDS;
     rewindHistory.push({
-      hackerAwaken, hackerPills: structuredClone(hackerPills),
+      hackerAwaken, hackerCharge: settledHackerCharge(hackerCharge),
+      hackerFlight: hackerFlight ? { ...hackerFlight } : null, hackerDeepArmed,
+      hackerHoopGrace, hackerSkyDrop,
+      rainDrips: rainDrips.map((drip) => ({
+        slot: (drip.hoop === other ? 1 : 0) as 0 | 1,
+        left: drip.left,
+        remain: drip.remain,
+      })),
       ball: structuredClone(ball),
       traffic: structuredClone(traffic),
       hoop: structuredClone(hoop),
@@ -1150,7 +1178,22 @@ export function createGame(
     quantumTunnelLeft = snapshot.quantumTunnelLeft;
     mazeRespawnLeft = snapshot.mazeRespawnLeft;
     hackerAwaken = snapshot.hackerAwaken;
-    hackerPills = structuredClone(snapshot.hackerPills);
+    hackerCharge = { ...snapshot.hackerCharge };
+    hackerHoopGrace = snapshot.hackerHoopGrace;
+    hackerSkyDrop = snapshot.hackerSkyDrop;
+    rainDrips = snapshot.rainDrips.flatMap((drip) => {
+      const stand = drip.slot === 1 ? other : hoop;
+      return stand ? [{ hoop: stand, left: drip.left, remain: drip.remain }] : [];
+    });
+    hackerFlight = snapshot.hackerFlight ? { ...snapshot.hackerFlight } : null;
+    hackerDeepArmed = snapshot.hackerDeepArmed;
+    hackerSpendPointer = null;
+    hackerBallPress = null;
+    hackerFailFreeze = 0;
+    hackerRipples = [];
+    hackerRipplePulse = 0;
+    hackerAimPointer = null;
+    hackerPin = hackerFlight?.kind === "aim" ? { x: hackerFlight.landX, y: -ball.r - 28 } : null;
     score = snapshot.score;
     combo = snapshot.combo;
     streak = snapshot.streak;
@@ -1593,8 +1636,12 @@ export function createGame(
     return clamp(0.68 + Math.min(0.24, impact / 1500), 0.68, 0.92);
   }
 
+  function shotSide(): -1 | 1 {
+    return hoop.side;
+  }
+
   function jumpVx() {
-    return hoop.side * world.w * 0.76 * pMul("jumpFwd");
+    return shotSide() * world.w * 0.76 * pMul("jumpFwd");
   }
 
   function wrapPad() {
@@ -1700,7 +1747,6 @@ export function createGame(
       ) => {
         paintBallSprite(ctx, x, y, r, spin, ballId, time);
       },
-      isHackerAwaken: () => hackerAwaken,
       isMaze: () => isMaze(),
       onProjectileImpact: (vx: number, vy: number) => {
         if(isSuper()) {
@@ -2606,7 +2652,7 @@ export function createGame(
     if (!isBolt()) resetBoltRun();
     if (!isHacker()) {
       hackerDir = null;
-      hackerAwaken = false; hackerPills = createHackerPills();
+      hackerAwaken = false; resetHackerMeter();
       hackerSpeed = HACKER_SPEED_BASE;
       clearSparseCodeRain();
     }
@@ -2716,14 +2762,14 @@ export function createGame(
   }
 
   function onApproachSide() {
-    return hoop.side > 0 ? ball.x < 0 : ball.x > world.w;
+    return shotSide() > 0 ? ball.x < 0 : ball.x > world.w;
   }
 
   function predictBuzzerMake() {
     const pending = shotOpen && !shotMade && !shotMissed && !ball.scored &&
       !birdOwnsBall(birds) && !stageMod.holdsBall?.() &&
       !(holeOn && isAnti2() && antiRecovery.mode !== "flight");
-    const targets = [hoop, ...(other && (other.active || other.frostLeft > 0) ? [other] : [])]
+    const targets = courtHoops().filter(h => h === hoop || h.active || h.frostLeft > 0)
       .filter(h => stageMod.canScore(h))
       .map(h => {
         const g = boardGeom(h, world);
@@ -2849,6 +2895,7 @@ export function createGame(
     }
     scaleHoop(hoop, sx, sy, world);
     if (other) scaleHoop(other, sx, sy, world);
+    for (const h of extraCourtHoops()) scaleHoop(h, sx, sy, world);
     syncChain();
   }
 
@@ -2928,8 +2975,8 @@ export function createGame(
   function birdSkills(): BirdSkills {
     return {
       unobservable: quantumTunnelLeft > 0,
-      lethal: (isHacker() && hackerAwaken) || (isBolt() && (Boolean(boltStorm) || (boltCharge > 90 && !ball.scored))),
-      burn: heatN() >= STAGE_IGNITE,
+      lethal: isBolt() && (Boolean(boltStorm) || (boltCharge > 90 && !ball.scored)),
+      burn: !hackerAwaken && heatN() >= STAGE_IGNITE,
       frostChance: isFrost() ? frostChance() : 0,
       hole: holeOn ? { x: holeX, y: holeY, r: holeR } : undefined,
       block: isSuper() ? (catching, nx, ny) => superBirdImpact(superBall, ball, catching, nx, ny) : undefined,
@@ -2952,7 +2999,7 @@ export function createGame(
       { x: -world.w, y: world.floorY, w: world.w * 3, h: world.h },
     ];
     const segments: Array<{ x0: number; y0: number; x1: number; y1: number; halfW: number }> = [];
-    for (const target of other ? [hoop, other] : [hoop]) {
+    for (const target of courtHoops()) {
       if (!target.noBoard) {
         const g = boardGeom(target, world);
         boxes.push({ x: g.visX, y: g.visY, w: g.visW, h: g.bh });
@@ -3019,7 +3066,7 @@ export function createGame(
     streak = 0;
     hint = true;
     hackerDir = null;
-    hackerAwaken = false; hackerPills = createHackerPills();
+    hackerAwaken = false; resetHackerMeter();
     vector = createVector(); superBall = createSuper();
     rocket = createRocket();
     quantumTunnelLeft = 0;
@@ -3190,7 +3237,7 @@ export function createGame(
     buzzer = false;
     buzzerTimer = 0;
     hackerDir = null;
-    hackerAwaken = false; hackerPills = createHackerPills();
+    hackerAwaken = false; resetHackerMeter();
     vector = createVector(); superBall = createSuper();
     rocket = createRocket();
     quantumTunnelLeft = 0;
@@ -3661,32 +3708,277 @@ export function createGame(
     otherOverRim = false;
   }
 
-  function enterHackerAwaken() {
-    if (!isHacker() || hackerAwaken || !hackerPills.ready || phase !== "playing" || paused || buzzer || timeUp) return;
-    hackerPills.ready = false;
-    hackerAwaken = true;
-    hackerDir = null;
-    hackerRimSlide = null;
-    hackerPills.pill = spawnHackerPill(world, ball);
-    callouts.push({text:"觉醒",x:ball.x,y:ball.y-ball.r*2.6,life:1.4,max:1.4,kind:"tag"});
+  function courtHoops(): Hoop[] {
+    return [hoop, ...(other ? [other] : [])];
+  }
+
+  function extraCourtHoops(): Hoop[] {
+    return [];
+  }
+
+  function clearHackerGesture() {
+    hackerFlight = null;
+    hackerDeepArmed = null;
+    hackerSpendPointer = null;
+    hackerBallPress = null;
+    hackerFailFreeze = 0;
+    hackerAimPointer = null;
+    hackerPin = null;
+  }
+
+  function resetHackerMeter() {
+    hackerCharge = createHackerCharge();
+    clearHackerGesture();
+    hackerRipples = [];
+    hackerRipplePulse = 0;
+    hackerHoopGrace = 0;
+    hackerSkyDrop = null;
+    rainDrips = [];
+  }
+
+  function rainHoopsPinned() {
+    return hackerAwaken && (hackerCharge.holding || hackerHoopGrace > 0);
+  }
+
+  function pullHoopHome(h: Hoop, dt: number) {
+    h.moving = false;
+    h.couple = true;
+    h.active = true;
+    h.targetX = h.baseX;
+    if (h.hold !== HOOP_HOLD) h.hold = HOOP_HOLD;
+    const gap = h.baseX - h.x;
+    if (Math.abs(gap) < 0.6) return;
+    const dx = gap * (1 - Math.exp(-11 * dt));
+    h.x += dx;
+    nudgeNet(h, dx, 0);
+  }
+
+  function dismissHoopNow(h: Hoop) {
+    h.hold = 0;
+    h.couple = false;
+    h.active = false;
+    h.moving = false;
+    h.targetX = h.side < 0 ? -world.w * 0.42 : world.w * 1.42;
+  }
+
+  function cancelRainDrips(stand?: Hoop) {
+    rainDrips = stand ? rainDrips.filter((drip) => drip.hoop !== stand) : [];
+  }
+
+  function stepRainDrips(dt: number) {
+    if (!hackerAwaken || phase !== "playing") {
+      rainDrips = [];
+      return;
+    }
+    const live = rainDrips.filter((drip) => (drip.hoop === hoop || drip.hoop === other) && !hoopRetirementDone(drip.hoop, world.w));
+    const stepped = stepRainScoreDrips(
+      live.map((drip, index) => ({ slot: index, left: drip.left, remain: drip.remain })),
+      dt,
+      () => true,
+    );
+    rainDrips = stepped.drips.flatMap((drip) => {
+      const source = live[drip.slot];
+      return source ? [{ hoop: source.hoop, left: drip.left, remain: drip.remain }] : [];
+    });
+    if (stepped.scored <= 0) return;
+    score += stepped.scored;
+    streak += stepped.scored;
+    comboCounting = true;
+    comboClock = 0;
+    combo = Math.max(combo, streak);
+    const stand = rainDrips[0]?.hoop ?? hoop;
+    callouts.push({
+      text: `+${stepped.scored}`,
+      x: stand.x,
+      y: stand.y - stand.inner * 0.8,
+      life: 0.7,
+      max: 0.7,
+      kind: "score",
+    });
+    noteBest();
     emitHud();
   }
 
-  function updateHackerPills(dt: number) {
-    if (!isHacker() || phase !== "playing" || paused || buzzer || timeUp || birdOwnsBall(birds) || stageMod.holdsBall?.()) return;
-    if (!hackerAwaken && madeCount === 0) return;
-    if (!hackerPills.pill && !hackerPills.ready) hackerPills.pill = spawnHackerPill(world, ball);
-    if (!stepHackerPill(hackerPills, world, ball, {x:prevBallX,y:prevBallY}, dt, hackerAwaken)) return;
-    if (hackerAwaken) {
-      hackerAwaken = false;
-      hackerDir = null;
-      hackerPills.pill = spawnHackerPill(world, ball);
-      callouts.push({text:"返回现实",x:ball.x,y:ball.y-ball.r*2,life:1,max:1,kind:"tag"});
-    } else {
-      hackerPills.ready = true;
-      hint = false;
-      callouts.push({text:"红药丸",x:ball.x,y:ball.y-ball.r*2,life:1.4,max:1.4,kind:"tag"});
+  function spawnHackerRipple(kind: HackerRipple["kind"]) {
+    hackerRipples.push({ x: ball.x, y: ball.y, age: 0, kind });
+  }
+
+  function enterHackerAwaken() {
+    // TODO(hacker-rain-exit): phone-ring / long-press evacuate is not locked.
+    // The shot clock still ends the run, so the matrix cannot soft-lock the player.
+    // Do not restore a blue pill as the exit.
+    if (!isHacker() || hackerAwaken || phase !== "playing" || buzzer || timeUp) return;
+    clearHackerGesture();
+    hackerAwaken = true;
+    hint = false;
+    hackerDir = null;
+    hackerRimSlide = null;
+    callouts.push({text:"世界变了",x:ball.x,y:ball.y-ball.r*2.6,life:1.4,max:1.4,kind:"tag"});
+    emitHud();
+  }
+
+  function launchHackerFlight(effect: "arrow" | "lock") {
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.omega = 0;
+    ball.scored = false;
+    scoreGateHoop = null;
+    scoredLock = 0;
+    resetShotFlags();
+    shotOpen = true;
+    shotMade = false;
+    shotMissed = false;
+    shotAirborne = true;
+    hackerFlight = { kind: "rise", effect };
+    hackerPin = { x: ball.x, y: ball.y };
+    callouts.push({
+      text: effect === "lock" ? "锁筐" : "飞天",
+      x: ball.x,
+      y: ball.y - ball.r * 2.2,
+      life: 0.9,
+      max: 0.9,
+      kind: "tag",
+    });
+  }
+
+  function completeHackerRise() {
+    const flight = hackerFlight;
+    if (!flight || flight.kind !== "rise") return;
+    wentOffTop = true;
+    ball.hitRim = false;
+    ball.hitBoard = false;
+    ball.omega = 0;
+    ball.scored = false;
+    if (flight.effect === "lock") {
+      ball.x = hoop.x;
+      ball.vx = 0;
+      ball.y = -ball.r - 8;
+      ball.vy = world.h * HACKER_CHARGE.flyDrop;
+      hackerFlight = { kind: "fall", effect: "lock" };
+      hackerDeepArmed = "lock";
+      hackerPin = null;
+      return;
     }
+    const minX = ball.r;
+    const maxX = world.w - ball.r;
+    const landX = clamp(ball.x, minX, maxX);
+    ball.x = landX;
+    ball.y = -ball.r - 28;
+    ball.vx = 0;
+    ball.vy = 0;
+    hackerPin = { x: landX, y: ball.y };
+    hackerFlight = { kind: "aim", landX, dir: landX < world.w * 0.5 ? 1 : -1, age: 0 };
+    hackerDeepArmed = "arrow";
+  }
+
+  function confirmHackerLanding(x: number) {
+    if (hackerFlight?.kind !== "aim") return;
+    const landX = clamp(x, ball.r, world.w - ball.r);
+    ball.x = landX;
+    ball.y = -ball.r - 2;
+    ball.vx = 0;
+    ball.vy = world.h * HACKER_CHARGE.flyDrop;
+    ball.omega = 0;
+    wentOffTop = true;
+    ball.hitRim = false;
+    ball.hitBoard = false;
+    shotOpen = true;
+    shotAirborne = true;
+    ball.scored = false;
+    hackerFlight = { kind: "fall", effect: "arrow" };
+    hackerDeepArmed = "arrow";
+    hackerPin = null;
+    hackerAimPointer = null;
+  }
+
+  function canArmHackerSpend() {
+    return isHacker() && hackerSkyDrop === null && !hackerFlight && !hackerCharge.holding && hackerCharge.makes > 0
+      && phase === "playing" && !paused && !buzzer && !timeUp
+      && !birdOwnsBall(birds) && !stageMod.holdsBall?.();
+  }
+
+  function beginHackerSpend(pointerId: number) {
+    if (!isHacker() || hackerSkyDrop !== null || hackerFlight || phase !== "playing" || paused || buzzer || timeUp) return false;
+    if (birdOwnsBall(birds) || stageMod.holdsBall?.()) return false;
+    if (!beginChargeHold(hackerCharge)) return false;
+    hackerSpendPointer = pointerId;
+    hackerFailFreeze = 0;
+    hackerPin = { x: ball.x, y: ball.y };
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.omega = 0;
+    hackerRipplePulse = 0;
+    spawnHackerRipple("burst");
+    noteBalanceSkillInput();
+    return true;
+  }
+
+  function endHackerSpend() {
+    if (!hackerCharge.holding) return;
+    hackerSpendPointer = null;
+    if (hackerAwaken) {
+      releaseRainCharge(hackerCharge);
+      hackerPin = null;
+      hackerFailFreeze = 0;
+      hackerHoopGrace = HACKER_RAIN.hoopGraceSeconds;
+      return;
+    }
+    const effect = releaseChargeHold(hackerCharge);
+    if (effect === "none") {
+      hackerFailFreeze = HACKER_CHARGE.failFreezeSeconds;
+      hackerPin = { x: ball.x, y: ball.y };
+      ball.vx = 0;
+      ball.vy = 0;
+      ball.omega = 0;
+      spawnHackerRipple("burst");
+      return;
+    }
+    hackerPin = null;
+    hackerFailFreeze = 0;
+    if (effect === "rain") {
+      enterHackerAwaken();
+      return;
+    }
+    launchHackerFlight(effect);
+  }
+
+  function evacuateHackerRain() {
+    if (!hackerAwaken || hackerSkyDrop !== null || !chargeIsFull(hackerCharge)) return;
+    if (other) dismissHoopNow(other);
+    hackerAwaken = false;
+    hackerDir = null;
+    hackerRimSlide = null;
+    resetHackerMeter();
+    clearSparseCodeRain();
+    hackerSkyDrop = HACKER_RAIN.vanishSeconds;
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.omega = 0;
+    ball.y = -900;
+    ball.scored = false;
+    scoreGateHoop = null;
+    scoredLock = 0;
+    wentOffTop = false;
+    callouts.push({ text: "撤离", x: world.w / 2, y: world.h * 0.4, life: 1.1, max: 1.1, kind: "tag" });
+    emitHud();
+  }
+
+  function noteRainDropCombo(count: number) {
+    if (count <= 0) return;
+    for (let i = 0; i < count; i++) {
+      streak = streakAfterMake({ streak, comboCounting, bunshinGhost: false, comboBoost: null });
+      comboCounting = true;
+    }
+    comboClock = 0;
+    combo = Math.max(combo, streak);
+    callouts.push({
+      text: `连击 +${count}`,
+      x: ball.x,
+      y: ball.y - ball.r * 2.2,
+      life: 0.7,
+      max: 0.7,
+      kind: "tag",
+    });
     emitHud();
   }
 
@@ -3866,31 +4158,32 @@ export function createGame(
     }
   }
 
-  function tapJump(pointerId: number = -1) {
-    if (birdOwnsBall(birds)) return;
-    if (!booted) return;
+  function tapJump(pointerId: number = -1): boolean {
+    if (birdOwnsBall(birds)) return false;
+    if (!booted) return false;
     if (phase === "title") {
       audio.unlock();
       beginPlay();
     }
-    if (phase !== "playing") return;
-    if (paused) return;
-    if (vector.burst > 0) return;
-    if (isSuper() && superIsFrozen(superBall)) return;
-    if (stageMod.holdsBall?.()) return;
+    if (phase !== "playing") return false;
+    if (paused) return false;
+    if (isHacker() && (hackerCharge.holding || hackerFlight)) return false;
+    if (vector.burst > 0) return false;
+    if (isSuper() && superIsFrozen(superBall)) return false;
+    if (stageMod.holdsBall?.()) return false;
     const heroClutch =
       isRogueMode() && rogueRun && hasHeroMoment(rogueRun) && (buzzer || timeUp);
     const champClutch = isChamp() && buzzer && buzzerTimer > 0;
-    if (champClutch && champClutchControlled) return;
-    if ((buzzer || timeUp) && !heroClutch && !champClutch) return;
-    if (tapLock > 0) return;
-    if (ballHidden() && !onApproachSide() && !stageMod.allowHiddenTap?.()) return;
+    if (champClutch && champClutchControlled) return false;
+    if ((buzzer || timeUp) && !heroClutch && !champClutch) return false;
+    if (tapLock > 0) return false;
+    if (ballHidden() && !onApproachSide() && !stageMod.allowHiddenTap?.()) return false;
     if (shotOpen && !shotMade && !shotMissed) {
       if (comboRescue === "spent") {
         // Both rescue rounds are spent; another input starts a new attempt.
         comboRescue = "approach";
         breakComboStreak();
-        if (paused) return;
+        if (paused) return false;
       } else if (comboRescue === "contact") {
         comboRescue = "rescue";
       } else if (comboRescue === "secondContact") {
@@ -3898,6 +4191,7 @@ export function createGame(
       }
     }
     if (champClutch) champClutchControlled = true;
+    hackerFailFreeze = 0;
     cancelVectorInput();
     vector.coast = 0;
     if (!shotOpen || shotMade || shotMissed) vector.powered = false;
@@ -3931,7 +4225,7 @@ export function createGame(
       audio.whoosh(0.5);
       stageMod.onTap?.(modifierHost());
       emitHud();
-      return;
+      return true;
     }
     breakComboOnMissJump();
     hint = false;
@@ -3960,6 +4254,7 @@ export function createGame(
     audio.whoosh(0.5);
     stageMod.onTap?.(modifierHost());
     emitHud();
+    return true;
   }
 
   function pointerWorld(e: PointerEvent) {
@@ -4042,15 +4337,31 @@ export function createGame(
     audio.unlock();
     if (phase === "over") return;
     e.preventDefault();
-    if (birdOwnsBall(birds) && !(isSuper() || isVector() || isTime())) return;
-    if (birdOwnsBall(birds) && isSuper() && !superBall.impact) return;
-    if (phase === "playing" && isHacker() && hackerPills.ready) {
+    if (phase === "playing" && isHacker() && hackerAwaken && hackerSkyDrop === null && chargeIsFull(hackerCharge)) {
       const point = pointerWorld(e);
-      if (hitHackerPillButton(world, point.x, point.y)) {
-        enterHackerAwaken();
+      if (pointerOnRainPhone(world, point.x, point.y)) {
+        evacuateHackerRain();
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* detached canvas */ }
         return;
       }
     }
+    if (phase === "playing" && isHacker() && hackerFlight?.kind === "aim") {
+      confirmHackerLanding(hackerFlight.landX);
+      return;
+    }
+    if (canArmHackerSpend()) {
+      const point = pointerWorld(e);
+      if (!pointerOnChargeMeter(world, point.x, point.y)) {
+        // Same instant as other balls. Holding past 0.3s interrupts this jump into a spend.
+        hackerBallPress = { id: e.pointerId, t0: performance.now() };
+        noteBalanceClick();
+        tapJump(e.pointerId);
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* detached canvas */ }
+        return;
+      }
+    }
+    if (birdOwnsBall(birds) && !(isSuper() || isVector() || isTime())) return;
+    if (birdOwnsBall(birds) && isSuper() && !superBall.impact) return;
     if(phase==="playing" && isSuper()) {
       if(paused || buzzer || timeUp || stageMod.holdsBall?.() || superBall.pointer) return;
       const p=pointerWorld(e),bar=superLayout(world);
@@ -4200,6 +4511,24 @@ export function createGame(
   }
 
   function onUp(e: PointerEvent) {
+    if (hackerSpendPointer === e.pointerId) {
+      hackerBallPress = null;
+      endHackerSpend();
+      return;
+    }
+    if (hackerBallPress?.id === e.pointerId) {
+      const press = hackerBallPress;
+      hackerBallPress = null;
+      const elapsed = (performance.now() - press.t0) / 1000;
+      const cancelled = e.type === "pointercancel" || e.type === "lostpointercapture";
+      if (cancelled) return;
+      // Jump already fired on pointer down. A short release must not jump again.
+      if (elapsed > HACKER_CHARGE.holdArmSeconds && !hackerCharge.holding) {
+        beginHackerSpend(press.id);
+        endHackerSpend();
+      }
+      return;
+    }
     if ((buzzer || timeUp) && isRocket() && rocket.pointer === e.pointerId) return;
     if (birdOwnsBall(birds) && !(isSuper() || isVector() || isTime())) { pointerHeld = false; return; }
     if(isSuper() && superBall.pointer?.id===e.pointerId){
@@ -4276,6 +4605,7 @@ export function createGame(
     if (phase !== "playing" || paused) return;
     paused = true;
     cancelVectorInput();
+    hackerBallPress = null;
     emitHud();
   }
 
@@ -4319,7 +4649,7 @@ export function createGame(
     resetTrainScroll();
     ball.sootLeft = 0;
     hackerDir = null;
-    hackerAwaken = false; hackerPills = createHackerPills();
+    hackerAwaken = false; resetHackerMeter();
     vector = createVector(); superBall = createSuper();
     rocket = createRocket();
     quantumTunnelLeft = 0;
@@ -5005,6 +5335,7 @@ export function createGame(
       stepRewind(dt);
       return;
     }
+    if (phase === "playing" && !paused && isHacker() && !hackerAwaken) stepChargeDecay(hackerCharge, dt);
     if (phase === "playing") glassProtectionLeft = Math.max(0, glassProtectionLeft - dt);
     if (!birdOwnsBall(birds)) stepVector(dt);
     else if (isVector() && vector.pointer !== null) vector.held += dt;
@@ -5161,7 +5492,7 @@ export function createGame(
 
     // Capture by identity before any stand/modifier motion, including the other hoop.
     const scoringRimStarts = new Map<Hoop, { x: number; y: number }>();
-    for (const h of other ? [hoop, other] : [hoop]) scoringRimStarts.set(h, { x: h.x, y: h.y });
+    for (const h of courtHoops()) scoringRimStarts.set(h, { x: h.x, y: h.y });
     stepHoop(hoop, dt);
     tickFrost(hoop, dt, false);
     if (phase === "playing" && !paused && !birdOwnsBall(birds)) {
@@ -5169,7 +5500,7 @@ export function createGame(
     }
     if (trainBackdropOn() && tunnelPassing()) {
       // Modifiers can move ghost/frozen targets outside stepHoop's normal path.
-      for (const target of other ? [hoop, other] : [hoop]) {
+      for (const target of courtHoops()) {
         const shift = Math.max(0, tunnelHoopMin(world) - target.y);
         if (shift > 0) { target.y += shift; nudgeNet(target, 0, shift); }
         target.baseY = Math.max(tunnelHoopMin(world), target.baseY);
@@ -5178,32 +5509,23 @@ export function createGame(
     if (other) {
       if (other.jolt > 0) other.jolt = Math.max(0, other.jolt - dt / 0.28);
       tickFrost(other, dt, true);
-      if (other.hold > 0 && other.frostLeft <= 0) {
-        other.hold -= dt;
-        if (other.hold <= 0) {
-          other.hold = 0;
-          other.couple = false;
-          other.jolt = 0;
-          other.targetX = other.side < 0 ? -world.w * 0.42 : world.w * 1.42;
-        }
-      }
-      const ox = other.x;
       // Keep frosted secondary stands still; only slide out after thaw.
       if (other.frostLeft <= 0) {
-        other.x += (other.targetX - other.x) * (1 - Math.exp(-7.5 * dt));
+        if (rainHoopsPinned()) pullHoopHome(other, dt);
+        else nudgeNet(other, stepHoopRetirement(other, world.w, dt), 0);
       } else {
         other.moving = false;
         other.targetX = other.x;
         other.baseX = other.x;
         other.baseY = other.y;
       }
-      nudgeNet(other, other.x - ox, 0);
-      const gone = other.side < 0 ? other.x < -world.w * 0.28 : other.x > world.w * 1.28;
-      if (gone) {
+      if (!rainHoopsPinned() && hoopRetirementDone(other, world.w)) {
+        cancelRainDrips(other);
         other = null;
         otherOverRim = false;
       }
     }
+    if (phase === "playing" && !paused) stepRainDrips(dt);
 
     if (trainBackdropOn() && (phase === "playing" || birdOwnsBall(birds))) {
       const wasOwned = birdOwnsBall(birds);
@@ -5226,6 +5548,7 @@ export function createGame(
       }
       if (wasOwned || birdOwnsBall(birds) || returned) {
         prevBallX = ball.x; prevBallY = ball.y;
+        for (const h of extraCourtHoops()) stepNet(h, ball, ball.x, ball.y, world, dt, time, false);
         stepParticles(dt);
         stepNet(hoop, ball, ball.x, ball.y, world, dt, time, false);
         if (other) stepNet(other, ball, ball.x, ball.y, world, dt, time, false);
@@ -5263,7 +5586,91 @@ export function createGame(
       if(isRocket() && phase==="playing") stepRocket(rocket,ball,gravity(),dt);
       const superDriven = isSuper() && superDashVelocity(superBall,ball,dt);
       const vectorDriven = vector.burst > 0 || superDriven;
-      if (vectorDriven) {
+      let hackerScripted = false;
+      let hackerLockFall = false;
+      if (phase === "playing" && isHacker()) {
+        if (hackerBallPress && !hackerCharge.holding) {
+          const elapsed = (performance.now() - hackerBallPress.t0) / 1000;
+          if (!canArmHackerSpend()) hackerBallPress = null;
+          else if (chargeHoldArmed(elapsed)) {
+            const id = hackerBallPress.id;
+            hackerBallPress = null;
+            beginHackerSpend(id);
+          }
+        }
+        if (hackerSkyDrop !== null && hackerSkyDrop > 0) {
+          hackerScripted = true;
+          hackerSkyDrop = Math.max(0, hackerSkyDrop - dt);
+          ball.vx = 0;
+          ball.vy = 0;
+          ball.omega = 0;
+          ball.y = -900;
+          if (hackerSkyDrop === 0) {
+            ball.x = hoop.x;
+            ball.y = ball.r + 6;
+            ball.vy = world.h * 1.15;
+            ball.scored = false;
+            wentOffTop = false;
+            resetShotFlags();
+            shotOpen = true;
+            shotAirborne = true;
+            scoreGateHoop = null;
+          }
+        } else if (hackerSkyDrop === 0) {
+          ball.x = hoop.x;
+          ball.vx = 0;
+          wentOffTop = false;
+        }
+        if (hackerAwaken && !hackerCharge.holding && hackerHoopGrace > 0) {
+          hackerHoopGrace = Math.max(0, hackerHoopGrace - dt);
+        }
+        if (hackerAwaken) {
+          const birdsDropped = trainBackdropOn() ? rainDropBirds(birds, ball) : 0;
+          const carsDropped = trafficEnabled() ? rainClearTraffic(traffic, world, ball) : 0;
+          noteRainDropCombo(birdsDropped + carsDropped);
+        }
+        if (hackerCharge.holding) {
+          stepChargeHold(hackerCharge, dt);
+          if (hackerAwaken && chargeDisplayMakes(hackerCharge) <= 1e-4) endHackerSpend();
+          hackerRipplePulse += dt;
+          if (hackerRipplePulse >= HACKER_RIPPLE.pulseEvery) {
+            hackerRipplePulse = 0;
+            spawnHackerRipple("pulse");
+          }
+        }
+        hackerRipples = stepHackerRipples(hackerRipples, dt);
+        const flight = hackerFlight;
+        if (flight?.kind === "aim") {
+          const minX = ball.r;
+          const maxX = Math.max(minX + 1, world.w - ball.r);
+          const moved = stepAimArrow(flight.landX, flight.dir, dt, minX, maxX);
+          const age = flight.age + dt;
+          hackerFlight = { kind: "aim", landX: moved.landX, dir: moved.dir, age };
+          hackerPin = { x: moved.landX, y: ball.y };
+          if (aimTimedOut(age)) confirmHackerLanding(moved.landX);
+        }
+        const flightNow = hackerFlight;
+        const failHold = hackerFailFreeze > 0;
+        if (failHold) hackerFailFreeze = Math.max(0, hackerFailFreeze - dt);
+        hackerLockFall = flightNow?.kind === "fall" && flightNow.effect === "lock";
+        if (hackerCharge.holding || flightNow?.kind === "aim" || failHold) {
+          hackerScripted = true;
+          if (hackerPin) { ball.x = hackerPin.x; ball.y = hackerPin.y; }
+          ball.vx = 0; ball.vy = 0; ball.omega = 0;
+        } else if (flight?.kind === "rise") {
+          hackerScripted = true;
+          ball.vx = 0; ball.omega = 0;
+          ball.vy = -world.h * HACKER_CHARGE.flyLaunch;
+          ball.y += ball.vy * dt;
+          if (ball.y + ball.r < 0) completeHackerRise();
+        } else if (hackerLockFall) {
+          ball.x = hoop.x;
+          ball.vx = 0;
+        }
+      }
+      if (hackerScripted) {
+        // Hold, aim, and rise own the ball. Gravity and collisions stay out.
+      } else if (vectorDriven) {
         if (vector.burst > 0) normalizeVectorSpeed();
       } else if (hacking) {
         if (scoredLock <= 0 && ball.scored) {
@@ -5325,7 +5732,7 @@ export function createGame(
       } else {
         ball.vy += gravity() * dt * (gScale * fallBoost - buoy);
       }
-      if (!hacking && !vectorDriven) {
+      if (!hackerScripted && !hacking && !vectorDriven) {
       // Train frame: hoop and carriage stay put. Accel pulls the ball left,
       // decel pulls it right, cruise adds nothing. Pause never calls physics;
       // rewind returns above. Other scenes leave this at zero.
@@ -5382,11 +5789,12 @@ export function createGame(
       ball.x += ball.vx * dt;
       ball.y += ball.vy * dt;
       }
-      if (hacking || vectorDriven) {
+      if (!hackerScripted && (hacking || vectorDriven)) {
         ball.x += ball.vx * dt;
         ball.y += ball.vy * dt;
       }
-      if (trainBackdropOn() && phase === "playing" && quantumTunnelLeft <= 0) {
+      if (hackerLockFall) { ball.x = hoop.x; ball.vx = 0; ball.omega = 0; }
+      if (!hackerScripted && trainBackdropOn() && phase === "playing" && quantumTunnelLeft <= 0) {
         if (resolveBirdContact(prevBallX, prevBallY) === "caught") {
           captureRewindSnapshot(dt); return;
         }
@@ -5404,7 +5812,7 @@ export function createGame(
         }
       }
       const rocketFreeY=ball.y,rocketFreeVy=ball.vy;
-      if (trafficEnabled() && phase === "playing") {
+      if (!hackerScripted && trafficEnabled() && phase === "playing") {
         const vectorIncoming = {vx:ball.vx,vy:ball.vy};
         if (holeOn) beginTrafficAbsorption(traffic, holeX, holeY);
         const nearMissBefore = traffic.nearMiss;
@@ -5484,7 +5892,7 @@ export function createGame(
           if (phase !== "title") audio.board(Math.min(1, impact / 700));
         }
       }
-      if (ball.y + ball.r < 0 && !birds.enteringFromTop) wentOffTop = true;
+      if (ball.y + ball.r < 0 && !birds.enteringFromTop && hackerSkyDrop !== 0) wentOffTop = true;
       // Leash before wrap so a taut chain yanks the ball and can block side-respawn.
       if (phase === "playing" && !stageMod.holdsBall?.()) {
         stageMod.afterPhysics?.(dt, modifierHost());
@@ -5516,13 +5924,14 @@ export function createGame(
       ball.squash += (1 - ball.squash) * (1 - Math.exp(-12 * dt));
       // The solid orange connector must stop a path before the scoring plane
       // is tested. Otherwise a tunneled connector hit can become a false make.
-      if (phase !== "title" && !ballHidden() && !anti2ReturnLocked() && quantumTunnelLeft <= 0) {
+      if (!hackerScripted && !hackerLockFall && phase !== "title" && !ballHidden() && !anti2ReturnLocked() && quantumTunnelLeft <= 0) {
         if (!hoop.noBoard && !stageMod.skipBrace(hoop)) collideRimArm(hoop);
         if (other && !other.noBoard && !stageMod.skipBrace(other)) collideRimArm(other);
+        for (const h of extraCourtHoops()) if (!h.noBoard && !stageMod.skipBrace(h)) collideRimArm(h);
       }
       // Score before rim/board so a clean thread isn't eaten by rim bounce.
-      if (phase === "playing") checkScore(scoringRimStarts);
-      if (phase !== "title" && !ballHidden() && !anti2ReturnLocked()) {
+      if (!hackerScripted && phase === "playing") checkScore(scoringRimStarts);
+      if (!hackerScripted && !hackerLockFall && phase !== "title" && !ballHidden() && !anti2ReturnLocked()) {
         const vx0 = ball.vx;
         const vy0 = ball.vy;
 
@@ -5547,6 +5956,11 @@ export function createGame(
           if (!hoop.noBoard && !stageMod.skipBrace(hoop)) collideRimArm(hoop, false);
           if (other && !other.noBoard && !stageMod.skipBrace(other)) collideRimArm(other, false);
         }
+        if (quantumTunnelLeft <= 0) for (const h of extraCourtHoops()) {
+          if (h !== scoreGateHoop && stageMod.canScore(h)) collideRim(h);
+          if (!h.noBoard && !stageMod.skipBoard(h)) collideBoard(h);
+          if (!h.noBoard && !stageMod.skipBrace(h)) { collideBrace(h); collideRimArm(h, false); }
+        }
         if (ball.vx !== vx0 || ball.vy !== vy0) traffic.launched = false;
         if (ball.vx !== vx0 || ball.vy !== vy0) vectorCollision(vx0,vy0);
         if (
@@ -5557,7 +5971,7 @@ export function createGame(
           syncHackerDirFromVelocity();
         }
       }
-      if (phase === "playing") {
+      if (!hackerScripted && phase === "playing") {
         // Rim/board resolution can turn a grazing approach into a real make,
         // especially when quantum phasing ends while overlapping the rim.
         // Recheck this step's path; ball.scored prevents a second award.
@@ -5571,7 +5985,7 @@ export function createGame(
         glassPeakY = Math.min(glassPeakY, ball.y);
       }
       const caught = phase === "playing" && stageMod.touchBall?.(modifierHost()) === true;
-      if (!caught && !hacking && vector.burst <= 0) {
+      if (!hackerScripted && !caught && !hacking && vector.burst <= 0) {
         const incomingVelocity = {vx:ball.vx,vy:ball.vy};
         const landed = ball.y + ball.r >= world.floorY && ball.vy > 40;
         collideFloor();
@@ -5641,6 +6055,9 @@ export function createGame(
         collapseNet(other);
       }
     }
+    for (const h of extraCourtHoops()) {
+      stepNet(h, ball, prevBallX, prevBallY, world, dt, time, h.couple && h !== scoreGateHoop);
+    }
     stepParticles(dt);
     for (let i = 0; i < callouts.length; ) {
       callouts[i]!.life -= dt;
@@ -5650,7 +6067,6 @@ export function createGame(
       } else i += 1;
     }
     if (boltOverheated) pinBoltOverheatBall();
-    updateHackerPills(dt);
     captureRewindSnapshot(dt);
   }
 
@@ -6120,9 +6536,9 @@ export function createGame(
     shotAirborne = false;
     if (getBall(ballId).wrap === "height") {
       // Spawn on the approach side of the active hoop (same rule as classic wrap).
-      // hoop.side > 0 → basket on right → enter from left; else enter from right.
+      // Awakening uses the same alternating shot direction as taps.
       const spd = Math.max(44, Math.abs(ball.vx));
-      if (hoop.side > 0) {
+      if (shotSide() > 0) {
         ball.x = -r - pad * 0.5;
         ball.vx = spd;
       } else {
@@ -6144,7 +6560,7 @@ export function createGame(
     ball.scored = false;
     resetShotFlags();
     const roll = 44;
-    if (hoop.side > 0) {
+    if (shotSide() > 0) {
       ball.x = -r - pad;
       ball.vx = roll;
     } else {
@@ -6160,6 +6576,10 @@ export function createGame(
 
   function collideFloor() {
     if (ball.y + ball.r < world.floorY) return;
+    if (isHacker() && hackerFlight?.kind === "fall") {
+      hackerFlight = null;
+      hackerDeepArmed = null;
+    }
     const incoming = ball.vy;
     ball.y = world.floorY - ball.r;
     if (
@@ -6371,6 +6791,19 @@ export function createGame(
     }
     const toilet = ghost ? false : rimHits >= 3;
     const lucky = ghost ? false : hitBoardTop;
+    if (!ghost && hackerSkyDrop === 0) {
+      wentOffTop = false;
+      hackerSkyDrop = null;
+    }
+    if (!ghost && hackerDeepArmed) {
+      // Arrow and lock both promise deep water on this make, even if the ball clips the rim or board.
+      wentOffTop = true;
+      ball.hitRim = false;
+      ball.hitBoard = false;
+      swish = true;
+      hackerDeepArmed = null;
+      if (hackerFlight?.kind === "fall") hackerFlight = null;
+    }
     const depth = ghost ? false : wentOffTop && swish;
     const needle = ghost ? false : fromBelow;
     const prevStage = fireStage(heatN());
@@ -6424,6 +6857,7 @@ export function createGame(
     }
 
     madeCount += 1;
+    if (!ghost && isHacker()) addHackerMake(hackerCharge);
     if (trainBackdropOn()) startTrainScroll();
     if (!ghost) {
       // Dynamic hoop: +0.4% chance per make, cap 50%; scoring a mover raises speed hi.
@@ -6563,7 +6997,16 @@ export function createGame(
       gain *= CHAMP_SCORE_MULT;
       champDoublePending = false;
     }
-    score += gain;
+    let banked = gain;
+    if (!ghost && hackerAwaken && gain > 0) {
+      const split = splitRainScore(gain);
+      banked = split.now;
+      if (split.later > 0) {
+        const stand = "net" in scoredHoop ? (scoredHoop as Hoop) : hoop;
+        rainDrips.push({ hoop: stand, left: HACKER_RAIN.dripSeconds, remain: split.later });
+      }
+    }
+    score += banked;
     if(!ghost && isSuper()) superScore(superBall,superShieldScore);
     if (!ghost && balanceSession) {
       const plainCore = bunshinGhost || ninjaGhost ? 0 : basePart + streakPart + extra + (freed ? prisonBonus : 0) + (clutch && !ninjaGhost ? 5 : 0);
@@ -6669,7 +7112,7 @@ export function createGame(
     const hideMakeScore = (isAnti() && legacyHole()) || (ninjaGhost && gain <= 0);
     if (!hideMakeScore) {
       callouts.push({
-        text: `+${gain}`,
+        text: `+${banked}`,
         x: popX,
         y: popY - popInner * RIM_RY - 14,
         capY: boardTop + 8,
@@ -6776,14 +7219,14 @@ export function createGame(
     }
   }
 
-  function nextHoop() {
+  function nextHoop(nextSideOverride?: -1 | 1) {
     const scored = hoop;
     scored.moving = false;
     scored.jolt = 0;
     scored.couple = true;
     scored.targetX = scored.x;
 
-    const nextSide: -1 | 1 = scored.side < 0 ? 1 : -1;
+    const nextSide: -1 | 1 = nextSideOverride ?? (scored.side < 0 ? 1 : -1);
     const frozenOther = other && other.frostLeft > 0 ? other : null;
 
     if (scored.frostLeft > 0) {
@@ -7178,10 +7621,23 @@ export function createGame(
             phase === "playing" && isTime() ? { energy: timeEnergy, active: rewindActive, disabled: timeRewindBlocked() } : null,
             trainBackdropOn() ? birds : null,
             birdBaseBonus,
+            extraCourtHoops(),
           );
-          if (phase === "playing" && isHacker()) drawHackerPills(ctx,world,hackerPills,hackerAwaken,paused || buzzer || timeUp);
-          if (phase === "playing" && isHacker() && !hackerAwaken) drawHackerGlitch(ctx,hackerPills,ball,
-            (x,y,r)=>paintBallSprite(ctx,x,y,r,ball.spin,ballId,time));
+          if (phase === "playing" && isHacker()) {
+            if (hackerRipples.length) drawHackerLensWarps(ctx, canvas, world, hackerRipples, ball.r);
+            drawHackerCharge(ctx, world, hackerCharge, {
+              disabled: paused || buzzer || timeUp,
+              awake: hackerAwaken,
+              aiming: hackerFlight?.kind === "aim",
+            });
+            if (hackerAwaken && hackerSkyDrop === null && chargeIsFull(hackerCharge)) drawRainPhone(ctx, world);
+            if (hackerFlight?.kind === "aim" || (hackerFlight?.kind === "rise" && hackerFlight.effect === "arrow")) {
+              const landX = hackerFlight.kind === "aim" ? hackerFlight.landX : clamp(ball.x, ball.r, world.w - ball.r);
+              const meter = chargeMeterLayout(world);
+              const arrowY = landX < meter.x + meter.w + 18 ? meter.y + meter.h + 22 : 2;
+              drawLandingArrow(ctx, landX, arrowY);
+            }
+          }
           if (phase === "playing" && isRocket()) drawRocket(ctx,world,rocket,ball,time);
           if (phase === "playing" && isVector()) drawVector(ctx, world, vector, paused || buzzer || timeUp);
           if (phase === "playing" && isSuper()) drawSuper(ctx,world,superBall);
@@ -7218,7 +7674,11 @@ export function createGame(
   }
 
   function onVis() {
-    if (document.visibilityState !== "visible") cancelVectorInput();
+    if (document.visibilityState !== "visible") {
+      cancelVectorInput();
+      hackerBallPress = null;
+      if (hackerSpendPointer !== null) endHackerSpend();
+    }
     if (document.visibilityState === "visible") {
       audio.unlock();
       last = performance.now();
@@ -7430,8 +7890,15 @@ export function createGame(
         trainWarnings: trainBackdropOn() ? getTrainGantryWarnings(world, getTrainScroll()) : [],
         birds: trainBackdropOn() ? structuredClone(birds) : null,
         birdBaseBonus,
-        frostBonus, glassBase, glassProtectionLeft, quantumTunnelLeft, hackerAwaken,
-        hackerPills: { ...structuredClone(hackerPills), position: hackerPills.pill ? pillPoint(hackerPills.pill,world) : null, button: hackerPillButton(world) },
+        frostBonus, glassBase, glassProtectionLeft, quantumTunnelLeft, hackerAwaken, streak,
+        hackerCharge: {
+          ...hackerCharge,
+          display: chargeDisplayMakes(hackerCharge),
+          layers: chargeLayerRatios(chargeDisplayMakes(hackerCharge)),
+          meter: chargeMeterLayout(world),
+          flight: hackerFlight ? { ...hackerFlight } : null,
+          deep: hackerDeepArmed,
+        },
         blackHole: holeOn ? { x: holeX, y: holeY, r: holeR, left: holeLeft } : null,
         antiRecovery: holeOn && isAnti2() ? { ...antiRecovery } : null,
         antiCharge,

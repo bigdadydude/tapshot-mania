@@ -37,6 +37,18 @@ function scene(kind: BirdKind) {
   Object.assign(b, { x: 190, y: 350, px: 190, py: 350, baseY: kind === "eagle" ? b.baseY : 350 });
   return { s, b, ball: body() };
 }
+
+test("a block callback knocks down an eagle; refusing it preserves the catch", () => {
+  for (const success of [false, true]) {
+    const { s, b, ball } = scene("eagle");
+    ball.x = b.x; ball.y = b.y; ball.vy = -200;
+    const result = collideBirds(s, ball, b.x, b.y + 60, {
+      block: () => success,
+    });
+    assert.equal(result, success ? "knockdown" : "caught");
+    assert.equal(s.carrier, success ? null : b.id);
+  }
+});
 test("waves contain one species, at most two birds; eagles are solitary", () => {
   for (const kind of ["silly", "dive", "eagle"] as const) {
     const s = createBirds(); spawnBirdWave(s, world, kind, () => 0.1, 7);

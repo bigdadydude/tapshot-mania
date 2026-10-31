@@ -101,7 +101,6 @@ const LOCK_CHASE = 8;
 const BOLT_SPD = 1100;
 const ELITE_SPD = 920;
 const KNOCK = 1180;
-const AWAKEN_NEAR = 3.6;
 const BOLT_FALL_G = 2400;
 /** Base stop time when a lamp is shot; stacks on repeat hits while down. */
 const LIGHT_OUT = 2;
@@ -1127,8 +1126,6 @@ export function createYardLights(): StageModifier {
       const ball = host.getBallBody();
       const hoop = host.getHoop();
       const layout = loadSearchlightLayout();
-      const awaken = host.isHackerAwaken?.() === true;
-      const nearR = ball.r * AWAKEN_NEAR;
       const hole = host.getBlackHole?.();
 
       for (const b of bolts) {
@@ -1174,16 +1171,6 @@ export function createYardLights(): StageModifier {
         if (mazeHole) {
           // A projectile entering a maze hazard is permanently consumed.
           b.x = -9999;
-          continue;
-        }
-
-        if (awaken && Math.hypot(b.x - ball.x, b.y - ball.y) <= nearR + b.r) {
-          b.faceAng = Math.atan2(b.vy, b.vx);
-          b.vx = 0;
-          b.vy = 0;
-          b.falling = true;
-          b.trail.push({ x: b.x, y: b.y });
-          if (b.trail.length > TRAIL_LEN) b.trail.shift();
           continue;
         }
 

@@ -54,8 +54,6 @@ export type ModifierHost = {
     r: number,
     spin: number,
   ) => void;
-  /** Hacker ball awaken ? bolts freeze/fall near the ball. */
-  isHackerAwaken?: () => boolean;
   /** Maze ball needs kinetic impulses rather than the standard knockback overwrite. */
   isMaze?: () => boolean;
   /** Return true when the ball kit has handled a projectile's directional impulse. */

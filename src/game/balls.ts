@@ -41,7 +41,7 @@ export type BallKit = {
   vector?: boolean;
   rocket?: boolean;
   super?: boolean;
-  /** Hacker ball: hidden red/blue pills switch the code world. */
+  /** Hacker ball: fair-weather charge meter spends into a fly shot or the code rain. */
   codeRain?: boolean;
   /** Quantum ball: high-combo chance to phase through the basket rig. */
   quantum?: boolean;
@@ -191,7 +191,7 @@ export const BALLS: BallKit[] = [
   {
     id: "rain",
     name: "骇客球",
-    skill: "首球后随机生成隐藏红药丸，越接近glitch越频繁；首次经过显形，离开后再次接近可收集，第二次错过则换位置重新隐藏。点击底部红药丸觉醒；蓝药丸靠近显形，经过返回现实。保持点跳与正常倒计时，觉醒近身停弹并击倒鸟",
+    skill: "晴天每进5球满一层气，最多三层。超过3秒未进球后，每秒流失一层的20%，进球重新计时。按下立刻起跳。按住超过0.3秒会打断这次起跳，停球并耗气。松手须扣完整层：1层飞天，箭头自己移动，点一下或3秒落下并带深水；2层锁筐落下并带深水；半层松开气补回，球停0.2秒再落。不满三层最多锁筐并返还多扣的气。3层进入代码雨。雨中进球也攒气且不衰减；气条当一整条扣，松手不补回。进球先入账1分，其余每0.5秒固定加1分并加1连击，绑在该筐上，筐收走或出雨作废。雨中近处的鸟和车会自动清掉，每个加1连击。有气长按超过0.3秒只停球、耗气并留住筐，松手或气尽后再留筐3秒。满三层时底部正中出现黑电话，短按撤离：清气、收筐，球落入主筐并按当前连击正常计分。",
     heat: false,
     codeRain: true,
     wrap: "ground",
