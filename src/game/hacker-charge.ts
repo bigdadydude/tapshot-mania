@@ -14,13 +14,13 @@ export const HACKER_CHARGE = {
    * Not a locked spec value — only the 5-make layer size is locked.
    * Long enough that a release can land between layers.
    */
-  layerDrainSeconds: 0.45,
+  layerDrainSeconds: 0.32,
   /** Rise speed in screen-heights per second. Scripted, so gravity cannot stall the fly. */
   flyLaunch: 2.2,
   /** Initial drop speed in screen-heights per second once a landing is chosen. */
   flyDrop: 0.85,
-  /** Drain starts only after the press has lasted longer than this. Locked. */
-  holdArmSeconds: 0.3,
+  /** Short tap stays instant; a deliberate hold arms faster. */
+  holdArmSeconds: 0.22,
   /** Arrow aim gives up and drops at the current X after this. Locked. */
   aimTimeoutSeconds: 3,
   /** Mid-layer release holds the ball still, then lets it fall. Locked. */
@@ -43,9 +43,9 @@ export type HackerCharge = {
 };
 
 export type HackerFlight =
-  | { kind: "rise"; effect: "arrow" | "lock" }
+  | { kind: "rise"; effect: "arrow" | "lock" | "rain" }
   | { kind: "aim"; landX: number; dir: -1 | 1; age: number }
-  | { kind: "fall"; effect: "arrow" | "lock" };
+  | { kind: "fall"; effect: "arrow" | "lock" | "rain" };
 
 const SPEND_EPS = 1e-4;
 
@@ -126,54 +126,39 @@ export function stepChargeHold(s: HackerCharge, dt: number) {
  * The incomplete top layer, and any layer still in progress on release, are restored.
  * Fewer than 3 full layers cannot open the rain; holding to empty still yields at most lock.
  */
-/** Rain treats the three segments as one bar. Spent charge stays spent. */
 export const HACKER_RAIN = {
-  dripSeconds: 0.5,
-  hoopGraceSeconds: 3,
   vanishSeconds: 0.32,
+  clockScale: 0.9,
 } as const;
 
-export function releaseRainCharge(s: HackerCharge) {
-  if (!s.holding) return;
-  const spent = Math.min(s.makes, s.drained);
-  s.makes = Math.max(0, s.makes - spent);
-  s.holding = false;
-  s.holdStart = 0;
-  s.drained = 0;
+/** Run-local progression; banked stacks survive world changes, never a new run. */
+export type HackerProgress = { bankedCombo: number; codeCombo: number };
+
+export function createHackerProgress(): HackerProgress {
+  return { bankedCombo: 0, codeCombo: 0 };
+}
+
+export function hackerComboBonus(s: HackerProgress, awake: boolean) {
+  return s.bankedCombo + (awake ? s.codeCombo : 0);
+}
+
+/** Award after the successful arrow basket; subsequent real baskets gain the extra step. */
+export function awardHackerArrow(s: HackerProgress) {
+  s.codeCombo += 1;
+}
+
+/** Transfer only once per evacuation, without duplicating previously banked stacks. */
+export function bankHackerCombo(s: HackerProgress) {
+  s.bankedCombo += s.codeCombo;
+  s.codeCombo = 0;
+}
+
+export function hackerClockScale(awake: boolean) {
+  return awake ? HACKER_RAIN.clockScale : 1;
 }
 
 export function chargeIsFull(s: HackerCharge) {
   return chargeDisplayMakes(s) + SPEND_EPS >= chargeCap();
-}
-
-/** Immediate bank is 1 when the make is worth at least 1. The rest drips. */
-export function splitRainScore(gain: number) {
-  if (!(gain > 0)) return { now: gain, later: 0 };
-  return { now: 1, later: gain - 1 };
-}
-
-export type RainDrip = { left: number; remain: number; slot: number };
-
-/** Each live tick pays a flat +1. `scored` is the tick count; dead hoops add nothing. */
-export function stepRainScoreDrips(
-  drips: readonly RainDrip[],
-  dt: number,
-  alive: (slot: number) => boolean,
-) {
-  let scored = 0;
-  const next: RainDrip[] = [];
-  for (const drip of drips) {
-    if (!alive(drip.slot) || drip.remain <= 0) continue;
-    let left = drip.left - Math.max(0, dt);
-    let remain = drip.remain;
-    while (remain > 0 && left <= 1e-8) {
-      remain -= 1;
-      scored += 1;
-      left += HACKER_RAIN.dripSeconds;
-    }
-    if (remain > 0) next.push({ slot: drip.slot, left, remain });
-  }
-  return { drips: next, scored };
 }
 
 export function rainPhoneLayout(world: { w: number; h: number }) {
@@ -254,7 +239,7 @@ export function chargeMeterLayout(world: { w: number }) {
   return { x, y, w, h };
 }
 
-/** True only after the press has lasted longer than 0.3s. */
+/** True only after the deliberate-hold threshold. */
 export function chargeHoldArmed(elapsed: number) {
   return elapsed > HACKER_CHARGE.holdArmSeconds;
 }
@@ -283,7 +268,7 @@ export function drawHackerCharge(
   ctx: CanvasRenderingContext2D,
   world: { w: number },
   s: HackerCharge,
-  opts: { disabled: boolean; awake: boolean; aiming: boolean },
+  opts: { disabled: boolean; awake: boolean; aiming: boolean; comboBonus?: number },
 ) {
   const box = chargeMeterLayout(world);
   const ratios = chargeLayerRatios(chargeDisplayMakes(s));
@@ -338,13 +323,19 @@ export function drawHackerCharge(
   ctx.lineWidth = 3;
   ctx.strokeStyle = "rgba(6, 12, 16, 0.9)";
   ctx.fillStyle = opts.awake ? HACKER_CHARGE_COLORS[1] : "#f4fbff";
-  // Rain exit (phone ring / long-press) is not locked. This line is status, not a button.
+  // Both worlds share the same three-tier spend gesture.
   const label = opts.awake
-    ? chargeIsFull(s) ? "点电话撤离" : s.holding ? "松手留筐" : "长按留筐"
+    ? opts.aiming ? "点一下落下" : s.holding ? "松手发动技能" : chargeIsFull(s) ? "三段撤离 / 点电话" : "长按：叠连击 / 双倍"
     : opts.aiming ? "点一下落下" : s.holding ? "松手结算" : "长按耗气";
   const labelY = box.y + box.h + 4;
   ctx.strokeText(label, box.x, labelY);
   ctx.fillText(label, box.x, labelY);
+  if (opts.awake || (opts.comboBonus ?? 0) > 0) {
+    const status = `每球连击 +${opts.comboBonus ?? 0}${opts.awake ? " · 时钟 −10%" : " · 已带回"}`;
+    ctx.fillStyle = opts.awake ? HACKER_CHARGE_COLORS[1] : "#f4fbff";
+    ctx.strokeText(status, box.x, labelY + 15);
+    ctx.fillText(status, box.x, labelY + 15);
+  }
   ctx.restore();
 }
 

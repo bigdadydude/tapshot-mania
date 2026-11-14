@@ -36,7 +36,7 @@ import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { type HackerDir } from "./hacker-pad";
-import { HACKER_CHARGE, HACKER_RAIN, HACKER_RIPPLE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeIsFull, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawHackerLensWarps, drawLandingArrow, drawRainPhone, pointerOnChargeMeter, pointerOnRainPhone, releaseChargeHold, releaseRainCharge, settledHackerCharge, splitRainScore, stepAimArrow, stepChargeDecay, stepChargeGlow, stepChargeHold, stepHackerRipples, stepRainScoreDrips, type HackerCharge, type HackerFlight, type HackerRipple, type RainDrip } from "./hacker-charge";
+import { HACKER_CHARGE, HACKER_RIPPLE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeIsFull, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawHackerLensWarps, drawLandingArrow, drawRainPhone, pointerOnChargeMeter, pointerOnRainPhone, releaseChargeHold, settledHackerCharge, stepAimArrow, stepChargeDecay, stepChargeGlow, stepChargeHold, stepHackerRipples, createHackerProgress, hackerComboBonus, awardHackerArrow, bankHackerCombo, hackerClockScale, type HackerProgress, type HackerCharge, type HackerFlight, type HackerRipple } from "./hacker-charge";
 import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
 import { parseBalanceImport, mergeBalanceStores, automaticStrength, loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
@@ -720,7 +720,7 @@ export function createGame(
   }
 
   function refillPrisonTimer() {
-    timer = timerMax;
+    timer = hackerClockBudget();
     timeUp = false;
     buzzer = false;
     buzzerTimer = 0;
@@ -980,7 +980,7 @@ export function createGame(
   let hackerRimSlide: { dir: HackerDir; hoop: Hoop; turn: -1 | 1 } | null = null;
   let hackerCharge = createHackerCharge();
   let hackerFlight: HackerFlight | null = null;
-  let hackerDeepArmed: "arrow" | "lock" | null = null;
+  let hackerDeepArmed: "arrow" | "lock" | "rain" | null = null;
   let hackerSpendPointer: number | null = null;
   /** Screen press. Jump is decided on release, never by waiting out 0.3s. */
   let hackerBallPress: { id: number; t0: number } | null = null;
@@ -991,11 +991,8 @@ export function createGame(
   let hackerAimPointer: number | null = null;
   let hackerPin: { x: number; y: number } | null = null;
   let hackerAwaken = false;
-  /** Seconds a rain stand stays after a spend ends. Refreshed, never stacked. */
-  let hackerHoopGrace = 0;
-  /** Positive: ball is hidden. Zero: falling into the primary hoop. */
-  let hackerSkyDrop: number | null = null;
-  let rainDrips: { hoop: Hoop; left: number; remain: number }[] = [];
+  let hackerProgress = createHackerProgress();
+  let hackerRainEnterPending = false;
   /** Energy, gesture ownership and flight state of the Vector Ball. */
   let rocket = createRocket();
   let vector = createVector();
@@ -1048,16 +1045,17 @@ export function createGame(
     quantumTunnelLeft: number;
     mazeRespawnLeft: number;
     hackerAwaken: boolean;
+    hackerDir: HackerDir | null;
     hackerCharge: HackerCharge;
-    hackerHoopGrace: number;
-    hackerSkyDrop: number | null;
-    rainDrips: { slot: 0 | 1; left: number; remain: number }[];
+    hackerProgress: HackerProgress;
+    hackerRainEnterPending: boolean;
     hackerFlight: HackerFlight | null;
-    hackerDeepArmed: "arrow" | "lock" | null;
+    hackerDeepArmed: "arrow" | "lock" | "rain" | null;
     score: number;
     combo: number;
     streak: number;
     timer: number;
+    timerMax: number;
     timerArmed: boolean;
     buzzer: boolean;
     buzzerTimer: number;
@@ -1106,14 +1104,9 @@ export function createGame(
     if (rewindSampleLeft > 0) return;
     rewindSampleLeft = REWIND_SAMPLE_SECONDS;
     rewindHistory.push({
-      hackerAwaken, hackerCharge: settledHackerCharge(hackerCharge),
+      hackerAwaken, hackerDir, hackerCharge: settledHackerCharge(hackerCharge),
       hackerFlight: hackerFlight ? { ...hackerFlight } : null, hackerDeepArmed,
-      hackerHoopGrace, hackerSkyDrop,
-      rainDrips: rainDrips.map((drip) => ({
-        slot: (drip.hoop === other ? 1 : 0) as 0 | 1,
-        left: drip.left,
-        remain: drip.remain,
-      })),
+      hackerProgress: { ...hackerProgress }, hackerRainEnterPending,
       ball: structuredClone(ball),
       traffic: structuredClone(traffic),
       hoop: structuredClone(hoop),
@@ -1126,7 +1119,7 @@ export function createGame(
       antiRecovery: { ...antiRecovery },
       boltTrail: structuredClone(boltTrail),
       quantumTunnelLeft, mazeRespawnLeft,
-      score, combo, streak, comboClock, comboCounting, comboRescue, timer, timerArmed, buzzer, buzzerTimer, timeUp, madeCount,
+      score, combo, streak, comboClock, comboCounting, comboRescue, timer, timerMax, timerArmed, buzzer, buzzerTimer, timeUp, madeCount,
       chain: chain ? structuredClone(chain) : null,
       ninjaGhosts: structuredClone(ninjaGhosts),
       ninjaGates: structuredClone(ninjaGates),
@@ -1178,13 +1171,11 @@ export function createGame(
     quantumTunnelLeft = snapshot.quantumTunnelLeft;
     mazeRespawnLeft = snapshot.mazeRespawnLeft;
     hackerAwaken = snapshot.hackerAwaken;
-    hackerCharge = { ...snapshot.hackerCharge };
-    hackerHoopGrace = snapshot.hackerHoopGrace;
-    hackerSkyDrop = snapshot.hackerSkyDrop;
-    rainDrips = snapshot.rainDrips.flatMap((drip) => {
-      const stand = drip.slot === 1 ? other : hoop;
-      return stand ? [{ hoop: stand, left: drip.left, remain: drip.remain }] : [];
-    });
+    hackerDir = snapshot.hackerDir;
+    hackerRimSlide = null;
+    hackerCharge = { ...snapshot.hackerCharge, layerGlow: [...snapshot.hackerCharge.layerGlow] };
+    hackerProgress = { ...snapshot.hackerProgress };
+    hackerRainEnterPending = snapshot.hackerRainEnterPending;
     hackerFlight = snapshot.hackerFlight ? { ...snapshot.hackerFlight } : null;
     hackerDeepArmed = snapshot.hackerDeepArmed;
     hackerSpendPointer = null;
@@ -1201,6 +1192,7 @@ export function createGame(
     comboCounting = snapshot.comboCounting;
     comboRescue = snapshot.comboRescue;
     timer = snapshot.timer;
+    timerMax = snapshot.timerMax;
     timerArmed = snapshot.timerArmed;
     buzzer = snapshot.buzzer;
     buzzerTimer = snapshot.buzzerTimer;
@@ -1346,7 +1338,7 @@ export function createGame(
     champHalfClock = false;
     const decay = activeDecay();
     timerMax = Math.max(TIMER_MIN, timerMax * decay);
-    timer = timerMax;
+    timer = hackerClockBudget();
   }
 
   function rogueTotalScore() {
@@ -1380,7 +1372,7 @@ export function createGame(
   }
 
   function emitHud() {
-    const raw01 = timerMax > 0 ? timer / (timerMax * (champHalfClock ? 0.5 : 1)) : 0;
+    const raw01 = timerMax > 0 ? timer / (hackerClockBudget() * (champHalfClock ? 0.5 : 1)) : 0;
     const timer01 = raw01;
     const displayScore =
       isRogueMode() && rogueRun && phase === "over" ? rogueTotalScore() : score;
@@ -2082,7 +2074,7 @@ export function createGame(
     antiPickupCount = 0;
     // Refill countdown bar when the hole ends (classic shot clock only).
     if (phase === "playing" && !isMinuteMode() && !timeUp && !buzzer && timer > 0) {
-      timer = timerMax;
+      timer = hackerClockBudget();
       if (!timerArmed) timerArmed = true;
     }
     emitHud();
@@ -2107,7 +2099,7 @@ export function createGame(
     antiMatter = null;
     // Refill countdown bar when the hole opens (classic shot clock only).
     if (phase === "playing" && !isMinuteMode() && !isRogueMode() && !timeUp && !buzzer && timer > 0) {
-      timer = timerMax;
+      timer = hackerClockBudget();
       if (!timerArmed) timerArmed = true;
     }
     callouts.push({
@@ -2652,7 +2644,7 @@ export function createGame(
     if (!isBolt()) resetBoltRun();
     if (!isHacker()) {
       hackerDir = null;
-      hackerAwaken = false; resetHackerMeter();
+      setHackerWorld(false); resetHackerMeter();
       hackerSpeed = HACKER_SPEED_BASE;
       clearSparseCodeRain();
     }
@@ -3066,7 +3058,8 @@ export function createGame(
     streak = 0;
     hint = true;
     hackerDir = null;
-    hackerAwaken = false; resetHackerMeter();
+    setHackerWorld(false); resetHackerMeter();
+    hackerProgress = createHackerProgress();
     vector = createVector(); superBall = createSuper();
     rocket = createRocket();
     quantumTunnelLeft = 0;
@@ -3098,7 +3091,7 @@ export function createGame(
       rogueStageDecay = null;
     }
     timerMax = timerBudget();
-    timer = timerMax;
+    timer = hackerClockBudget();
     if (isRogueMode() && rogueRun) {
       // Consume stage-start bonuses after budgeting.
       rogueRun.nextBonusClock = 0;
@@ -3193,7 +3186,7 @@ export function createGame(
     if (!balanceSession || !devOn || !isMinuteMode() || !timerArmed || balanceTrialRecorded) return;
     const isBaseline = ballId === balanceSession.baseline;
     const skillState: SkillState = isBaseline ? "baseline" : balanceSkillOn ? "on" : "off";
-    const effectiveSeconds = Math.max(0, timerMax - timer);
+    const effectiveSeconds = Math.max(0, hackerClockBudget() - timer);
     balanceSession.trials.push({
       id: crypto.randomUUID(),
       sessionId: balanceSession.id,
@@ -3237,7 +3230,7 @@ export function createGame(
     buzzer = false;
     buzzerTimer = 0;
     hackerDir = null;
-    hackerAwaken = false; resetHackerMeter();
+    setHackerWorld(false); resetHackerMeter();
     vector = createVector(); superBall = createSuper();
     rocket = createRocket();
     quantumTunnelLeft = 0;
@@ -3315,7 +3308,7 @@ export function createGame(
   function tryRogueRevive(): boolean {
     if (!isRogueMode() || !rogueRun || rogueRun.revives <= 0) return false;
     rogueRun.revives -= 1;
-    timer = timerMax;
+    timer = hackerClockBudget();
     timeUp = false;
     buzzer = false;
     buzzerTimer = 0;
@@ -3407,7 +3400,7 @@ export function createGame(
     acc = 0;
     hint = false;
     timerArmed = false;
-    timer = timerMax;
+    timer = hackerClockBudget();
     buzzer = false;
     buzzerTimer = 0;
     timeUp = false;
@@ -3457,6 +3450,9 @@ export function createGame(
   }
 
   function startRogueStageCourt() {
+    resetHackerMeter(); // New court discards pending shots, but the same run keeps its progress/world.
+    hackerDir = null;
+    hackerRimSlide = null;
     birds = createBirds();
     traffic = createTraffic();
     ball.trafficSafe = false;
@@ -3477,7 +3473,7 @@ export function createGame(
       rogueRun.rollGoldAcc = 0;
     }
     timerMax = TIMER_START + bonus;
-    timer = timerMax;
+    timer = hackerClockBudget();
     timerArmed = false;
     buzzer = false;
     buzzerTimer = 0;
@@ -3719,6 +3715,7 @@ export function createGame(
   function clearHackerGesture() {
     hackerFlight = null;
     hackerDeepArmed = null;
+    hackerRainEnterPending = false;
     hackerSpendPointer = null;
     hackerBallPress = null;
     hackerFailFreeze = 0;
@@ -3731,26 +3728,6 @@ export function createGame(
     clearHackerGesture();
     hackerRipples = [];
     hackerRipplePulse = 0;
-    hackerHoopGrace = 0;
-    hackerSkyDrop = null;
-    rainDrips = [];
-  }
-
-  function rainHoopsPinned() {
-    return hackerAwaken && (hackerCharge.holding || hackerHoopGrace > 0);
-  }
-
-  function pullHoopHome(h: Hoop, dt: number) {
-    h.moving = false;
-    h.couple = true;
-    h.active = true;
-    h.targetX = h.baseX;
-    if (h.hold !== HOOP_HOLD) h.hold = HOOP_HOLD;
-    const gap = h.baseX - h.x;
-    if (Math.abs(gap) < 0.6) return;
-    const dx = gap * (1 - Math.exp(-11 * dt));
-    h.x += dx;
-    nudgeNet(h, dx, 0);
   }
 
   function dismissHoopNow(h: Hoop) {
@@ -3761,55 +3738,14 @@ export function createGame(
     h.targetX = h.side < 0 ? -world.w * 0.42 : world.w * 1.42;
   }
 
-  function cancelRainDrips(stand?: Hoop) {
-    rainDrips = stand ? rainDrips.filter((drip) => drip.hoop !== stand) : [];
-  }
-
-  function stepRainDrips(dt: number) {
-    if (!hackerAwaken || phase !== "playing") {
-      rainDrips = [];
-      return;
-    }
-    const live = rainDrips.filter((drip) => (drip.hoop === hoop || drip.hoop === other) && !hoopRetirementDone(drip.hoop, world.w));
-    const stepped = stepRainScoreDrips(
-      live.map((drip, index) => ({ slot: index, left: drip.left, remain: drip.remain })),
-      dt,
-      () => true,
-    );
-    rainDrips = stepped.drips.flatMap((drip) => {
-      const source = live[drip.slot];
-      return source ? [{ hoop: source.hoop, left: drip.left, remain: drip.remain }] : [];
-    });
-    if (stepped.scored <= 0) return;
-    score += stepped.scored;
-    streak += stepped.scored;
-    comboCounting = true;
-    comboClock = 0;
-    combo = Math.max(combo, streak);
-    const stand = rainDrips[0]?.hoop ?? hoop;
-    callouts.push({
-      text: `+${stepped.scored}`,
-      x: stand.x,
-      y: stand.y - stand.inner * 0.8,
-      life: 0.7,
-      max: 0.7,
-      kind: "score",
-    });
-    noteBest();
-    emitHud();
-  }
-
   function spawnHackerRipple(kind: HackerRipple["kind"]) {
     hackerRipples.push({ x: ball.x, y: ball.y, age: 0, kind });
   }
 
   function enterHackerAwaken() {
-    // TODO(hacker-rain-exit): phone-ring / long-press evacuate is not locked.
-    // The shot clock still ends the run, so the matrix cannot soft-lock the player.
-    // Do not restore a blue pill as the exit.
-    if (!isHacker() || hackerAwaken || phase !== "playing" || buzzer || timeUp) return;
+    if (!isHacker() || hackerAwaken || phase !== "playing") return;
     clearHackerGesture();
-    hackerAwaken = true;
+    setHackerWorld(true);
     hint = false;
     hackerDir = null;
     hackerRimSlide = null;
@@ -3817,7 +3753,9 @@ export function createGame(
     emitHud();
   }
 
-  function launchHackerFlight(effect: "arrow" | "lock") {
+  function launchHackerFlight(effect: "arrow" | "lock" | "rain") {
+    hackerDir = null;
+    hackerRimSlide = null;
     ball.vx = 0;
     ball.vy = 0;
     ball.omega = 0;
@@ -3832,7 +3770,7 @@ export function createGame(
     hackerFlight = { kind: "rise", effect };
     hackerPin = { x: ball.x, y: ball.y };
     callouts.push({
-      text: effect === "lock" ? "锁筐" : "飞天",
+      text: effect === "rain" ? "世界跳投" : effect === "lock" ? "锁筐" : "飞天",
       x: ball.x,
       y: ball.y - ball.r * 2.2,
       life: 0.9,
@@ -3849,13 +3787,14 @@ export function createGame(
     ball.hitBoard = false;
     ball.omega = 0;
     ball.scored = false;
-    if (flight.effect === "lock") {
+    if (flight.effect !== "arrow") {
       ball.x = hoop.x;
       ball.vx = 0;
       ball.y = -ball.r - 8;
       ball.vy = world.h * HACKER_CHARGE.flyDrop;
-      hackerFlight = { kind: "fall", effect: "lock" };
-      hackerDeepArmed = "lock";
+      hackerFlight = { kind: "fall", effect: flight.effect };
+      hackerDeepArmed = flight.effect;
+      if (flight.effect === "rain") wentOffTop = false;
       hackerPin = null;
       return;
     }
@@ -3892,13 +3831,13 @@ export function createGame(
   }
 
   function canArmHackerSpend() {
-    return isHacker() && hackerSkyDrop === null && !hackerFlight && !hackerCharge.holding && hackerCharge.makes > 0
+    return isHacker() && !hackerFlight && !hackerCharge.holding && hackerCharge.makes > 0
       && phase === "playing" && !paused && !buzzer && !timeUp
       && !birdOwnsBall(birds) && !stageMod.holdsBall?.();
   }
 
   function beginHackerSpend(pointerId: number) {
-    if (!isHacker() || hackerSkyDrop !== null || hackerFlight || phase !== "playing" || paused || buzzer || timeUp) return false;
+    if (!isHacker() || hackerFlight || phase !== "playing" || paused || buzzer || timeUp) return false;
     if (birdOwnsBall(birds) || stageMod.holdsBall?.()) return false;
     if (!beginChargeHold(hackerCharge)) return false;
     hackerSpendPointer = pointerId;
@@ -3916,13 +3855,6 @@ export function createGame(
   function endHackerSpend() {
     if (!hackerCharge.holding) return;
     hackerSpendPointer = null;
-    if (hackerAwaken) {
-      releaseRainCharge(hackerCharge);
-      hackerPin = null;
-      hackerFailFreeze = 0;
-      hackerHoopGrace = HACKER_RAIN.hoopGraceSeconds;
-      return;
-    }
     const effect = releaseChargeHold(hackerCharge);
     if (effect === "none") {
       hackerFailFreeze = HACKER_CHARGE.failFreezeSeconds;
@@ -3935,32 +3867,41 @@ export function createGame(
     }
     hackerPin = null;
     hackerFailFreeze = 0;
-    if (effect === "rain") {
-      enterHackerAwaken();
+    if (effect === "rain" && hackerAwaken) {
+      leaveHackerWorld();
       return;
     }
+    hackerRainEnterPending = effect === "rain";
     launchHackerFlight(effect);
   }
 
   function evacuateHackerRain() {
-    if (!hackerAwaken || hackerSkyDrop !== null || !chargeIsFull(hackerCharge)) return;
+    if (!hackerAwaken || !chargeIsFull(hackerCharge)) return;
+    leaveHackerWorld();
+  }
+
+  function leaveHackerWorld() {
     if (other) dismissHoopNow(other);
-    hackerAwaken = false;
+    bankHackerCombo(hackerProgress);
+    setHackerWorld(false);
     hackerDir = null;
     hackerRimSlide = null;
-    resetHackerMeter();
+    resetHackerMeter(); // A world exit spends energy, never the run's banked progress.
     clearSparseCodeRain();
-    hackerSkyDrop = HACKER_RAIN.vanishSeconds;
-    ball.vx = 0;
-    ball.vy = 0;
-    ball.omega = 0;
-    ball.y = -900;
-    ball.scored = false;
-    scoreGateHoop = null;
-    scoredLock = 0;
-    wentOffTop = false;
+    launchHackerFlight("rain");
     callouts.push({ text: "撤离", x: world.w / 2, y: world.h * 0.4, life: 1.1, max: 1.1, kind: "tag" });
     emitHud();
+  }
+
+  /** timerMax remains the ordinary, decaying budget; transitions only rescale remaining time. */
+  function hackerClockBudget() {
+    return timerMax * hackerClockScale(hackerAwaken);
+  }
+
+  function setHackerWorld(awake: boolean) {
+    if (awake === hackerAwaken) return;
+    timer *= hackerClockScale(awake) / hackerClockScale(hackerAwaken);
+    hackerAwaken = awake;
   }
 
   function noteRainDropCombo(count: number) {
@@ -4337,7 +4278,7 @@ export function createGame(
     audio.unlock();
     if (phase === "over") return;
     e.preventDefault();
-    if (phase === "playing" && isHacker() && hackerAwaken && hackerSkyDrop === null && chargeIsFull(hackerCharge)) {
+    if (phase === "playing" && isHacker() && hackerAwaken && chargeIsFull(hackerCharge)) {
       const point = pointerWorld(e);
       if (pointerOnRainPhone(world, point.x, point.y)) {
         evacuateHackerRain();
@@ -4649,7 +4590,8 @@ export function createGame(
     resetTrainScroll();
     ball.sootLeft = 0;
     hackerDir = null;
-    hackerAwaken = false; resetHackerMeter();
+    setHackerWorld(false); resetHackerMeter();
+    hackerProgress = createHackerProgress();
     vector = createVector(); superBall = createSuper();
     rocket = createRocket();
     quantumTunnelLeft = 0;
@@ -4668,7 +4610,7 @@ export function createGame(
     rogueRun = null;
     rogueStageDecay = null;
     timerMax = timerBudget();
-    timer = timerMax;
+    timer = hackerClockBudget();
     timerArmed = false;
     buzzer = false;
     buzzerTimer = 0;
@@ -4728,7 +4670,7 @@ export function createGame(
     beginPlay();
     hint = false;
     timerArmed = false;
-    timer = timerMax;
+    timer = hackerClockBudget();
     devFreeze = false;
     devHoldHeat = false;
     madeCount = 1;
@@ -4803,7 +4745,7 @@ export function createGame(
           beginPlay();
           hint = false;
           timerArmed = false;
-          timer = timerMax;
+          timer = hackerClockBudget();
           devFreeze = false;
           devHoldHeat = false;
           madeCount = 1;
@@ -4981,7 +4923,7 @@ export function createGame(
       }
       case "timer01": {
         const n = Math.max(0, Math.min(1, cmd.n));
-        timer = timerMax * n;
+        timer = hackerClockBudget() * n;
         timeUp = false;
         buzzer = false;
         emitHud();
@@ -5000,7 +4942,7 @@ export function createGame(
         timerArmed = true;
         timeUp = false;
         buzzer = false;
-        if (timer <= 0) timer = timerMax;
+        if (timer <= 0) timer = hackerClockBudget();
         emitHud();
         return;
       case "timeUp":
@@ -5514,21 +5456,18 @@ export function createGame(
       tickFrost(other, dt, true);
       // Keep frosted secondary stands still; only slide out after thaw.
       if (other.frostLeft <= 0) {
-        if (rainHoopsPinned()) pullHoopHome(other, dt);
-        else nudgeNet(other, stepHoopRetirement(other, world.w, dt), 0);
+        nudgeNet(other, stepHoopRetirement(other, world.w, dt), 0);
       } else {
         other.moving = false;
         other.targetX = other.x;
         other.baseX = other.x;
         other.baseY = other.y;
       }
-      if (!rainHoopsPinned() && hoopRetirementDone(other, world.w)) {
-        cancelRainDrips(other);
+      if (hoopRetirementDone(other, world.w)) {
         other = null;
         otherOverRim = false;
       }
     }
-    if (phase === "playing" && !paused) stepRainDrips(dt);
 
     if (trainBackdropOn() && (phase === "playing" || birdOwnsBall(birds))) {
       const wasOwned = birdOwnsBall(birds);
@@ -5601,32 +5540,6 @@ export function createGame(
             beginHackerSpend(id);
           }
         }
-        if (hackerSkyDrop !== null && hackerSkyDrop > 0) {
-          hackerScripted = true;
-          hackerSkyDrop = Math.max(0, hackerSkyDrop - dt);
-          ball.vx = 0;
-          ball.vy = 0;
-          ball.omega = 0;
-          ball.y = -900;
-          if (hackerSkyDrop === 0) {
-            ball.x = hoop.x;
-            ball.y = ball.r + 6;
-            ball.vy = world.h * 1.15;
-            ball.scored = false;
-            wentOffTop = false;
-            resetShotFlags();
-            shotOpen = true;
-            shotAirborne = true;
-            scoreGateHoop = null;
-          }
-        } else if (hackerSkyDrop === 0) {
-          ball.x = hoop.x;
-          ball.vx = 0;
-          wentOffTop = false;
-        }
-        if (hackerAwaken && !hackerCharge.holding && hackerHoopGrace > 0) {
-          hackerHoopGrace = Math.max(0, hackerHoopGrace - dt);
-        }
         if (hackerAwaken) {
           const birdsDropped = trainBackdropOn() ? rainDropBirds(birds, ball) : 0;
           const carsDropped = trafficEnabled() ? rainClearTraffic(traffic, world, ball) : 0;
@@ -5634,7 +5547,6 @@ export function createGame(
         }
         if (hackerCharge.holding) {
           stepChargeHold(hackerCharge, dt);
-          if (hackerAwaken && chargeDisplayMakes(hackerCharge) <= 1e-4) endHackerSpend();
           hackerRipplePulse += dt;
           if (hackerRipplePulse >= HACKER_RIPPLE.pulseEvery) {
             hackerRipplePulse = 0;
@@ -5655,7 +5567,7 @@ export function createGame(
         const flightNow = hackerFlight;
         const failHold = hackerFailFreeze > 0;
         if (failHold) hackerFailFreeze = Math.max(0, hackerFailFreeze - dt);
-        hackerLockFall = flightNow?.kind === "fall" && flightNow.effect === "lock";
+        hackerLockFall = flightNow?.kind === "fall" && flightNow.effect !== "arrow";
         if (hackerCharge.holding || flightNow?.kind === "aim" || failHold) {
           hackerScripted = true;
           if (hackerPin) { ball.x = hackerPin.x; ball.y = hackerPin.y; }
@@ -5895,7 +5807,7 @@ export function createGame(
           if (phase !== "title") audio.board(Math.min(1, impact / 700));
         }
       }
-      if (ball.y + ball.r < 0 && !birds.enteringFromTop && hackerSkyDrop !== 0) wentOffTop = true;
+      if (ball.y + ball.r < 0 && !birds.enteringFromTop && !(hackerFlight && hackerFlight.kind !== "aim" && hackerFlight.effect === "rain")) wentOffTop = true;
       // Leash before wrap so a taut chain yanks the ball and can block side-respawn.
       if (phase === "playing" && !stageMod.holdsBall?.()) {
         stageMod.afterPhysics?.(dt, modifierHost());
@@ -6582,6 +6494,7 @@ export function createGame(
     if (isHacker() && hackerFlight?.kind === "fall") {
       hackerFlight = null;
       hackerDeepArmed = null;
+      hackerRainEnterPending = false;
     }
     const incoming = ball.vy;
     ball.y = world.floorY - ball.r;
@@ -6737,6 +6650,10 @@ export function createGame(
     const ghost = opts?.ghost === true;
     // Clones cannot replace the real ball's final shot or extend its window.
     if (ghost && (buzzer || timeUp)) return;
+    const hackerEffect = !ghost && isHacker() ? hackerDeepArmed : null;
+    const hackerBonus = !ghost && isHacker() ? hackerComboBonus(hackerProgress, hackerAwaken) : 0;
+    const earnsHackerArrow = hackerEffect === "arrow" && hackerAwaken;
+    const entersHackerWorld = hackerEffect === "rain" && hackerRainEnterPending;
     const clutch = !ghost && buzzer;
     const finalMinuteMake = clutch && isMinuteMode();
     const champReward = clutch && isChamp() && !isMinuteMode();
@@ -6794,17 +6711,16 @@ export function createGame(
     }
     const toilet = ghost ? false : rimHits >= 3;
     const lucky = ghost ? false : hitBoardTop;
-    if (!ghost && hackerSkyDrop === 0) {
-      wentOffTop = false;
-      hackerSkyDrop = null;
-    }
     if (!ghost && hackerDeepArmed) {
-      // Arrow and lock both promise deep water on this make, even if the ball clips the rim or board.
-      wentOffTop = true;
-      ball.hitRim = false;
-      ball.hitBoard = false;
-      swish = true;
+      // Only the first two layers promise deep water; a world jump is a normal make.
+      wentOffTop = hackerDeepArmed !== "rain";
+      if (hackerDeepArmed !== "rain") {
+        ball.hitRim = false;
+        ball.hitBoard = false;
+        swish = true;
+      }
       hackerDeepArmed = null;
+      hackerRainEnterPending = false;
       if (hackerFlight?.kind === "fall") hackerFlight = null;
     }
     const depth = ghost ? false : wentOffTop && swish;
@@ -6822,6 +6738,12 @@ export function createGame(
         ? (catalogOf("comboboost")?.comboBoostAdd ?? 3)
         : null;
     streak = streakAfterMake({ streak, comboCounting, bunshinGhost, comboBoost });
+    streak += hackerBonus;
+    if (earnsHackerArrow) {
+      awardHackerArrow(hackerProgress);
+      callouts.push({ text: "每球连击 +1", x: scoredHoop.x, y: scoredHoop.y - 100, life: 1.2, max: 1.2, kind: "tag" });
+    }
+    if (entersHackerWorld) enterHackerAwaken();
     comboCounting = true;
     comboClock = 0;
     if (!ghost) {
@@ -6829,7 +6751,7 @@ export function createGame(
       // The first make starts the minute; every later make contributes a real gap.
       if (balanceSession && isMinuteMode()) {
         const wasArmed = timerArmed;
-        const elapsed = wasArmed ? Math.max(0, timerMax - timer) : 0;
+        const elapsed = wasArmed ? Math.max(0, hackerClockBudget() - timer) : 0;
         if (wasArmed && balanceLastMakeAt !== null) {
           balanceMaxMakeGapSeconds = Math.max(balanceMaxMakeGapSeconds, elapsed - balanceLastMakeAt);
         }
@@ -7000,15 +6922,8 @@ export function createGame(
       gain *= CHAMP_SCORE_MULT;
       champDoublePending = false;
     }
-    let banked = gain;
-    if (!ghost && hackerAwaken && gain > 0) {
-      const split = splitRainScore(gain);
-      banked = split.now;
-      if (split.later > 0) {
-        const stand = "net" in scoredHoop ? (scoredHoop as Hoop) : hoop;
-        rainDrips.push({ hoop: stand, left: HACKER_RAIN.dripSeconds, remain: split.later });
-      }
-    }
+    if (hackerEffect === "lock") gain *= 2;
+    const banked = gain;
     score += banked;
     if(!ghost && isSuper()) superScore(superBall,superShieldScore);
     if (!ghost && balanceSession) {
@@ -7042,7 +6957,7 @@ export function createGame(
     }
     if (!ghost && isTime() && !clutch && timerMax > 0) {
       // Store 5% of the unused-clock fraction as Time Ball rewind energy.
-      const earned = Math.max(0, Math.min(1, timer / timerMax)) * 5;
+      const earned = Math.max(0, Math.min(1, timer / hackerClockBudget())) * 5;
       timeEnergy = Math.min(TIME_ENERGY_MAX, timeEnergy + earned);
     }
     noteGraf();
@@ -7173,7 +7088,7 @@ export function createGame(
     }
     if (champClockPenalty) {
       champHalfClock = true;
-      timer = timerMax * 0.5;
+      timer = hackerClockBudget() * 0.5;
     }
     champClutchControlled = false;
     const stage = fireStage(heatN());
@@ -7525,7 +7440,7 @@ export function createGame(
           ctx.rect(0, 0, world.w, world.h);
           ctx.clip();
           const yardHud = stageMod.hud?.() ?? null;
-          const clock01 = timerMax > 0 ? timer / (timerMax * (champHalfClock ? 0.5 : 1)) : 0;
+          const clock01 = timerMax > 0 ? timer / (hackerClockBudget() * (champHalfClock ? 0.5 : 1)) : 0;
           // Prison bar ART swaps Yard / Lock / Infraction; FILL always follows street cool-down.
           // Background recess/curfew phase pauses on hunt; fill does not.
           const timer01 = phase === "over" ? 1 : clock01;
@@ -7631,9 +7546,10 @@ export function createGame(
             drawHackerCharge(ctx, world, hackerCharge, {
               disabled: paused || buzzer || timeUp,
               awake: hackerAwaken,
+              comboBonus: hackerComboBonus(hackerProgress, hackerAwaken),
               aiming: hackerFlight?.kind === "aim",
             });
-            if (hackerAwaken && hackerSkyDrop === null && chargeIsFull(hackerCharge)) drawRainPhone(ctx, world);
+            if (hackerAwaken && chargeIsFull(hackerCharge)) drawRainPhone(ctx, world);
             if (hackerFlight?.kind === "aim" || (hackerFlight?.kind === "rise" && hackerFlight.effect === "arrow")) {
               const landX = hackerFlight.kind === "aim" ? hackerFlight.landX : clamp(ball.x, ball.r, world.w - ball.r);
               const meter = chargeMeterLayout(world);
@@ -7819,7 +7735,7 @@ export function createGame(
       playMode = mode;
       if (phase === "title" || phase === "over") {
         timerMax = timerBudget();
-        timer = timerMax;
+        timer = hackerClockBudget();
         timerArmed = false;
       }
       persist();
@@ -7894,6 +7810,9 @@ export function createGame(
         birds: trainBackdropOn() ? structuredClone(birds) : null,
         birdBaseBonus,
         frostBonus, glassBase, glassProtectionLeft, quantumTunnelLeft, hackerAwaken, streak,
+        hackerProgress: { ...hackerProgress },
+        hackerComboBonus: hackerComboBonus(hackerProgress, hackerAwaken),
+        hackerClockScale: hackerClockScale(hackerAwaken),
         hackerCharge: {
           ...hackerCharge,
           display: chargeDisplayMakes(hackerCharge),
@@ -7901,6 +7820,7 @@ export function createGame(
           meter: chargeMeterLayout(world),
           flight: hackerFlight ? { ...hackerFlight } : null,
           deep: hackerDeepArmed,
+          rainEnterPending: hackerRainEnterPending,
         },
         blackHole: holeOn ? { x: holeX, y: holeY, r: holeR, left: holeLeft } : null,
         antiRecovery: holeOn && isAnti2() ? { ...antiRecovery } : null,

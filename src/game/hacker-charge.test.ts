@@ -15,14 +15,16 @@ import {
   hackerLensBands,
   stepHackerRipples,
   releaseChargeHold,
-  releaseRainCharge,
   chargeIsFull,
-  splitRainScore,
-  stepRainScoreDrips,
   stepChargeHold,
   stepChargeDecay,
   stepChargeGlow,
   settledHackerCharge,
+  createHackerProgress,
+  hackerComboBonus,
+  awardHackerArrow,
+  bankHackerCombo,
+  hackerClockScale,
 } from "./hacker-charge.ts";
 
 test("each newly completed layer glows once, including rain-style refills", () => {
@@ -37,9 +39,9 @@ test("each newly completed layer glows once, including rain-style refills", () =
   }
   assert.equal(addHackerMake(s), false);
   assert.deepEqual(s.layerGlow, [0, 0, 0]);
-  drain(s, 0.5);
-  releaseRainCharge(s);
-  addHackerMake(s);
+  drain(s, 5);
+  releaseChargeHold(s);
+  for (let i = 0; i < 5; i++) addHackerMake(s);
   assert.deepEqual(s.layerGlow, [0, 0, HACKER_CHARGE.layerGlowSeconds]);
 });
 
@@ -213,10 +215,12 @@ test("holding blocks new makes and an empty meter does not start a hold", () => 
   assert.equal(beginChargeHold(empty), false);
 });
 
-test("drain waits until the press is longer than 0.3s", () => {
-  assert.equal(HACKER_CHARGE.holdArmSeconds, 0.3);
-  assert.equal(chargeHoldArmed(0.3), false);
-  assert.equal(chargeHoldArmed(0.31), true);
+test("skills arm and spend faster without delaying taps", () => {
+  assert.equal(HACKER_CHARGE.holdArmSeconds, 0.22);
+  assert.equal(HACKER_CHARGE.layerDrainSeconds, 0.32);
+  assert.equal(chargeHoldArmed(0.22), false);
+  assert.equal(chargeHoldArmed(0.23), true);
+  assert.ok(HACKER_CHARGE.holdArmSeconds + 3 * HACKER_CHARGE.layerDrainSeconds < 1.65);
 });
 
 test("spend ripples are staggered lens bands that bend pixels, then expire", () => {
@@ -244,41 +248,49 @@ test("the aim arrow moves on its own, bounces, and times out at 3s", () => {
   assert.equal(bounced.dir, -1);
 });
 
-test("rain spend keeps the remainder and does not restore a partial layer", () => {
-  const rain = filled(7);
-  drain(rain, 2.4);
-  releaseRainCharge(rain);
-  assert.ok(Math.abs(rain.makes - 4.6) < 1e-6);
-  assert.equal(rain.holding, false);
-  const fair = filled(7);
-  drain(fair, 2.4);
-  assert.equal(releaseChargeHold(fair), "none");
-  assert.equal(fair.makes, 7);
+test("code-world arrow rewards stack and evacuation banks them exactly once", () => {
+  const s = createHackerProgress();
+  assert.equal(hackerComboBonus(s, false), 0);
+  awardHackerArrow(s);
+  awardHackerArrow(s);
+  assert.equal(hackerComboBonus(s, true), 2);
+  assert.equal(hackerComboBonus(s, false), 0);
+  bankHackerCombo(s);
+  assert.equal(hackerComboBonus(s, false), 2);
+  assert.equal(hackerComboBonus(s, true), 2);
+  bankHackerCombo(s);
+  assert.equal(hackerComboBonus(s, false), 2);
+  awardHackerArrow(s);
+  assert.equal(hackerComboBonus(s, true), 3);
+  assert.equal(hackerComboBonus(s, false), 2);
+  bankHackerCombo(s);
+  assert.equal(hackerComboBonus(s, false), 3);
+  assert.deepEqual(createHackerProgress(), { bankedCombo: 0, codeCombo: 0 });
 });
 
-test("a full bar is three layers and a drip dies with its own hoop", () => {
-  assert.equal(chargeIsFull(filled(15)), true);
-  const almost = createHackerCharge();
-  almost.makes = 14.9;
-  assert.equal(chargeIsFull(almost), false);
-  assert.deepEqual(splitRainScore(4), { now: 1, later: 3 });
-  assert.deepEqual(splitRainScore(0), { now: 0, later: 0 });
-  const first = stepRainScoreDrips(
-    [
-      { slot: 0, left: 0.5, remain: 2 },
-      { slot: 1, left: 0.5, remain: 1 },
-    ],
-    0.5,
-    () => true,
-  );
-  assert.equal(first.scored, 2);
-  const second = stepRainScoreDrips(first.drips, 0.5, (slot) => slot === 0);
-  assert.equal(second.scored, 1);
-  assert.equal(second.drips.length, 0);
-  const flat = stepRainScoreDrips([{ slot: 0, left: 0.5, remain: 2 }], 1, () => true);
-  assert.equal(flat.scored, 2);
-  assert.equal(flat.drips.length, 0);
-  const dropped = stepRainScoreDrips([{ slot: 0, left: 0.5, remain: 3 }], 0.5, () => false);
-  assert.equal(dropped.scored, 0);
-  assert.equal(dropped.drips.length, 0);
+test("code clock penalty is reversible and does not compound over refills", () => {
+  let remaining = 12;
+  remaining *= hackerClockScale(true) / hackerClockScale(false);
+  assert.equal(remaining, 10.8);
+  remaining *= hackerClockScale(false) / hackerClockScale(true);
+  assert.ok(Math.abs(remaining - 12) < 1e-9);
+  for (const base of [15, 9, 2.6, 60]) {
+    assert.equal(base * hackerClockScale(true), base * 0.9);
+    assert.equal(base * hackerClockScale(false), base);
+  }
+});
+
+test("both worlds spend whole tiers, refund partial progress, and expose full charge", () => {
+  const s = filled(15);
+  assert.equal(chargeIsFull(s), true);
+  drain(s, 7);
+  assert.equal(releaseChargeHold(s), "arrow");
+  assert.equal(s.makes, 10);
+  drain(s, 10);
+  assert.equal(releaseChargeHold(s), "lock");
+  assert.equal(s.makes, 0);
+  const full = filled(15);
+  drain(full, 15);
+  assert.equal(releaseChargeHold(full), "rain");
+  assert.equal(full.makes, 0);
 });
