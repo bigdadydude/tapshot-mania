@@ -3,6 +3,7 @@
 import type { Ball, Hoop, World } from "../types";
 import type { ModifierHost, StageModifier, YardLightsHud } from "../modifiers";
 import { artImage } from "../art";
+import { hackerDropProjectile } from "../hacker-projectiles.ts";
 import {
   coneGeometry,
   drawSearchlightBeam,
@@ -70,6 +71,7 @@ type Bolt = {
   bounces: number;
   trail: { x: number; y: number }[];
   falling: boolean;
+  hackerRewarded?: boolean;
   faceAng: number;
   /** Seconds left for a retired round to visually fade without hitting anything. */
   fadeLeft: number | null;
@@ -1174,8 +1176,22 @@ export function createYardLights(): StageModifier {
           continue;
         }
 
+        // Resolve the unreflected flight segment before elite boundary bounces.
+        // Black-hole suction, retirement and already falling rounds exited above.
+        const hacker = host.getHackerKnockdown?.();
+        const hackerBall = hacker ? { x: hacker.toX ?? ball.x, y: hacker.toY ?? ball.y, r: ball.r } : ball;
+        if (hacker && hackerDropProjectile(b, { x: x0, y: y0 }, hackerBall,
+          { x: hacker.fromX, y: hacker.fromY }, host.onHackerKnockdown)) {
+          b.trail.push({ x: b.x, y: b.y });
+          if (b.trail.length > TRAIL_LEN) b.trail.shift();
+          continue;
+        }
+
         if (b.elite) {
           if (bounceElite(world, b, x0, y0)) continue;
+          // Also cover the reflected endpoint used by the existing elite hit path.
+          if (hacker && hackerDropProjectile(b, { x: x0, y: y0 }, hackerBall,
+            { x: hacker.fromX, y: hacker.fromY }, host.onHackerKnockdown)) continue;
         }
 
         b.trail.push({ x: b.x, y: b.y });

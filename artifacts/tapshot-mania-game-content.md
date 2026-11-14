@@ -177,14 +177,14 @@ pMul(k) =
 | `plain` | 经典球 | `/game/balls/plain.webp`（fb `.png`） | 「别人都靠技能，而我…就很…」 | `jumpUp/Fwd=0.95`；wrap ground | 默认球 `DEFAULT_BALL` | ✅ |
 | `super` | 超能球 | `/game/balls/super.png` | 得分充能每 20 一段最多 6；八向滑冲 **5 直径**（`dashDiameters:5`），顶端滞空 0.2s；连冲耗 1/2/3 段；打板铁/车/弹后 0.07s 完美取消返 1 段；能量条切护盾 | `jumpUp/Fwd=0.95` | 见 `SUPER` 常量；护盾进球不充能 | ✅ |
 | `rocket` | 火箭球 | 复用 plain 图 | 按住底红点飞，拖左右；耗燃料，贴地恢复 | `jumpUp/Fwd=0.95, ball=0.35`；rScale 1 | **未开放** | ❌ |
-| `bolt` | 闪电球 | `/game/balls/lightning.png` | 首球后滚速充电；空心+1%/擦板+8%；>90% 打铁+1 掉 1%；长按 0.5s 连灌；耗尽过热 3s | `jumpUp/Fwd=0.95` | `BOLT_*`；过热钉死球并抽电 | ✅ |
+| `bolt` | 闪电球 | `/game/balls/lightning.png` | 首球后滚速充电；空心+1%/擦板+8%；>94% 打铁+1 掉 1%；长按 0.5s 连灌；耗尽过热 3s | `jumpUp/Fwd=0.95` | `BOLT_*`；过热钉死球并抽电 | ✅ |
 | `ninja` | 忍者球 | `/game/balls/ninja1.png` | 连击 **10/26/47** 各一影分身；分身只加连击不计分 | `jumpUp=1, jumpFwd=1.2, grav=0.9, hoop=0.8, boardFric=0.7` | 延迟轨 `NINJA_DELAYS` | ✅ |
 | `rubber` | 弹力球 | （程序绘） | 高弹小号，穿边朝筐出现 | `rScale=0.5`；`jumpUp=1, jumpFwd=0.8, grav=1, ball=2`；**wrap height** | 靠手感拿分；设计约定倾向锁定 | ✅ |
 | `maze` | 迷宫球 | （程序绘） | 地面摇杆改重力；中立停力保惯性 | `ball=0.92, air=0.86, roll=0.72` | **未开放**；穿边保动量 | ❌ |
 | `quantum` | 量子球 | `/game/balls/quantum0.png` | 每进球按连击%隧穿（1连1%…≥100必中）；成功 6s 穿篮架 | 默认 phys | `quantumTunnelLeft`；跳过板/撑碰撞 | ✅ |
 | `time` | 时间球 | `/game/balls/time.png` | 进球按剩余钟比例充能；长按快退最多 5s；绝杀禁用 | 默认 phys | 能量上限 100=满 5s；`TIME_*` | ✅ |
 | `vector` | 矢量球 | `/game/balls/vector.png` | 首球后储能 cap 1500；短按耗 250 定向脉冲；长按 1s 全爆发（≥40），释能×5 为消耗换算；大招后 10s 不能储；>1000 漏能 | `jumpUp/Fwd=1` | PR#21：短脉冲 `pulse=0.16`、`pulseSpeed=0.7`、抵达后停 `pulseHold=0.08` | ✅ |
-| `rain` | 骇客球 | （程序绿绘） | 每5球一段，满段发光；0.22秒长按、每段0.32秒。1段箭头深水，代码中成功后每球额外+1连击可叠；2段锁筐深水本球×2；现实3段跳投入网进代码，代码3段/满气电话撤离跳投并带回本轮加成。本局永久，重开清零。代码正常即时得分、时钟90%，出世界恢复 | `jumpUp/Fwd=1, grav=0.98, ball=1.04, air=0.96` | `codeRain`；不再滴分/留筐，见 docs/hacker-ball-redesign.md | ✅ |
+| `rain` | 骇客球 | （程序绿绘） | 每5球一段，满段发光；0.22秒长按、每段0.32秒。1段箭头深水，代码中成功后每球额外+1连击可叠；2段锁筐深水本球×2；现实3段跳投入网进代码，代码3段/满气电话撤离跳投并带回本轮加成。本局永久，重开清零。代码正常即时得分、时钟94%，出世界恢复 | `jumpUp/Fwd=1, grav=0.98, ball=1.04, air=0.96` | `codeRain`；不再滴分/留筐，见 docs/hacker-ball-redesign.md | ✅ |
 | `lava` | 燃烧球 | `/game/balls/lava.webp` | 「什么味道？…」→ 连击升温给额外分并可点燃对面筐 | 默认 phys；`heat:true` | `canHeat`；热度阶段 +1/+2/+3 | ✅ |
 | `frost` | 冰冻球 | `/game/balls/frost.png` | 连击抬冻筐概率；首冻 4s 续冻 3s；灌冻筐叠基础分 | 默认 phys | `FROST_*`；冻中进球 `frostGain=2` | ✅ |
 | `champ` | 冠军球 | （程序绘） | 存剩余时间 20%；耗尽开双倍冠军时刻；**不可 1分钟** | `jumpUp/Fwd=0.95, grav=0.95, ball=0.9, hoop=0.9, rim/boardFric=1.1` | `CHAMP_BANK_RATE=0.2`；冠军中不 refill 钟 | ✅ |

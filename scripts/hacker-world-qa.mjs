@@ -10,7 +10,7 @@ const hooks = `
    ball.x=world.w/2; ball.y=world.floorY-ball.r; ball.vx=ball.vy=0;
    paused=true;
  },
- auditWorldRead() { return {awake:hackerAwaken,progress:{...hackerProgress},flight:hackerFlight?{...hackerFlight}:null,score,streak,timer,timerMax,bonus:hackerComboBonus(hackerProgress,hackerAwaken)}; },
+ auditWorldRead() { return {locked:hackerJumpLocked,awake:hackerAwaken,progress:{...hackerProgress},flight:hackerFlight?{...hackerFlight}:null,score,streak,timer,timerMax,bonus:hackerComboBonus(hackerProgress,hackerAwaken)}; },
  auditWorldSkill(n) {
    paused=false; hackerCharge.makes=n*5; hackerCharge.idleSeconds=0;
    beginHackerSpend(-12); stepChargeHold(hackerCharge,n*HACKER_CHARGE.layerDrainSeconds); endHackerSpend();
@@ -20,9 +20,23 @@ const hooks = `
    if(hackerFlight?.kind==='rise') completeHackerRise();
    if(hackerFlight?.kind==='aim') confirmHackerLanding(hoop.x);
    ball.hitBoard=false;ball.hitRim=false;rimHits=0;hitBoardTop=false;fromBelow=false;
-   registerScore({at:hoop,ghost,forceSwish:true}); paused=true; return this.auditWorldRead();
+   registerScore({at:hoop,ghost,forceSwish:true}); if(!ghost)releaseHackerJump(); paused=true; return this.auditWorldRead();
  },
  auditWorldMiss() {if(hackerFlight?.kind==='rise')completeHackerRise();if(hackerFlight?.kind==='aim')confirmHackerLanding(hoop.x);ball.y=world.floorY;ball.vy=100;collideFloor();return this.auditWorldRead();},
+ auditWorldLockTest() {
+   this.auditWorldSetup();this.auditWorldSkill(1);paused=false;
+   const riseBlocked=!tapJump(-33);completeHackerRise();confirmHackerLanding(hoop.x);
+   const fallBlocked=!tapJump(-33);ball.vy=200;
+   noteRainDropCombo(1);const realReward=hackerProgress.codeCombo;
+   ball.y=world.floorY;collideFloor();const floorUnlocked=!hackerJumpLocked;
+   this.auditWorldSetup();this.auditWorldSkill(2);completeHackerRise();ball.vy=200;
+   const g=boardGeom(hoop,world);prevBallX=ball.x=g.visX;prevBallY=ball.y=g.visY+g.bh/2;
+   touchHackerStand();const boardUnlocked=!hackerJumpLocked;
+   this.auditWorldSetup();this.auditWorldSkill(3);this.auditWorldMake();noteRainDropCombo(3);
+   const codeReward=hackerProgress.codeCombo;this.auditWorldSkill(3);
+   const banked=hackerProgress.bankedCombo;
+   return {riseBlocked,fallBlocked,floorUnlocked,boardUnlocked,realReward,codeReward,banked};
+ },
  auditWorldBreak() {streak=0;comboCounting=false;return this.auditWorldRead();},
  snapshot() { return {`;
 mkdirSync('screenshots/hacker-world',{recursive:true});
@@ -40,7 +54,7 @@ try {
   await page.goto('http://127.0.0.1:8080/',{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>window.__tq?.auditWorldSetup);
   const result=await page.evaluate(()=>{
-   const q=window.__tq;q.auditWorldSetup();
+   const q=window.__tq;const lockTest=q.auditWorldLockTest();q.auditWorldSetup();
    const launch=q.auditWorldSkill(3),enter=q.auditWorldMake();
    const arrowLaunch=q.auditWorldSkill(1),arrow=q.auditWorldMake();
    const next=q.auditWorldMake();
@@ -54,11 +68,12 @@ try {
    const ghost=q.auditWorldMake(true),realAfterGhost=q.auditWorldMake();
    q.auditWorldSetup();q.auditWorldSkill(3);q.auditWorldMake();q.auditWorldSkill(1);q.auditWorldMiss();const missed=q.auditWorldMake();
    q.auditWorldSetup('minute');const minuteLaunch=q.auditWorldSkill(3),minuteEnter=q.auditWorldMake(),minuteExit=q.auditWorldSkill(3);
-   return {launch,enter,arrowLaunch,arrow,next,afterBreak,beforeDouble,double,exit,exitMake,reality,secondExit,ghost,realAfterGhost,missed,minuteLaunch,minuteEnter,minuteExit};
+   return {lockTest,launch,enter,arrowLaunch,arrow,next,afterBreak,beforeDouble,double,exit,exitMake,reality,secondExit,ghost,realAfterGhost,missed,minuteLaunch,minuteEnter,minuteExit};
   });
+  assert.deepEqual(result.lockTest,{riseBlocked:true,fallBlocked:true,floorUnlocked:true,boardUnlocked:true,realReward:0,codeReward:3,banked:3});
   assert.equal(result.launch.awake,false,'entry must wait for basket');
   assert.equal(result.enter.awake,true);
-  assert.equal(result.enter.timer/result.enter.timerMax,.9);
+  assert.equal(result.enter.timer/result.enter.timerMax,.94);
   assert.equal(result.arrow.progress.codeCombo,1);
   assert.equal(result.next.streak-result.arrow.streak,2);
   assert.equal(result.afterBreak.streak,2,'persistent bonus survives combo break');
@@ -72,7 +87,7 @@ try {
   assert.equal(result.ghost.progress.codeCombo,0);
   assert.equal(result.realAfterGhost.progress.codeCombo,1);
   assert.equal(result.missed.progress.codeCombo,0);
-  assert.equal(result.minuteEnter.timer,result.minuteLaunch.timer*.9);
+  assert.equal(result.minuteEnter.timer,result.minuteLaunch.timer*.94);
   assert.ok(Math.abs(result.minuteExit.timer-result.minuteLaunch.timer)<1e-8);
   assert.deepEqual(errors,[]);
   await page.screenshot({path:`screenshots/hacker-world/${name}.png`});

@@ -271,11 +271,11 @@ test("code-world arrow rewards stack and evacuation banks them exactly once", ()
 test("code clock penalty is reversible and does not compound over refills", () => {
   let remaining = 12;
   remaining *= hackerClockScale(true) / hackerClockScale(false);
-  assert.equal(remaining, 10.8);
+  assert.ok(Math.abs(remaining - 11.28) < 1e-9);
   remaining *= hackerClockScale(false) / hackerClockScale(true);
   assert.ok(Math.abs(remaining - 12) < 1e-9);
   for (const base of [15, 9, 2.6, 60]) {
-    assert.equal(base * hackerClockScale(true), base * 0.9);
+    assert.equal(base * hackerClockScale(true), base * 0.94);
     assert.equal(base * hackerClockScale(false), base);
   }
 });

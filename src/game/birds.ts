@@ -1,4 +1,5 @@
 import { sootFilter } from "./train-smoke.ts";
+import { sweptCircleContact, type Point } from "./hacker-projectiles.ts";
 import type { World } from "./types";
 import { sweepGantryCircle, type TrainGantry } from "./train-gantry.ts";
 
@@ -321,6 +322,32 @@ export function rainDropBirds(s: BirdState, ball: { x: number; y: number; r: num
     stunBird(s, b);
     b.rewarded = true;
     dropped += 1;
+  }
+  return dropped;
+}
+
+/** Hacker contact bypasses ordinary rebound; returns newly rewarded drops only.
+ * `previous` is the ball's position at the start of the same step as bird px/py.
+ * Call before collideBirds so ordinary collision cannot consume the contact first.
+ */
+export function hackerDropBirds(s: BirdState, ball: Point & { r: number }, previous: Point) {
+  let dropped = 0;
+  for (const b of s.birds) {
+    if (b.rewarded || b.age >= 1000) continue;
+    const carrying = b.mode === "carry" && s.carrier === b.id;
+    if (!carrying && b.mode !== "frozen" && !canBeStunned(b)) continue;
+    if (!collisionParts(b).some(part => sweptCircleContact(previous, ball,
+      { x: b.px + part.x, y: b.py + part.y },
+      { x: b.x + part.x, y: b.y + part.y }, ball.r + part.r))) continue;
+    if (carrying) {
+      if (!releaseBirdCarrier(s)) continue;
+    } else if (b.mode === "frozen") {
+      shatterBird(s, b);
+    } else {
+      stunBird(s, b);
+      b.rewarded = true;
+    }
+    dropped++;
   }
   return dropped;
 }

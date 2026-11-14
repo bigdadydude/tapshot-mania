@@ -128,7 +128,7 @@ export function stepChargeHold(s: HackerCharge, dt: number) {
  */
 export const HACKER_RAIN = {
   vanishSeconds: 0.32,
-  clockScale: 0.9,
+  clockScale: 0.94,
 } as const;
 
 /** Run-local progression; banked stacks survive world changes, never a new run. */
@@ -331,7 +331,7 @@ export function drawHackerCharge(
   ctx.strokeText(label, box.x, labelY);
   ctx.fillText(label, box.x, labelY);
   if (opts.awake || (opts.comboBonus ?? 0) > 0) {
-    const status = `每球连击 +${opts.comboBonus ?? 0}${opts.awake ? " · 时钟 −10%" : " · 已带回"}`;
+    const status = `每球连击 +${opts.comboBonus ?? 0}${opts.awake ? " · 时钟 −6%" : " · 已带回"}`;
     ctx.fillStyle = opts.awake ? HACKER_CHARGE_COLORS[1] : "#f4fbff";
     ctx.strokeText(status, box.x, labelY + 15);
     ctx.fillText(status, box.x, labelY + 15);

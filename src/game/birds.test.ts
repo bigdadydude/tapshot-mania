@@ -1,9 +1,47 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createBirds, spawnBirdWave, stepBirds, rollBirdWave, collideBirds, collideBirdGantries, birdOwnsBall, birdBehindCloud, eagleWarningLit, type BirdKind } from "./birds.ts";
+import { createBirds, spawnBirdWave, stepBirds, rollBirdWave, collideBirds, collideBirdGantries, birdOwnsBall, birdBehindCloud, eagleWarningLit, hackerDropBirds, type BirdKind } from "./birds.ts";
 import type { TrainGantry } from "./train-gantry.ts";
 const world = { w: 390, h: 844, floorY: 646, ballR: 19.5 };
 const body = () => ({ x: 190, y: 400, vx: 0, vy: 0, r: 19.5 });
+test("Hacker high-speed relative crossings drop each species once without rebound", () => {
+  for (const kind of ["silly", "dive", "eagle"] as const) {
+    const { s, b, ball } = scene(kind);
+    Object.assign(b, { px: 290, py: 350, x: 90, y: 350 });
+    Object.assign(ball, { x: 290, y: 350, vx: 1500, vy: 0 });
+    const original = { ...ball };
+    assert.equal(hackerDropBirds(s, ball, { x: 90, y: 350 }), 1);
+    assert.equal(b.mode, "stunned"); assert.equal(b.rewarded, true);
+    assert.deepEqual(ball, original);
+    assert.equal(hackerDropBirds(s, ball, { x: 90, y: 350 }), 0);
+    assert.equal(s.kills, 1);
+  }
+});
+test("Hacker shatters frozen birds once and ignores terminal or previously rewarded birds", () => {
+  const { s, b, ball } = scene("silly"); b.mode = "frozen";
+  ball.x = 290; ball.y = b.y;
+  assert.equal(hackerDropBirds(s, ball, { x: 90, y: b.y }), 1);
+  assert.equal(b.mode, "shattered"); assert.equal(s.iceBreaks, 1);
+  assert.equal(hackerDropBirds(s, ball, { x: 90, y: b.y }), 0);
+  assert.equal(s.iceBreaks, 1);
+  for (const mode of ["stunned", "fall", "absorbing", "shattered", "outside", "fly"] as const) {
+    const other = scene("silly"); other.b.mode = mode;
+    if (mode === "fly") other.b.rewarded = true;
+    other.ball.x = other.b.x; other.ball.y = other.b.y;
+    assert.equal(hackerDropBirds(other.s, other.ball, other.ball), 0);
+  }
+});
+test("Hacker releases a carrying eagle only once without moving the ball", () => {
+  const { s, b, ball } = scene("eagle");
+  Object.assign(ball, { x: b.x, y: b.y });
+  assert.equal(collideBirds(s, ball, ball.x, ball.y), "caught");
+  const original = { ...ball };
+  assert.equal(hackerDropBirds(s, ball, ball), 1);
+  assert.equal(s.carrier, null); assert.equal(b.mode, "stunned");
+  assert.deepEqual(ball, original);
+  assert.equal(hackerDropBirds(s, ball, ball), 0);
+});
+
 test("wave odds start at 20/10/5 percent and each basket adds two percentage points", () => {
   const counts = (made: number) => {
     const result = { silly: 0, dive: 0, eagle: 0, none: 0 };
