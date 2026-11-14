@@ -5,6 +5,8 @@ export const HACKER_CHARGE_COLORS = ["#5CE1FF", "#00FF41", "#C77DFF"] as const;
 export const HACKER_CHARGE = {
   layers: 3,
   makesPerLayer: 5,
+  /** One-shot completion glow, in simulation seconds. */
+  layerGlowSeconds: 0.65,
   idleGraceSeconds: 3,
   idleLayersPerSecond: 0.2,
   /**
@@ -36,6 +38,8 @@ export type HackerCharge = {
   holdStart: number;
   drained: number;
   idleSeconds: number;
+  /** Presentation only; cleared in rewind snapshots. */
+  layerGlow: [number, number, number];
 };
 
 export type HackerFlight =
@@ -50,19 +54,30 @@ export function chargeCap() {
 }
 
 export function createHackerCharge(): HackerCharge {
-  return { makes: 0, holding: false, holdStart: 0, drained: 0, idleSeconds: 0 };
+  return { makes: 0, holding: false, holdStart: 0, drained: 0, idleSeconds: 0, layerGlow: [0, 0, 0] };
 }
 
 /** Snapshot form: never resume a finger-less hold after rewind. */
 export function settledHackerCharge(s: HackerCharge): HackerCharge {
-  return { makes: s.makes, holding: false, holdStart: 0, drained: 0, idleSeconds: s.idleSeconds };
+  return { makes: s.makes, holding: false, holdStart: 0, drained: 0, idleSeconds: s.idleSeconds, layerGlow: [0, 0, 0] };
 }
 
 export function addHackerMake(s: HackerCharge, earnsCharge = true) {
   s.idleSeconds = 0;
   if (!earnsCharge || s.holding || s.makes >= chargeCap()) return false;
+  const before = s.makes;
   s.makes = Math.min(chargeCap(), s.makes + 1);
+  for (let i = 0; i < HACKER_CHARGE.layers; i++) {
+    const threshold = (i + 1) * HACKER_CHARGE.makesPerLayer;
+    if (before < threshold && s.makes >= threshold) s.layerGlow[i] = HACKER_CHARGE.layerGlowSeconds;
+  }
   return true;
+}
+
+/** Called in both fair weather and rain; pause freezes the visual with gameplay. */
+export function stepChargeGlow(s: HackerCharge, dt: number) {
+  if (dt <= 0) return;
+  for (let i = 0; i < s.layerGlow.length; i++) s.layerGlow[i] = Math.max(0, s.layerGlow[i]! - dt);
 }
 
 /** Game time only: a make renews the grace period, inputs never do. */
@@ -300,6 +315,22 @@ export function drawHackerCharge(
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.25;
     ctx.strokeRect(x + 0.5, y0 + 0.5, Math.max(0, segW - 1), Math.max(0, segH - 1));
+    const glow = s.layerGlow[i]! / HACKER_CHARGE.layerGlowSeconds;
+    if (glow > 0) {
+      // Fast bright edge, then a soft outward halo in this segment's own color.
+      ctx.save();
+      ctx.globalAlpha *= glow * glow;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 18;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      const spread = (1 - glow) * 4;
+      ctx.strokeRect(x - spread, y0 - spread, segW + spread * 2, segH + spread * 2);
+      ctx.fillStyle = "#ffffff";
+      ctx.globalAlpha *= 0.65;
+      ctx.fillRect(x, y0, segW, segH);
+      ctx.restore();
+    }
   }
   ctx.font = "700 11px 'Noto Sans SC', sans-serif";
   ctx.textAlign = "left";

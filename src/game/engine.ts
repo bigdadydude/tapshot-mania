@@ -36,7 +36,7 @@ import { loadSave, writeSave } from "./save";
 import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { type HackerDir } from "./hacker-pad";
-import { HACKER_CHARGE, HACKER_RAIN, HACKER_RIPPLE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeIsFull, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawHackerLensWarps, drawLandingArrow, drawRainPhone, pointerOnChargeMeter, pointerOnRainPhone, releaseChargeHold, releaseRainCharge, settledHackerCharge, splitRainScore, stepAimArrow, stepChargeDecay, stepChargeHold, stepHackerRipples, stepRainScoreDrips, type HackerCharge, type HackerFlight, type HackerRipple, type RainDrip } from "./hacker-charge";
+import { HACKER_CHARGE, HACKER_RAIN, HACKER_RIPPLE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeIsFull, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawHackerLensWarps, drawLandingArrow, drawRainPhone, pointerOnChargeMeter, pointerOnRainPhone, releaseChargeHold, releaseRainCharge, settledHackerCharge, splitRainScore, stepAimArrow, stepChargeDecay, stepChargeGlow, stepChargeHold, stepHackerRipples, stepRainScoreDrips, type HackerCharge, type HackerFlight, type HackerRipple, type RainDrip } from "./hacker-charge";
 import { mazeGravityFromPoint, mazePadLayout, type MazeGravity } from "./maze-pad";
 import { clearSparseCodeRain } from "./sparse-rain";
 import { parseBalanceImport, mergeBalanceStores, automaticStrength, loadBalanceStore, saveBalanceStore, report as balanceReport, configKey as balanceConfigKey, type BalanceSession, type BalanceStore, type SkillState, DEFAULT_STRENGTH } from "./balance-test";
@@ -5335,7 +5335,10 @@ export function createGame(
       stepRewind(dt);
       return;
     }
-    if (phase === "playing" && !paused && isHacker() && !hackerAwaken) stepChargeDecay(hackerCharge, dt);
+    if (phase === "playing" && !paused && isHacker()) {
+      stepChargeGlow(hackerCharge, dt);
+      if (!hackerAwaken) stepChargeDecay(hackerCharge, dt);
+    }
     if (phase === "playing") glassProtectionLeft = Math.max(0, glassProtectionLeft - dt);
     if (!birdOwnsBall(birds)) stepVector(dt);
     else if (isVector() && vector.pointer !== null) vector.held += dt;

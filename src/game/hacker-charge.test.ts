@@ -21,8 +21,47 @@ import {
   stepRainScoreDrips,
   stepChargeHold,
   stepChargeDecay,
+  stepChargeGlow,
   settledHackerCharge,
 } from "./hacker-charge.ts";
+
+test("each newly completed layer glows once, including rain-style refills", () => {
+  const s = filled(4);
+  assert.deepEqual(s.layerGlow, [0, 0, 0]);
+  for (let layer = 0; layer < 3; layer++) {
+    if (layer > 0) for (let i = 0; i < 4; i++) addHackerMake(s);
+    addHackerMake(s);
+    assert.equal(s.layerGlow[layer], HACKER_CHARGE.layerGlowSeconds);
+    stepChargeGlow(s, 1);
+    assert.deepEqual(s.layerGlow, [0, 0, 0]);
+  }
+  assert.equal(addHackerMake(s), false);
+  assert.deepEqual(s.layerGlow, [0, 0, 0]);
+  drain(s, 0.5);
+  releaseRainCharge(s);
+  addHackerMake(s);
+  assert.deepEqual(s.layerGlow, [0, 0, HACKER_CHARGE.layerGlowSeconds]);
+});
+
+test("decay refills glow, refunds do not, and snapshots discard transient glow", () => {
+  const s = filled(5);
+  stepChargeGlow(s, 1);
+  stepChargeDecay(s, 3.5);
+  addHackerMake(s);
+  assert.equal(s.layerGlow[0], HACKER_CHARGE.layerGlowSeconds);
+  stepChargeGlow(s, 0);
+  stepChargeGlow(s, -1);
+  assert.equal(s.layerGlow[0], HACKER_CHARGE.layerGlowSeconds);
+  stepChargeGlow(s, 0.2);
+  assert.ok(Math.abs(s.layerGlow[0] - (HACKER_CHARGE.layerGlowSeconds - 0.2)) < 1e-9);
+  assert.deepEqual(settledHackerCharge(s).layerGlow, [0, 0, 0]);
+  stepChargeGlow(s, 1);
+  drain(s, 1);
+  assert.equal(releaseChargeHold(s), "none");
+  assert.deepEqual(s.layerGlow, [0, 0, 0]);
+  addHackerMake(s, false);
+  assert.deepEqual(s.layerGlow, [0, 0, 0]);
+});
 
 test("decay starts after three seconds and drains one point per second", () => {
   const s = filled(15);
