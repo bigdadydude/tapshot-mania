@@ -64,7 +64,7 @@ function quantumAura() {
     const image = new Image();
     image.decoding = "async";
     image.onload = () => { quantumAuraImage = image; };
-    image.src = "/game/balls/quantum-aura.png?v=1";
+    image.src = "/game/balls/quantum-aura.png?v=2";
     quantumAuraImage = image;
   }
   return null;
