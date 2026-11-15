@@ -44,7 +44,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
-import { collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, type BlueprintClock } from "./blueprint";
+import { collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage, isClothNet } from "./types";
@@ -722,7 +722,7 @@ export function createGame(
   }
 
   function refillPrisonTimer() {
-    timer = timerMax;
+    timer = blueprintClockBudget();
     timeUp = false;
     buzzer = false;
     buzzerTimer = 0;
@@ -1040,6 +1040,7 @@ export function createGame(
     combo: number;
     streak: number;
     timer: number;
+    timerMax: number;
     timerArmed: boolean;
     buzzer: boolean;
     buzzerTimer: number;
@@ -1102,7 +1103,7 @@ export function createGame(
       antiRecovery: { ...antiRecovery },
       boltTrail: structuredClone(boltTrail),
       quantumTunnelLeft, mazeRespawnLeft,
-      score, combo, streak, comboClock, comboCounting, comboRescue, timer, timerArmed, buzzer, buzzerTimer, timeUp, madeCount,
+      score, combo, streak, comboClock, comboCounting, comboRescue, timer, timerMax, timerArmed, buzzer, buzzerTimer, timeUp, madeCount,
       chain: chain ? structuredClone(chain) : null,
       ninjaGhosts: structuredClone(ninjaGhosts),
       ninjaGates: structuredClone(ninjaGates),
@@ -1163,6 +1164,7 @@ export function createGame(
     comboCounting = snapshot.comboCounting;
     comboRescue = snapshot.comboRescue;
     timer = snapshot.timer;
+    timerMax = snapshot.timerMax;
     timerArmed = snapshot.timerArmed;
     buzzer = snapshot.buzzer;
     buzzerTimer = snapshot.buzzerTimer;
@@ -1302,13 +1304,29 @@ export function createGame(
     return TIMER_DECAY;
   }
 
+  function blueprintClockBudget() {
+    return timerMax + (blueprintOn() ? getBlueprintRewards().seconds : 0);
+  }
+
+  function showBlueprintRewards() {
+    if (!blueprintOn()) return;
+    const events = drainBlueprintRewardEvents();
+    for (const reward of events) {
+      // Adding time raises current remaining time too, without resetting the running clock.
+      if (reward === "seconds" && !buzzer && !timeUp) timer += 3;
+      const text = reward === "base" ? "永久基础 +2" : reward === "combo" ? "每球连击 +1" : "永久时钟 +3秒";
+      callouts.push({ text, x:ball.x, y:ball.y-ball.r*2.4, life:1.3, max:1.3, kind:"tag" });
+    }
+    if (events.length) emitHud();
+  }
+
   function refillShotClock() {
     // Minute mode keeps a fixed 60s clock �?no per-make shrink/refill.
     if (isMinuteMode()) return;
     champHalfClock = false;
     const decay = activeDecay();
     timerMax = Math.max(TIMER_MIN, timerMax * decay);
-    timer = timerMax;
+    timer = blueprintClockBudget();
   }
 
   function rogueTotalScore() {
@@ -1342,7 +1360,7 @@ export function createGame(
   }
 
   function emitHud() {
-    const raw01 = timerMax > 0 ? timer / (timerMax * (champHalfClock ? 0.5 : 1)) : 0;
+    const raw01 = timerMax > 0 ? timer / (blueprintClockBudget() * (champHalfClock ? 0.5 : 1)) : 0;
     const timer01 = raw01;
     const displayScore =
       isRogueMode() && rogueRun && phase === "over" ? rogueTotalScore() : score;
@@ -2042,7 +2060,7 @@ export function createGame(
     antiPickupCount = 0;
     // Refill countdown bar when the hole ends (classic shot clock only).
     if (phase === "playing" && !isMinuteMode() && !timeUp && !buzzer && timer > 0) {
-      timer = timerMax;
+      timer = blueprintClockBudget();
       if (!timerArmed) timerArmed = true;
     }
     emitHud();
@@ -2067,7 +2085,7 @@ export function createGame(
     antiMatter = null;
     // Refill countdown bar when the hole opens (classic shot clock only).
     if (phase === "playing" && !isMinuteMode() && !isRogueMode() && !timeUp && !buzzer && timer > 0) {
-      timer = timerMax;
+      timer = blueprintClockBudget();
       if (!timerArmed) timerArmed = true;
     }
     callouts.push({
@@ -2080,6 +2098,7 @@ export function createGame(
     });
     if (blueprintOn()) {
       const bonus = consumeBlueprintLitForHole();
+      showBlueprintRewards();
       if (bonus > 0) {
         // 开洞当下加进得分。不进待领，不等下一次进球，不乘冠军时刻。
         score += bonus;
@@ -3074,7 +3093,7 @@ export function createGame(
       rogueStageDecay = null;
     }
     timerMax = timerBudget();
-    timer = timerMax;
+    timer = blueprintClockBudget();
     if (isRogueMode() && rogueRun) {
       // Consume stage-start bonuses after budgeting.
       rogueRun.nextBonusClock = 0;
@@ -3169,7 +3188,7 @@ export function createGame(
     if (!balanceSession || !devOn || !isMinuteMode() || !timerArmed || balanceTrialRecorded) return;
     const isBaseline = ballId === balanceSession.baseline;
     const skillState: SkillState = isBaseline ? "baseline" : balanceSkillOn ? "on" : "off";
-    const effectiveSeconds = Math.max(0, timerMax - timer);
+    const effectiveSeconds = Math.max(0, blueprintClockBudget() - timer);
     balanceSession.trials.push({
       id: crypto.randomUUID(),
       sessionId: balanceSession.id,
@@ -3291,7 +3310,7 @@ export function createGame(
   function tryRogueRevive(): boolean {
     if (!isRogueMode() || !rogueRun || rogueRun.revives <= 0) return false;
     rogueRun.revives -= 1;
-    timer = timerMax;
+    timer = blueprintClockBudget();
     timeUp = false;
     buzzer = false;
     buzzerTimer = 0;
@@ -3383,7 +3402,7 @@ export function createGame(
     acc = 0;
     hint = false;
     timerArmed = false;
-    timer = timerMax;
+    timer = blueprintClockBudget();
     buzzer = false;
     buzzerTimer = 0;
     timeUp = false;
@@ -3438,7 +3457,7 @@ export function createGame(
     ball.trafficSafe = false;
     madeCount = 0;
     resetTrainScroll();
-    resetBlueprintProgress();
+    resetBlueprintProgress(true); // Same rogue run keeps permanent green-block rewards.
     ball.sootLeft = 0;
     score = 0;
     mazeBaseBonus = 0;
@@ -3454,7 +3473,7 @@ export function createGame(
       rogueRun.rollGoldAcc = 0;
     }
     timerMax = TIMER_START + bonus;
-    timer = timerMax;
+    timer = blueprintClockBudget();
     timerArmed = false;
     buzzer = false;
     buzzerTimer = 0;
@@ -4363,7 +4382,7 @@ export function createGame(
     rogueRun = null;
     rogueStageDecay = null;
     timerMax = timerBudget();
-    timer = timerMax;
+    timer = blueprintClockBudget();
     timerArmed = false;
     buzzer = false;
     buzzerTimer = 0;
@@ -4423,7 +4442,7 @@ export function createGame(
     beginPlay();
     hint = false;
     timerArmed = false;
-    timer = timerMax;
+    timer = blueprintClockBudget();
     devFreeze = false;
     devHoldHeat = false;
     madeCount = 1;
@@ -4498,7 +4517,7 @@ export function createGame(
           beginPlay();
           hint = false;
           timerArmed = false;
-          timer = timerMax;
+          timer = blueprintClockBudget();
           devFreeze = false;
           devHoldHeat = false;
           madeCount = 1;
@@ -4676,7 +4695,7 @@ export function createGame(
       }
       case "timer01": {
         const n = Math.max(0, Math.min(1, cmd.n));
-        timer = timerMax * n;
+        timer = blueprintClockBudget() * n;
         timeUp = false;
         buzzer = false;
         emitHud();
@@ -4695,7 +4714,7 @@ export function createGame(
         timerArmed = true;
         timeUp = false;
         buzzer = false;
-        if (timer <= 0) timer = timerMax;
+        if (timer <= 0) timer = blueprintClockBudget();
         emitHud();
         return;
       case "timeUp":
@@ -5078,6 +5097,7 @@ export function createGame(
         hoopX: hoop.x,
         hoopY: hoop.y,
       }, world, { generationHold: holeOn });
+      showBlueprintRewards();
     }
     if (trafficEnabled() && madeCount > 0) {
       rewardAbsorbedObjects(stepTraffic(traffic, world, dt));
@@ -5452,6 +5472,7 @@ export function createGame(
           }
         }
       }
+      showBlueprintRewards();
       const rocketFreeY=ball.y,rocketFreeVy=ball.vy;
       if (trafficEnabled() && phase === "playing") {
         const vectorIncoming = {vx:ball.vx,vy:ball.vy};
@@ -6435,6 +6456,7 @@ export function createGame(
         ? (catalogOf("comboboost")?.comboBoostAdd ?? 3)
         : null;
     streak = streakAfterMake({ streak, comboCounting, bunshinGhost, comboBoost });
+    if (!ghost && blueprintOn()) streak += getBlueprintRewards().combo;
     comboCounting = true;
     comboClock = 0;
     if (!ghost) {
@@ -6442,7 +6464,7 @@ export function createGame(
       // The first make starts the minute; every later make contributes a real gap.
       if (balanceSession && isMinuteMode()) {
         const wasArmed = timerArmed;
-        const elapsed = wasArmed ? Math.max(0, timerMax - timer) : 0;
+        const elapsed = wasArmed ? Math.max(0, blueprintClockBudget() - timer) : 0;
         if (wasArmed && balanceLastMakeAt !== null) {
           balanceMaxMakeGapSeconds = Math.max(balanceMaxMakeGapSeconds, elapsed - balanceLastMakeAt);
         }
@@ -6522,6 +6544,7 @@ export function createGame(
       basePart = Math.floor(Math.random() * 26) - 10;
     }
     basePart += birdBaseBonus;
+    if (!ghost && blueprintOn()) basePart += getBlueprintRewards().base;
     const superShieldScore = !ghost && isSuper() && superBall.shield;
     if(!ghost && isSuper()) basePart+=superBaseBonus(superBall);
     let gain = bunshinGhost ? 1 + birdBaseBonus : ninjaGhost ? birdBaseBonus : basePart + streakPart;
@@ -6652,7 +6675,7 @@ export function createGame(
     }
     if (!ghost && isTime() && !clutch && timerMax > 0) {
       // Store 5% of the unused-clock fraction as Time Ball rewind energy.
-      const earned = Math.max(0, Math.min(1, timer / timerMax)) * 5;
+      const earned = Math.max(0, Math.min(1, timer / blueprintClockBudget())) * 5;
       timeEnergy = Math.min(TIME_ENERGY_MAX, timeEnergy + earned);
     }
     noteGraf();
@@ -6785,7 +6808,7 @@ export function createGame(
     }
     if (champClockPenalty) {
       champHalfClock = true;
-      timer = timerMax * 0.5;
+      timer = blueprintClockBudget() * 0.5;
     }
     champClutchControlled = false;
     const stage = fireStage(heatN());
@@ -7137,7 +7160,7 @@ export function createGame(
           ctx.rect(0, 0, world.w, world.h);
           ctx.clip();
           const yardHud = stageMod.hud?.() ?? null;
-          const clock01 = timerMax > 0 ? timer / (timerMax * (champHalfClock ? 0.5 : 1)) : 0;
+          const clock01 = timerMax > 0 ? timer / (blueprintClockBudget() * (champHalfClock ? 0.5 : 1)) : 0;
           // Prison bar ART swaps Yard / Lock / Infraction; FILL always follows street cool-down.
           // Background recess/curfew phase pauses on hunt; fill does not.
           const timer01 = phase === "over" ? 1 : clock01;
@@ -7414,7 +7437,7 @@ export function createGame(
       playMode = mode;
       if (phase === "title" || phase === "over") {
         timerMax = timerBudget();
-        timer = timerMax;
+        timer = blueprintClockBudget();
         timerArmed = false;
       }
       persist();
@@ -7503,6 +7526,7 @@ export function createGame(
         score,
         combo,
         timer,
+        blueprintRewards: getBlueprintRewards(),
         timerMax,
         timerArmed,
         buzzer,

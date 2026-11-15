@@ -3,6 +3,11 @@ import test from "node:test";
 import { getScene, SCENE_LABELS, setScene } from "./scenes.ts";
 import {
   BLUEPRINT_BALL_CLEAR,
+  BLUEPRINT_LIT_RGB,
+  BLUEPRINT_KIND_WEIGHTS,
+  getBlueprintRewards,
+  drainBlueprintRewardEvents,
+  resetBlueprintProgress,
   BLUEPRINT_BLOCK_SIZE,
   BLUEPRINT_BOUNCE_CLEAR,
   BLUEPRINT_DESPAWN_BASE,
@@ -1474,6 +1479,102 @@ test("靠近倒计时条的格子整格在条下，不会被切成半截", () =>
     assert.ok(cell.y >= phone.h * 0.2);
     assert.ok(cell.y >= phoneBar.bottom);
   }
+});
+
+test("PR31 普通点亮白色；彩块权重与生成确定且三色均可生成", () => {
+  assert.equal(BLUEPRINT_LIT_RGB, "255, 255, 255");
+  assert.deepEqual(BLUEPRINT_KIND_WEIGHTS, { white: 0.8, green: 0.12, red: 0.08 });
+  const seen = new Set();
+  for (let serial = 0; serial < 100; serial++) {
+    const opts = { seed: 52, serial, goals: 5 };
+    const batch = rollBlueprintBatch(world, opts);
+    assert.deepEqual(batch, rollBlueprintBatch(world, opts));
+    for (const cell of batch.cells) seen.add(cell.kind);
+  }
+  assert.deepEqual([...seen].sort(), ["green", "red", "white"]);
+  assert.equal(blueprintBlocks(world, clock({ staticCells: [{ col: 4, row: 8 }], staticAge: 1 }))[0]?.kind, "white");
+});
+
+test("PR31 green 真正消除才三选一，叠层/重触/清动画仅领一次", () => {
+  const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
+  const mate = { col: 5, row: 8 };
+  const seen = new Set();
+  for (let seed = 1; seed <= 40; seed++) {
+    restoreBlueprintClock(clock({ seed, staticCells: [green, mate], staticAge: 1, dynamic: dyn({ cells: [green], stepSpan: 10 }) }));
+    assert.equal(touchBlueprintCell(world, 4, 8), 0);
+    assert.deepEqual(getBlueprintRewards(), { base: 0, combo: 0, seconds: 0 });
+    assert.equal(touchBlueprintCell(world, 5, 8), 2);
+    const events = drainBlueprintRewardEvents();
+    assert.equal(events.length, 1);
+    const event = events[0]!;
+    seen.add(event);
+    assert.deepEqual(getBlueprintRewards(), { base: event === "base" ? 2 : 0, combo: event === "combo" ? 1 : 0, seconds: event === "seconds" ? 3 : 0 });
+    assert.equal(touchBlueprintCell(world, 4, 8), 0);
+    consumeBlueprintLitForHole();
+    assert.deepEqual(drainBlueprintRewardEvents(), []);
+  }
+  assert.deepEqual([...seen].sort(), ["base", "combo", "seconds"]);
+});
+
+test("PR31 红碰撞清横竖连续十字，不越空格、不要求lit，连带green领奖", () => {
+  const red: BlueprintCellRef = { col: 5, row: 9, kind: "red" };
+  const cross: BlueprintCellRef[] = [red, { col: 4, row: 9 }, { col: 6, row: 9, kind: "green" }, { col: 5, row: 8 }, { col: 5, row: 10 }];
+  const beyond = [{ col: 8, row: 9 }, { col: 5, row: 12 }];
+  restoreBlueprintClock(clock({ staticCells: [...cross, ...beyond], staticAge: 1 }));
+  const block = blueprintBlocks(world).find((item) => item.kind === "red")!;
+  const ball = { x: block.cell.x + 6, y: block.cell.y + 14, vx: 500, vy: 0, r: 5 };
+  assert.equal(collideBlueprint(world, ball, block.cell.x - 7, ball.y), true);
+  assert.deepEqual(getBlueprintClock().staticCells, beyond);
+  assert.equal(getBlueprintClock().clearing.length, 5);
+  assert.equal(getBlueprintClock().pendingBonus, 5);
+  assert.equal(drainBlueprintRewardEvents().length, 1);
+  assert.equal(blueprintBlocks(world).find((item) => item.col === 6 && item.row === 9)?.kind, "green");
+  restoreBlueprintClock(clock({ staticCells: [red], staticAge: 1 }));
+  assert.equal(touchBlueprintCell(world, red.col, red.row), 1);
+});
+
+test("PR31 快照含类型奖励抽签，新局清零，换批/跨关保留，restore不重放toast", () => {
+  const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
+  restoreBlueprintClock(clock({ seed: 71, staticCells: [green], staticAge: 1 }));
+  const before = getBlueprintClock();
+  touchBlueprintCell(world, 4, 8);
+  const event = drainBlueprintRewardEvents();
+  const rewarded = getBlueprintClock();
+  rewarded.rewards!.base += 100;
+  assert.notDeepEqual(getBlueprintRewards(), rewarded.rewards);
+  const saved = getBlueprintClock();
+  restoreBlueprintClock(before);
+  assert.deepEqual(drainBlueprintRewardEvents(), []);
+  touchBlueprintCell(world, 4, 8);
+  assert.deepEqual(drainBlueprintRewardEvents(), event);
+  assert.deepEqual(getBlueprintRewards(), saved.rewards);
+  restoreBlueprintClock(saved);
+  assert.deepEqual(drainBlueprintRewardEvents(), []);
+  assert.deepEqual(getBlueprintClock().clearing, saved.clearing);
+  stepBlueprint(0, true, aimAt(2), world);
+  assert.deepEqual(getBlueprintRewards(), saved.rewards);
+  resetBlueprintProgress(true);
+  assert.deepEqual(getBlueprintRewards(), saved.rewards);
+  assert.equal(getBlueprintClock().rewardSerial, saved.rewardSerial);
+  resetBlueprintProgress();
+  assert.deepEqual(getBlueprintRewards(), { base: 0, combo: 0, seconds: 0 });
+  assert.equal(getBlueprintClock().rewardSerial, 0);
+});
+
+test("PR31 动态颜色跟块移动；黑洞未亮green与叠层一次领奖", () => {
+  const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
+  const red: BlueprintCellRef = { col: 5, row: 8, kind: "red" };
+  restoreBlueprintClock(clock({ staticCells: [], dynamic: dyn({ cells: [green, red], pending: blueprintTranslateCells([green, red], 1), dir: 1, phase: "cross_out", age: 0.19, raise: 0.2 }) }));
+  stepBlueprint(0.02, true, { ...aimAt(1), ballX: -400, ballY: -400 }, world);
+  stepBlueprint(0.1, true, undefined, world);
+  const moved = blueprintBlocks(world).filter((item) => item.dynamic);
+  assert.deepEqual(moved.map((item) => [item.col, item.row, item.kind]), [[4, 9, "green"], [5, 9, "red"]]);
+  assert.deepEqual(getBlueprintClock().dynamic?.cells.map((cell) => cell.kind), ["green", "red"]);
+  restoreBlueprintClock(clock({ staticCells: [green], dynamic: dyn({ cells: [green] }), staticAge: 1 }));
+  assert.equal(consumeBlueprintLitForHole(), 0);
+  assert.equal(drainBlueprintRewardEvents().length, 1);
+  assert.equal(consumeBlueprintLitForHole(), 0);
+  assert.deepEqual(drainBlueprintRewardEvents(), []);
 });
 
 test("标题和开发者场景条都有蓝图，其它场景配色不动", () => {
