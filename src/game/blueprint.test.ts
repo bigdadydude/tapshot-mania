@@ -509,7 +509,7 @@ test("形状是直线、斜线、Z、L、S、U、V、C，裁剪后仍不超过 1
   let single = false;
   let row = false;
   for (let serial = 0; serial < 80; serial++) {
-    const goals = serial % 5 === 0 ? 1 : 6;
+    const goals = serial % 5 === 0 ? 1 : 16;
     const batch = rollBlueprintBatch(world, { seed: 11, serial, goals, ball: null, hoop: null });
     seen.add(batch.shape);
     assert.ok(batch.cells.length <= 10);
@@ -1486,7 +1486,7 @@ test("PR31 普通点亮白色；彩块权重与生成确定且三色均可生成
   assert.deepEqual(BLUEPRINT_KIND_WEIGHTS, { white: 0.8, green: 0.12, red: 0.08 });
   const seen = new Set();
   for (let serial = 0; serial < 100; serial++) {
-    const opts = { seed: 52, serial, goals: 5 };
+    const opts = { seed: 52, serial, goals: 16 };
     const batch = rollBlueprintBatch(world, opts);
     assert.deepEqual(batch, rollBlueprintBatch(world, opts));
     for (const cell of batch.cells) seen.add(cell.kind);
@@ -1590,4 +1590,22 @@ test("标题和开发者场景条都有蓝图，其它场景配色不动", () =>
   setScene("prison");
   assert.equal(getScene().hoop.rim, "#1a1a1a");
   setScene("street");
+});
+
+
+test("前五球只有一格白块，前十五球数量和彩块逐步恢复", () => {
+  for (let goals = 1; goals <= 5; goals++) {
+    for (let serial = 0; serial < 80; serial++) {
+      assert.equal(blueprintSampleCount(goals, serial / 79), 1);
+      const batch = rollBlueprintBatch(world, {seed: 52, serial, goals});
+      assert.ok(batch.cells.length <= 1);
+      assert.ok(batch.cells.every(cell => cell.kind === "white"));
+    }
+  }
+  let early = 0, late = 0;
+  for (let i = 0; i < 100; i++) {
+    early += blueprintSampleCount(8, i / 99);
+    late += blueprintSampleCount(16, i / 99);
+  }
+  assert.ok(early < late / 2);
 });

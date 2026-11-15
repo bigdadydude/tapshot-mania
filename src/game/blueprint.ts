@@ -481,7 +481,7 @@ function applyGoalChange(goalsNow: number) {
       // 合计放不下时整组离开，不裁掉其中几格。
       dynamic = null;
     }
-  } else if (unitAt(seed, serial, 10) < BLUEPRINT_DYNAMIC_SPAWN) {
+  } else if (unitAt(seed, serial, 10) < BLUEPRINT_DYNAMIC_SPAWN * blueprintEarlyRamp(goals)) {
     trySpawnDynamic(goalsNow);
   }
   hasBatch = true;
@@ -720,8 +720,14 @@ export function blueprintQuota(requested: number) {
  * 本批要凸出几格。
  * 进球前为 0；第 1 球固定 1；之后软上限随进球升高，且 `roll` 越容易落到更大值。
  */
+/** First five makes are a quiet opening; full density returns at make 16. */
+export function blueprintEarlyRamp(made: number) {
+  return Math.max(0, Math.min(1, (finiteGoals(made) - 5) / 11));
+}
+
 export function blueprintSampleCount(made: number, roll: number) {
-  const g = finiteGoals(made);
+  const actual = finiteGoals(made);
+  const g = actual <= 5 ? Math.min(1, actual) : actual < 16 ? 1 + Math.floor((actual - 5) / 2) : actual;
   if (g <= 0) return 0;
   if (g === 1) return 1;
   const softMax = Math.min(BLUEPRINT_MAX_COUNT, 1 + g);
@@ -936,9 +942,11 @@ export function rollBlueprintBatch(
   }
   const capped = placed.slice(0, Math.min(want, cap)).map((cell, index) => {
     const roll = unitAt(layoutSeed, batchSerial, 20 + index);
-    const { white, green, red } = BLUEPRINT_KIND_WEIGHTS;
-    const t = roll * (white + green + red);
-    const kind: BlueprintBlockKind = t < white ? "white" : t < white + green ? "green" : "red";
+    const ramp = blueprintEarlyRamp(made);
+    const green = BLUEPRINT_KIND_WEIGHTS.green * ramp;
+    const red = BLUEPRINT_KIND_WEIGHTS.red * ramp;
+    const white = 1 - green - red;
+    const kind: BlueprintBlockKind = roll < white ? "white" : roll < white + green ? "green" : "red";
     return { ...cell, kind };
   });
   return { cells: capped, duration, shape, length, variant, mode, anchor: capped.length ? anchor : null };
