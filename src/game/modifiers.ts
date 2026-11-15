@@ -54,12 +54,16 @@ export type ModifierHost = {
     r: number,
     spin: number,
   ) => void;
-  /** Hacker ball awaken ? bolts freeze/fall near the ball. */
-  isHackerAwaken?: () => boolean;
   /** Maze ball needs kinetic impulses rather than the standard knockback overwrite. */
   isMaze?: () => boolean;
   /** Return true when the ball kit has handled a projectile's directional impulse. */
   onProjectileImpact?: (vx: number, vy: number) => boolean;
+  /** This physics step's Hacker contact snapshot, or null when inactive.
+   * Optional endpoint preserves the pre-wrap / pre-collision physical trajectory.
+   */
+  getHackerKnockdown?: () => { fromX: number; fromY: number; toX?: number; toY?: number } | null;
+  /** Called once per newly dropped projectile; host awards code layers only while awake. */
+  onHackerKnockdown?: () => void;
   /** Active Maze Ball hazard holes; projectiles are consumed by their cores. */
   getMazeHoles?: () => ReadonlyArray<{ x: number; y: number; r: number }>;
   /** Active antimatter black hole: projectiles become non-solid and fly into it. */

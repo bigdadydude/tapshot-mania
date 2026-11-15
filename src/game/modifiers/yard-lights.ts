@@ -3,6 +3,7 @@
 import type { Ball, Hoop, World } from "../types";
 import type { ModifierHost, StageModifier, YardLightsHud } from "../modifiers";
 import { artImage } from "../art";
+import { hackerDropProjectile } from "../hacker-projectiles.ts";
 import {
   coneGeometry,
   drawSearchlightBeam,
@@ -70,6 +71,7 @@ type Bolt = {
   bounces: number;
   trail: { x: number; y: number }[];
   falling: boolean;
+  hackerRewarded?: boolean;
   faceAng: number;
   /** Seconds left for a retired round to visually fade without hitting anything. */
   fadeLeft: number | null;
@@ -101,7 +103,6 @@ const LOCK_CHASE = 8;
 const BOLT_SPD = 1100;
 const ELITE_SPD = 920;
 const KNOCK = 1180;
-const AWAKEN_NEAR = 3.6;
 const BOLT_FALL_G = 2400;
 /** Base stop time when a lamp is shot; stacks on repeat hits while down. */
 const LIGHT_OUT = 2;
@@ -1127,8 +1128,6 @@ export function createYardLights(): StageModifier {
       const ball = host.getBallBody();
       const hoop = host.getHoop();
       const layout = loadSearchlightLayout();
-      const awaken = host.isHackerAwaken?.() === true;
-      const nearR = ball.r * AWAKEN_NEAR;
       const hole = host.getBlackHole?.();
 
       for (const b of bolts) {
@@ -1177,11 +1176,12 @@ export function createYardLights(): StageModifier {
           continue;
         }
 
-        if (awaken && Math.hypot(b.x - ball.x, b.y - ball.y) <= nearR + b.r) {
-          b.faceAng = Math.atan2(b.vy, b.vx);
-          b.vx = 0;
-          b.vy = 0;
-          b.falling = true;
+        // Resolve the unreflected flight segment before elite boundary bounces.
+        // Black-hole suction, retirement and already falling rounds exited above.
+        const hacker = host.getHackerKnockdown?.();
+        const hackerBall = hacker ? { x: hacker.toX ?? ball.x, y: hacker.toY ?? ball.y, r: ball.r } : ball;
+        if (hacker && hackerDropProjectile(b, { x: x0, y: y0 }, hackerBall,
+          { x: hacker.fromX, y: hacker.fromY }, host.onHackerKnockdown)) {
           b.trail.push({ x: b.x, y: b.y });
           if (b.trail.length > TRAIL_LEN) b.trail.shift();
           continue;
@@ -1189,6 +1189,9 @@ export function createYardLights(): StageModifier {
 
         if (b.elite) {
           if (bounceElite(world, b, x0, y0)) continue;
+          // Also cover the reflected endpoint used by the existing elite hit path.
+          if (hacker && hackerDropProjectile(b, { x: x0, y: y0 }, hackerBall,
+            { x: hacker.fromX, y: hacker.fromY }, host.onHackerKnockdown)) continue;
         }
 
         b.trail.push({ x: b.x, y: b.y });

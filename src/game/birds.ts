@@ -1,4 +1,5 @@
 import { sootFilter } from "./train-smoke.ts";
+import { sweptCircleContact, type Point } from "./hacker-projectiles.ts";
 import type { World } from "./types";
 import { sweepGantryCircle, type TrainGantry } from "./train-gantry.ts";
 
@@ -306,6 +307,51 @@ export function stepBirds(s: BirdState, w: View, ball: Body, dt: number, allowSp
 function canBeStunned(b: Bird) {
   return b.mode !== "fall" && b.mode !== "stunned" && b.mode !== "outside" && b.mode !== "carry" && b.mode !== "frozen" && b.mode !== "absorbing" && b.mode !== "shattered";
 }
+/** Birds already inside the collision radius drop once. Empty scenes add nothing. */
+export function rainDropBirds(s: BirdState, ball: { x: number; y: number; r: number }) {
+  if (s.birds.length === 0) return 0;
+  let dropped = 0;
+  for (const b of s.birds) {
+    const carrying = b.mode === "carry" && s.carrier === b.id;
+    if (!carrying && (!canBeStunned(b) || b.rewarded)) continue;
+    if (Math.hypot(b.x - ball.x, b.y - ball.y) > b.r + ball.r) continue;
+    if (carrying) {
+      if (releaseBirdCarrier(s)) dropped += 1;
+      continue;
+    }
+    stunBird(s, b);
+    b.rewarded = true;
+    dropped += 1;
+  }
+  return dropped;
+}
+
+/** Hacker contact bypasses ordinary rebound; returns newly rewarded drops only.
+ * `previous` is the ball's position at the start of the same step as bird px/py.
+ * Call before collideBirds so ordinary collision cannot consume the contact first.
+ */
+export function hackerDropBirds(s: BirdState, ball: Point & { r: number }, previous: Point) {
+  let dropped = 0;
+  for (const b of s.birds) {
+    if (b.rewarded || b.age >= 1000) continue;
+    const carrying = b.mode === "carry" && s.carrier === b.id;
+    if (!carrying && b.mode !== "frozen" && !canBeStunned(b)) continue;
+    if (!collisionParts(b).some(part => sweptCircleContact(previous, ball,
+      { x: b.px + part.x, y: b.py + part.y },
+      { x: b.x + part.x, y: b.y + part.y }, ball.r + part.r))) continue;
+    if (carrying) {
+      if (!releaseBirdCarrier(s)) continue;
+    } else if (b.mode === "frozen") {
+      shatterBird(s, b);
+    } else {
+      stunBird(s, b);
+      b.rewarded = true;
+    }
+    dropped++;
+  }
+  return dropped;
+}
+
 /** A skill interrupts the carrying pair before ordinary collision immunity resumes. */
 export function releaseBirdCarrier(s: BirdState) {
   const b = s.birds.find(b => b.id === s.carrier);
