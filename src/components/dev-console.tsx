@@ -7,7 +7,7 @@ import type { RogueHud } from "@/game/rogue";
 import { ROGUE_CATALOG, type RogueCatalogEntry } from "@/game/rogue-catalog";
 import { csv, balanceExportPayload, calibrateKDetailed, historicalSummary, loadBalanceStore, mergeLiveSession, saveBalanceStore, sessionProgress, skillEfficiencyEntrance, strengthTotal, autoStrengthReport, DEFAULT_AUTO_WEIGHTS, type AutoBallReadout, type BalanceSession, type BalanceStore, type VerdictLabel } from "@/game/balance-test";
 import { cn } from "@/lib/utils";
-import { getBlueprintFloorDensity, setBlueprintFloorDensity } from "@/game/blueprint";
+import { getBlueprintFloorSpread, setBlueprintFloorSpread, getBlueprintFloorDensity, setBlueprintFloorDensity } from "@/game/blueprint";
 
 type Tab = "match" | "scene" | "ball" | "balance" | "rogue" | "shop";
 const numeric = (value: string, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -61,6 +61,8 @@ function MatchTab({dev,score,combo,onCmd}:{dev:DevHud;score:number;combo:number;
 function SceneTab({dev,gfx,onCmd,onSearchlights}:{dev:DevHud;gfx:Gfx;onCmd:(cmd:DevCmd)=>void;onSearchlights:()=>void}) {
   const keys: [keyof Pick<Gfx,"ballShade"|"ballShadow"|"particles"|"graffitiFx"|"impact"|"flash"|"buzzerSpot">,string][] = [["ballShade","球光影"],["ballShadow","投影"],["particles","粒子"],["graffitiFx","涂鸦"],["impact","镜头"],["flash","闪光"],["buzzerSpot","绝杀聚光"]];
   const sceneLocked = Boolean(dev.balance.session);
+  const [floorSpread, setFloorSpread] = useState(getBlueprintFloorSpread);
+  const updateFloorSpread = (n: number) => setFloorSpread(setBlueprintFloorSpread(n));
   const [floorDensity, setFloorDensity] = useState(getBlueprintFloorDensity);
   const updateFloorDensity = (n: number) => setFloorDensity(setBlueprintFloorDensity(n));
   return <>
@@ -71,6 +73,9 @@ function SceneTab({dev,gfx,onCmd,onSearchlights}:{dev:DevHud;gfx:Gfx;onCmd:(cmd:
       <div className="mb-2 flex items-center justify-between"><label htmlFor="blueprint-floor-density" className="text-xs text-muted">地面横线紧密度 · {Math.round(floorDensity * 100)}%</label><Chip label="恢复默认" onClick={() => updateFloorDensity(1)} /></div>
       <input id="blueprint-floor-density" aria-label="地面横线紧密度" type="range" min="40" max="250" step="5" value={Math.round(floorDensity * 100)} onChange={e => updateFloorDensity(Number(e.target.value) / 100)} className="h-10 w-full accent-accent" />
       <p className="text-[10px] text-subtle">左疏右密，即时预览；仅调整地面横线，不改变消失点、纵线或凸块碰撞。</p>
+      <div className="mb-2 mt-3 flex items-center justify-between"><label htmlFor="blueprint-floor-spread" className="text-xs text-muted">地面纵线张开角度 · {Math.round(floorSpread * 100)}%</label><Chip label="恢复默认" onClick={() => updateFloorSpread(1)} /></div>
+      <input id="blueprint-floor-spread" aria-label="地面纵线张开角度" type="range" min="0" max="300" step="5" value={Math.round(floorSpread * 100)} onChange={e => updateFloorSpread(Number(e.target.value) / 100)} className="h-10 w-full accent-accent" />
+      <p className="text-[10px] text-subtle">起点固定；0%为平行，向右逐渐张开。与横线密度独立。</p>
     </section> : null}
     <Row title="涂鸦">{DEV_GRAF.map((graf)=><Chip key={graf.key} label={graf.label} onClick={()=>onCmd({t:"graf",key:graf.key})}/>)}</Row>
 

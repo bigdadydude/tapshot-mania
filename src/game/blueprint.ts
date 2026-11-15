@@ -63,6 +63,12 @@ export const BLUEPRINT_BOUNCE_CLEAR = 0.16;
  * 第一格高度仍等于墙面格子，消失点因此在交线上方，不压在交线上。
  */
 export const BLUEPRINT_FLOOR_SPREAD = 2;
+let floorRaySpread = 1;
+export function getBlueprintFloorSpread() { return floorRaySpread; }
+export function setBlueprintFloorSpread(value: number) {
+  floorRaySpread = Number.isFinite(value) ? Math.max(0, Math.min(3, value)) : 1;
+  return floorRaySpread;
+}
 let floorLineDensity = 1;
 export function getBlueprintFloorDensity() { return floorLineDensity; }
 /** Developer-only drawing calibration. Does not change grid collision cells. */
@@ -639,7 +645,8 @@ export function blueprintFloorDepthX(world: View, junctionX: number, y: number) 
   const vp = blueprintVanishingPoint(world);
   const lift = world.floorY - vp.y;
   if (lift <= 1e-3) return junctionX;
-  return vp.x + (junctionX - vp.x) * ((y - vp.y) / lift);
+  // Pivot each ray about its original wall/floor junction, never translate that origin.
+  return junctionX + (junctionX - vp.x) * ((y - world.floorY) / lift) * floorRaySpread;
 }
 
 /** 左右篮筐所在的竖向通道，方块不得进入。 */

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { getScene, SCENE_LABELS, setScene } from "./scenes.ts";
 import {
+  getBlueprintFloorSpread, setBlueprintFloorSpread,
   getBlueprintFloorDensity, setBlueprintFloorDensity, blueprintMajorColumn,
   BLUEPRINT_BALL_CLEAR,
   BLUEPRINT_LIT_RGB,
@@ -1618,4 +1619,13 @@ test("粗竖线右移一格，地面横线密度可调且默认可还原", () =>
   setBlueprintFloorDensity(.5);assert.ok(blueprintFloorRowY(world,1)>normal);
   assert.equal(setBlueprintFloorDensity(99),2.5);assert.equal(setBlueprintFloorDensity(-1),.4);
   setBlueprintFloorDensity(1);assert.equal(getBlueprintFloorDensity(),1);assert.equal(blueprintFloorRowY(world,1),normal);
+});
+
+test("地面纵线开合只旋转方向，墙地起点不动且不影响横线", () => {
+  const x=world.w*.25, y=world.h;
+  setBlueprintFloorSpread(1);const normal=blueprintFloorDepthX(world,x,y),row=blueprintFloorRowY(world,2);
+  for(const n of [0,.5,1,2,3]) {setBlueprintFloorSpread(n);assert.equal(blueprintFloorDepthX(world,x,world.floorY),x);assert.equal(blueprintFloorRowY(world,2),row);}
+  setBlueprintFloorSpread(0);assert.equal(blueprintFloorDepthX(world,x,y),x);
+  setBlueprintFloorSpread(2);assert.ok(Math.abs(blueprintFloorDepthX(world,x,y)-(x+2*(normal-x)))<1e-9);
+  setBlueprintFloorSpread(1);assert.equal(getBlueprintFloorSpread(),1);
 });
