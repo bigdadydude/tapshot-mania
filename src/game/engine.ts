@@ -45,6 +45,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, rainClearTraffic, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
+import { collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage, isClothNet } from "./types";
@@ -202,6 +203,7 @@ export function createGame(
   let traffic = createTraffic();
   const trafficEnabled = () => getSceneId() === "overpass" && !(devOn && devScene === "void");
   const trainBackdropOn = () => getSceneId() === "train" && !(devOn && devScene === "void");
+  const blueprintOn = () => getSceneId() === "blueprint" && !(devOn && devScene === "void");
   let phase: Phase = "title";
   let booted = artProgress().ready;
   let lastLoadN = booted ? 100 : -1;
@@ -872,6 +874,7 @@ export function createGame(
   let timerMax = TIMER_START;
   let timerArmed = false;
   let madeCount = 0;
+  let blueprintMadeCount = 0;
   let comboClock = 0;
   let comboCounting = true;
   /** True after a jump until the next *new* shot opens. Mid-air re-taps keep this. */
@@ -940,6 +943,7 @@ export function createGame(
   let holeTick = 0;
   let otherOverRim = false;
   let boardHitLock = 0;
+  let blueprintHitLock = 0;
   /**
    * Glass: one rim / board / floor penalty per jump.
    * Cleared only on tapJump �?not in resetShotFlags (floor settle used to re-arm
@@ -1064,6 +1068,7 @@ export function createGame(
     buzzerTimer: number;
     timeUp: boolean;
     madeCount: number;
+    blueprintMadeCount: number;
     chain: Chain | null;
     ninjaGhosts: NinjaGhost[];
     ninjaGates: NinjaGate[];
@@ -1080,6 +1085,7 @@ export function createGame(
     stageState: unknown;
     trainRoute: ReturnType<typeof getTrainScroll>;
     tunnel: ReturnType<typeof getTrainTunnel>;
+    blueprint: BlueprintClock;
     birds: BirdState;
     birdBaseBonus: number;
     frostBonus: number; glassBase: number; glassProtectionLeft: number;
@@ -1122,7 +1128,7 @@ export function createGame(
       antiRecovery: { ...antiRecovery },
       boltTrail: structuredClone(boltTrail),
       quantumTunnelLeft, mazeRespawnLeft,
-      score, combo, streak, comboClock, comboCounting, comboRescue, timer, timerMax, timerArmed, buzzer, buzzerTimer, timeUp, madeCount,
+      score, combo, streak, comboClock, comboCounting, comboRescue, timer, timerMax, timerArmed, buzzer, buzzerTimer, timeUp, madeCount, blueprintMadeCount,
       chain: chain ? structuredClone(chain) : null,
       ninjaGhosts: structuredClone(ninjaGhosts),
       ninjaGates: structuredClone(ninjaGates),
@@ -1131,7 +1137,7 @@ export function createGame(
       pathClock,
       time, cloudT, cloudShift, cloudHop, cloudMode, cloudSx, cloudSy,
       stageState: stageMod.rewindState?.(),
-      trainRoute: getTrainScroll(), tunnel: getTrainTunnel(),
+      trainRoute: getTrainScroll(), tunnel: getTrainTunnel(), blueprint: structuredClone(getBlueprintClock()),
       birds: structuredClone(birds),
       birdBaseBonus, frostBonus, glassBase, glassProtectionLeft, holeLived, holeScoreAcc, holeTick,
       overRim, otherOverRim, scoredLock, rimHitLock, boardHitLock,
@@ -1144,6 +1150,7 @@ export function createGame(
 
   function restoreRewindSnapshot(snapshot: RewindSnapshot) {
     restoreTrainScroll(snapshot.trainRoute); restoreTrainTunnel(snapshot.tunnel);
+    restoreBlueprintClock(snapshot.blueprint);
     birds = structuredClone(snapshot.birds);
     birdBaseBonus = snapshot.birdBaseBonus;
     frostBonus = snapshot.frostBonus; glassBase = snapshot.glassBase;
@@ -1202,6 +1209,7 @@ export function createGame(
     buzzerTimer = snapshot.buzzerTimer;
     timeUp = snapshot.timeUp;
     madeCount = snapshot.madeCount;
+    blueprintMadeCount = snapshot.blueprintMadeCount;
     chain = snapshot.chain ? structuredClone(snapshot.chain) : null;
     ninjaGhosts = structuredClone(snapshot.ninjaGhosts);
     ninjaGates = structuredClone(snapshot.ninjaGates);
@@ -1334,6 +1342,22 @@ export function createGame(
       return rogueDecayBase(rogueRun, rogueStageDecay);
     }
     return TIMER_DECAY;
+  }
+
+  function blueprintClockBudget() {
+    return timerMax + (blueprintOn() ? getBlueprintRewards().seconds : 0);
+  }
+
+  function showBlueprintRewards() {
+    if (!blueprintOn()) return;
+    const events = drainBlueprintRewardEvents();
+    for (const reward of events) {
+      // Adding time raises current remaining time too, without resetting the running clock.
+      if (reward === "seconds" && !buzzer && !timeUp) timer += 3 * hackerClockScale(hackerAwaken);
+      const text = reward === "base" ? "永久基础 +2" : reward === "combo" ? "每球连击 +1" : "永久时钟 +3秒";
+      callouts.push({ text, x:ball.x, y:ball.y-ball.r*2.4, life:1.3, max:1.3, kind:"tag" });
+    }
+    if (events.length) emitHud();
   }
 
   function refillShotClock() {
@@ -1775,6 +1799,7 @@ export function createGame(
     clearSceneLayers();
     reloadSceneArt();
     if (id === "train") resetTrainScroll();
+    if (id === "blueprint") resetBlueprint();
     persist();
   }
 
@@ -2116,6 +2141,23 @@ export function createGame(
       max: 1,
       kind: "tag",
     });
+    if (blueprintOn()) {
+      const bonus = consumeBlueprintLitForHole();
+      showBlueprintRewards();
+      if (bonus > 0) {
+        // 开洞当下加进得分。不进待领，不等下一次进球，不乘冠军时刻。
+        score += bonus;
+        noteBest();
+        callouts.push({
+          text: `基础 +${bonus}`,
+          x: holeX,
+          y: holeY,
+          life: 1.1,
+          max: 1.1,
+          kind: "base",
+        });
+      }
+    }
     emitHud();
   }
 
@@ -3082,7 +3124,9 @@ export function createGame(
     hackerSpeed = HACKER_SPEED_BASE;
     clearSparseCodeRain();
     madeCount = 0;
+    blueprintMadeCount = 0;
     resetTrainScroll();
+    resetBlueprintProgress();
     ball.sootLeft = 0;
     if (isRogueMode()) {
       rogueRun = createRogueRun();
@@ -3463,7 +3507,9 @@ export function createGame(
     traffic = createTraffic();
     ball.trafficSafe = false;
     madeCount = 0;
+    blueprintMadeCount = 0;
     resetTrainScroll();
+    resetBlueprintProgress(true); // Same rogue run keeps permanent green-block rewards.
     ball.sootLeft = 0;
     score = 0;
     mazeBaseBonus = 0;
@@ -3905,7 +3951,7 @@ export function createGame(
 
   /** timerMax remains the ordinary, decaying budget; transitions only rescale remaining time. */
   function hackerClockBudget() {
-    return timerMax * hackerClockScale(hackerAwaken);
+    return blueprintClockBudget() * hackerClockScale(hackerAwaken);
   }
 
   function setHackerWorld(awake: boolean) {
@@ -4626,7 +4672,9 @@ export function createGame(
     streak = 0;
     hint = true;
     madeCount = 0;
+    blueprintMadeCount = 0;
     resetTrainScroll();
+    resetBlueprint();
     ball.sootLeft = 0;
     hackerDir = null;
     setHackerWorld(false); resetHackerMeter();
@@ -5361,6 +5409,16 @@ export function createGame(
           getTrainGantries(world, getTrainScroll()).length === 0;
       });
     }
+    if (blueprintOn()) {
+      stepBlueprint(dt, phase === "playing", {
+        goals: blueprintMadeCount,
+        ballX: ball.x,
+        ballY: ball.y,
+        hoopX: hoop.x,
+        hoopY: hoop.y,
+      }, world, { generationHold: holeOn });
+      showBlueprintRewards();
+    }
     if (trafficEnabled() && madeCount > 0) {
       rewardAbsorbedObjects(stepTraffic(traffic, world, dt));
       if (holeOn) beginTrafficAbsorption(traffic, holeX, holeY);
@@ -5371,6 +5429,7 @@ export function createGame(
     if (scoredLock > 0) scoredLock -= dt;
     if (rimHitLock > 0) rimHitLock -= dt;
     if (boardHitLock > 0) boardHitLock -= dt;
+    if (blueprintHitLock > 0) blueprintHitLock -= dt;
     if (burnFlash > 0) burnFlash = Math.max(0, burnFlash - dt);
 
     // Overheat locks the ball only. Clock, hoops, frost, combo, and stage mechanisms keep stepping.
@@ -5769,6 +5828,21 @@ export function createGame(
           }
         }
       }
+      if (!hackerScripted && blueprintOn() && quantumTunnelLeft <= 0) {
+        const incomingVx = ball.vx;
+        const incomingVy = ball.vy;
+        if (collideBlueprint(world, ball, prevBallX, prevBallY, isSuper() ? (nx, ny) => superCancelsSolid(nx, ny) : undefined)) {
+          vectorCollision(incomingVx, incomingVy);
+          shotAirborne = true;
+          prevBallX = ball.x;
+          prevBallY = ball.y;
+          if (blueprintHitLock <= 0 && phase !== "title") {
+            audio.bounce(Math.min(1, Math.hypot(ball.vx, ball.vy) / 900));
+            blueprintHitLock = 0.12;
+          }
+        }
+      }
+      showBlueprintRewards();
       const rocketFreeY=ball.y,rocketFreeVy=ball.vy;
       if (!hackerScripted && trafficEnabled() && phase === "playing") {
         const vectorIncoming = {vx:ball.vx,vy:ball.vy};
@@ -6791,6 +6865,7 @@ export function createGame(
       callouts.push({ text: "每球连击 +1", x: scoredHoop.x, y: scoredHoop.y - 100, life: 1.2, max: 1.2, kind: "tag" });
     }
     if (entersHackerWorld) enterHackerAwaken();
+    if (!ghost && blueprintOn()) streak += getBlueprintRewards().combo;
     comboCounting = true;
     comboClock = 0;
     if (!ghost) {
@@ -6830,6 +6905,7 @@ export function createGame(
 
     madeCount += 1;
     if (!ghost && isHacker()) addHackerMake(hackerCharge);
+    if (!ghost) blueprintMadeCount += 1;
     if (trainBackdropOn()) startTrainScroll();
     if (!ghost) {
       // Dynamic hoop: +0.4% chance per make, cap 50%; scoring a mover raises speed hi.
@@ -6879,6 +6955,7 @@ export function createGame(
       basePart = Math.floor(Math.random() * 26) - 10;
     }
     basePart += birdBaseBonus;
+    if (!ghost && blueprintOn()) basePart += getBlueprintRewards().base;
     const superShieldScore = !ghost && isSuper() && superBall.shield;
     if(!ghost && isSuper()) basePart+=superBaseBonus(superBall);
     let gain = bunshinGhost ? 1 + birdBaseBonus : ninjaGhost ? birdBaseBonus : basePart + streakPart;
@@ -6972,6 +7049,13 @@ export function createGame(
     if (hackerEffect === "lock") gain *= 2;
     const banked = gain;
     score += banked;
+    // 黄标签只保留最后一条，单独的「清格 +N」会被同帧「空心球」盖掉。清格分并进主飘字。
+    let rowBonus = 0;
+    if (blueprintOn() && !ghost) {
+      const settled = settleBlueprintBasket(gain, true);
+      rowBonus = settled.bonus;
+      score += rowBonus;
+    }
     if(!ghost && isSuper()) superScore(superBall,superShieldScore);
     if (!ghost && balanceSession) {
       const plainCore = bunshinGhost || ninjaGhost ? 0 : basePart + streakPart + extra + (freed ? prisonBonus : 0) + (clutch && !ninjaGhost ? 5 : 0);
@@ -7077,7 +7161,7 @@ export function createGame(
     const hideMakeScore = (isAnti() && legacyHole()) || (ninjaGhost && gain <= 0);
     if (!hideMakeScore) {
       callouts.push({
-        text: `+${banked}`,
+        text: `+${banked + rowBonus}`,
         x: popX,
         y: popY - popInner * RIM_RY - 14,
         capY: boardTop + 8,
@@ -7113,9 +7197,11 @@ export function createGame(
         kind: "base",
       });
     }
-    if (tag && !hideMakeScore) {
+    const clearNote = rowBonus > 0 ? `清格 +${rowBonus}` : "";
+    const tagLine = [tag, clearNote].filter(Boolean).join("  ");
+    if (tagLine && !hideMakeScore) {
       callouts.push({
-        text: tag,
+        text: tagLine,
         x: popX,
         y: popY - 70,
         life: 0.95,
@@ -7789,7 +7875,7 @@ export function createGame(
       emitHud();
     },
     setScene(id) {
-      if (id !== "street" && id !== "prison" && id !== "overpass" && id !== "train") return;
+      if (id !== "street" && id !== "prison" && id !== "overpass" && id !== "train" && id !== "blueprint") return;
       applyScenePack(id);
       if (devOn && devScene !== "void") {
         devScene = id;
@@ -7883,12 +7969,14 @@ export function createGame(
         score,
         combo,
         timer,
+        blueprintRewards: getBlueprintRewards(),
         timerMax,
         timerArmed,
         buzzer,
         buzzerTimer,
         timeUp,
         madeCount,
+        blueprintMadeCount,
         champDoublePending, champHalfClock, champClutchControlled,
         hoopInner: hoop.inner,
         timeEnergy,
