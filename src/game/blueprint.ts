@@ -63,17 +63,19 @@ export const BLUEPRINT_BOUNCE_CLEAR = 0.16;
  * 第一格高度仍等于墙面格子，消失点因此在交线上方，不压在交线上。
  */
 export const BLUEPRINT_FLOOR_SPREAD = 2;
-let floorRaySpread = 1;
+export const BLUEPRINT_DEFAULT_FLOOR_SPREAD = 1.8;
+export const BLUEPRINT_DEFAULT_FLOOR_DENSITY = 1.4;
+let floorRaySpread = BLUEPRINT_DEFAULT_FLOOR_SPREAD;
 export function getBlueprintFloorSpread() { return floorRaySpread; }
 export function setBlueprintFloorSpread(value: number) {
-  floorRaySpread = Number.isFinite(value) ? Math.max(0, Math.min(3, value)) : 1;
+  floorRaySpread = Number.isFinite(value) ? Math.max(0, Math.min(3, value)) : BLUEPRINT_DEFAULT_FLOOR_SPREAD;
   return floorRaySpread;
 }
-let floorLineDensity = 1;
+let floorLineDensity = BLUEPRINT_DEFAULT_FLOOR_DENSITY;
 export function getBlueprintFloorDensity() { return floorLineDensity; }
 /** Developer-only drawing calibration. Does not change grid collision cells. */
 export function setBlueprintFloorDensity(value: number) {
-  floorLineDensity = Number.isFinite(value) ? Math.max(0.4, Math.min(2.5, value)) : 1;
+  floorLineDensity = Number.isFinite(value) ? Math.max(0.4, Math.min(2.5, value)) : BLUEPRINT_DEFAULT_FLOOR_DENSITY;
   return floorLineDensity;
 }
 export function blueprintMajorColumn(index: number) { return ((index - 1) % 4 + 4) % 4 === 0; }

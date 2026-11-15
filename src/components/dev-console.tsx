@@ -7,7 +7,7 @@ import type { RogueHud } from "@/game/rogue";
 import { ROGUE_CATALOG, type RogueCatalogEntry } from "@/game/rogue-catalog";
 import { csv, balanceExportPayload, calibrateKDetailed, historicalSummary, loadBalanceStore, mergeLiveSession, saveBalanceStore, sessionProgress, skillEfficiencyEntrance, strengthTotal, autoStrengthReport, DEFAULT_AUTO_WEIGHTS, type AutoBallReadout, type BalanceSession, type BalanceStore, type VerdictLabel } from "@/game/balance-test";
 import { cn } from "@/lib/utils";
-import { getBlueprintFloorSpread, setBlueprintFloorSpread, getBlueprintFloorDensity, setBlueprintFloorDensity } from "@/game/blueprint";
+import { BLUEPRINT_DEFAULT_FLOOR_SPREAD, BLUEPRINT_DEFAULT_FLOOR_DENSITY, getBlueprintFloorSpread, setBlueprintFloorSpread, getBlueprintFloorDensity, setBlueprintFloorDensity } from "@/game/blueprint";
 
 type Tab = "match" | "scene" | "ball" | "balance" | "rogue" | "shop";
 const numeric = (value: string, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -70,10 +70,10 @@ function SceneTab({dev,gfx,onCmd,onSearchlights}:{dev:DevHud;gfx:Gfx;onCmd:(cmd:
     {sceneLocked ? <p className="-mt-1.5 mb-3 text-[10px] text-subtle">平衡测试进行中，场景已锁定</p> : null}
 
     {dev.scene === "blueprint" ? <section className="mb-3 border-y border-border py-3">
-      <div className="mb-2 flex items-center justify-between"><label htmlFor="blueprint-floor-density" className="text-xs text-muted">地面横线紧密度 · {Math.round(floorDensity * 100)}%</label><Chip label="恢复默认" onClick={() => updateFloorDensity(1)} /></div>
+      <div className="mb-2 flex items-center justify-between"><label htmlFor="blueprint-floor-density" className="text-xs text-muted">地面横线紧密度 · {Math.round(floorDensity * 100)}%</label><Chip label="恢复默认" onClick={() => updateFloorDensity(BLUEPRINT_DEFAULT_FLOOR_DENSITY)} /></div>
       <input id="blueprint-floor-density" aria-label="地面横线紧密度" type="range" min="40" max="250" step="5" value={Math.round(floorDensity * 100)} onChange={e => updateFloorDensity(Number(e.target.value) / 100)} className="h-10 w-full accent-accent" />
       <p className="text-[10px] text-subtle">左疏右密，即时预览；仅调整地面横线，不改变消失点、纵线或凸块碰撞。</p>
-      <div className="mb-2 mt-3 flex items-center justify-between"><label htmlFor="blueprint-floor-spread" className="text-xs text-muted">地面纵线张开角度 · {Math.round(floorSpread * 100)}%</label><Chip label="恢复默认" onClick={() => updateFloorSpread(1)} /></div>
+      <div className="mb-2 mt-3 flex items-center justify-between"><label htmlFor="blueprint-floor-spread" className="text-xs text-muted">地面纵线张开角度 · {Math.round(floorSpread * 100)}%</label><Chip label="恢复默认" onClick={() => updateFloorSpread(BLUEPRINT_DEFAULT_FLOOR_SPREAD)} /></div>
       <input id="blueprint-floor-spread" aria-label="地面纵线张开角度" type="range" min="0" max="300" step="5" value={Math.round(floorSpread * 100)} onChange={e => updateFloorSpread(Number(e.target.value) / 100)} className="h-10 w-full accent-accent" />
       <p className="text-[10px] text-subtle">起点固定；0%为平行，向右逐渐张开。与横线密度独立。</p>
     </section> : null}

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { getScene, SCENE_LABELS, setScene } from "./scenes.ts";
 import {
+  BLUEPRINT_DEFAULT_FLOOR_SPREAD, BLUEPRINT_DEFAULT_FLOOR_DENSITY,
   getBlueprintFloorSpread, setBlueprintFloorSpread,
   getBlueprintFloorDensity, setBlueprintFloorDensity, blueprintMajorColumn,
   BLUEPRINT_BALL_CLEAR,
@@ -82,6 +83,9 @@ function makeWorld(w = 390, h = 844) {
 }
 
 const world = makeWorld();
+// Legacy geometry checks explicitly exercise the original 100% calibration.
+setBlueprintFloorDensity(1);
+setBlueprintFloorSpread(1);
 
 function clock(partial: Partial<BlueprintClock> & { cells?: BlueprintCellRef[]; cycle?: number } = {}): BlueprintClock {
   const {
@@ -1628,4 +1632,12 @@ test("地面纵线开合只旋转方向，墙地起点不动且不影响横线",
   setBlueprintFloorSpread(0);assert.equal(blueprintFloorDepthX(world,x,y),x);
   setBlueprintFloorSpread(2);assert.ok(Math.abs(blueprintFloorDepthX(world,x,y)-(x+2*(normal-x)))<1e-9);
   setBlueprintFloorSpread(1);assert.equal(getBlueprintFloorSpread(),1);
+});
+
+test("正式默认固定横线140%纵线180%，无效输入恢复所选默认", () => {
+  assert.equal(BLUEPRINT_DEFAULT_FLOOR_DENSITY,1.4);
+  assert.equal(BLUEPRINT_DEFAULT_FLOOR_SPREAD,1.8);
+  assert.equal(setBlueprintFloorDensity(NaN),1.4);
+  assert.equal(setBlueprintFloorSpread(NaN),1.8);
+  setBlueprintFloorDensity(1);setBlueprintFloorSpread(1);
 });
