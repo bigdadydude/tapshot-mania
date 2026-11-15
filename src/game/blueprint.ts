@@ -1765,11 +1765,23 @@ function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock, others:
   }
 }
 
+/** Redraw only solid blocks after the code-world dark wash, preserving their colors. */
+export function drawBlueprintCodeBlocks(ctx: CanvasRenderingContext2D, world: View, hudBottom = 0) {
+  ctx.save();
+  ctx.globalAlpha = 0.48;
+  drawBlueprintBlocks(ctx, world, hudBottom);
+  ctx.restore();
+}
+
 export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View, hudBottom = 0) {
   ctx.fillStyle = BLUEPRINT_BLUE;
   ctx.fillRect(0, 0, world.w, world.h);
   strokeGrid(ctx, world);
   drawPerspectiveFloor(ctx, world);
+  drawBlueprintBlocks(ctx, world, hudBottom);
+}
+
+function drawBlueprintBlocks(ctx: CanvasRenderingContext2D, world: View, hudBottom: number) {
   const clock = getBlueprintClock();
   const blocks = blueprintBlocks(world, clock);
   const covered = new Set((clock.dynamic?.cells ?? []).map((cell) => `${cell.col}:${cell.row}`));

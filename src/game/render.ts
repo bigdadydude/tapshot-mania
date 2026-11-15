@@ -1,7 +1,7 @@
 import { drawTrainSmoke, sootFilter } from "./train-smoke";
 import { drawBlackHole } from "./black-hole-render";
 import { drawCity } from "./city-render";
-import { blueprintHudBar, drawBlueprint } from "./blueprint";
+import { blueprintHudBar, drawBlueprint, drawBlueprintCodeBlocks } from "./blueprint";
 import { drawTrainBackdrop, getTrainScroll } from "./train-bg";
 import { drawTrainGantryWarnings } from "./train-gantry";
 import { birdOwnsBall, drawBirds, drawEagleWarnings, type BirdState } from "./birds";
@@ -373,6 +373,7 @@ export function drawScene(
 	const nearest = stands.reduce((best,h) => Math.hypot(ball.x-h.x,ball.y-h.y) < Math.hypot(ball.x-best.x,ball.y-best.y) ? h : best, hoop);
 	if (greenWash) {
 		applyGreenNightWash(ctx, world);
+		if (backdrop === "blueprint") drawBlueprintCodeBlocks(ctx, world, blueprintHudBar(world).bottom);
 		drawSparseCodeRain(ctx, world, time);
 		neonGreenCourt = true;
 	}
