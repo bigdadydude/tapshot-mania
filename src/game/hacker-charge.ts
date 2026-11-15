@@ -153,8 +153,8 @@ export function bankHackerCombo(s: HackerProgress) {
   s.codeCombo = 0;
 }
 
-export function hackerClockScale(awake: boolean) {
-  return awake ? HACKER_RAIN.clockScale : 1;
+export function hackerClockScale(awake: boolean, skillMakes = 0) {
+  return awake ? HACKER_RAIN.clockScale * Math.pow(0.98, Math.max(0, skillMakes)) : 1;
 }
 
 export function chargeIsFull(s: HackerCharge) {

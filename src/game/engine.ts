@@ -995,6 +995,7 @@ export function createGame(
   let hackerAimPointer: number | null = null;
   let hackerPin: { x: number; y: number } | null = null;
   let hackerAwaken = false;
+  let hackerSkillMakes = 0;
   let hackerProgress = createHackerProgress();
   let hackerRainEnterPending = false;
   let hackerJumpLocked = false;
@@ -1051,6 +1052,7 @@ export function createGame(
     quantumTunnelLeft: number;
     mazeRespawnLeft: number;
     hackerAwaken: boolean;
+    hackerSkillMakes: number;
     hackerDir: HackerDir | null;
     hackerCharge: HackerCharge;
     hackerProgress: HackerProgress;
@@ -1113,7 +1115,7 @@ export function createGame(
     if (rewindSampleLeft > 0) return;
     rewindSampleLeft = REWIND_SAMPLE_SECONDS;
     rewindHistory.push({
-      hackerAwaken, hackerDir, hackerCharge: settledHackerCharge(hackerCharge),
+      hackerAwaken, hackerSkillMakes, hackerDir, hackerCharge: settledHackerCharge(hackerCharge),
       hackerFlight: hackerFlight ? { ...hackerFlight } : null, hackerDeepArmed,
       hackerProgress: { ...hackerProgress }, hackerRainEnterPending, hackerJumpLocked,
       ball: structuredClone(ball),
@@ -1181,6 +1183,7 @@ export function createGame(
     quantumTunnelLeft = snapshot.quantumTunnelLeft;
     mazeRespawnLeft = snapshot.mazeRespawnLeft;
     hackerAwaken = snapshot.hackerAwaken;
+    hackerSkillMakes = snapshot.hackerSkillMakes;
     hackerDir = snapshot.hackerDir;
     hackerRimSlide = null;
     hackerCharge = { ...snapshot.hackerCharge, layerGlow: [...snapshot.hackerCharge.layerGlow] };
@@ -1353,7 +1356,7 @@ export function createGame(
     const events = drainBlueprintRewardEvents();
     for (const reward of events) {
       // Adding time raises current remaining time too, without resetting the running clock.
-      if (reward === "seconds" && !buzzer && !timeUp) timer += 3 * hackerClockScale(hackerAwaken);
+      if (reward === "seconds" && !buzzer && !timeUp) timer += 3 * hackerClockScale(hackerAwaken, hackerSkillMakes);
       const text = reward === "base" ? "永久基础 +2" : reward === "combo" ? "每球连击 +1" : "永久时钟 +3秒";
       callouts.push({ text, x:ball.x, y:ball.y-ball.r*2.4, life:1.3, max:1.3, kind:"tag" });
     }
@@ -3951,13 +3954,14 @@ export function createGame(
 
   /** timerMax remains the ordinary, decaying budget; transitions only rescale remaining time. */
   function hackerClockBudget() {
-    return blueprintClockBudget() * hackerClockScale(hackerAwaken);
+    return blueprintClockBudget() * hackerClockScale(hackerAwaken, hackerSkillMakes);
   }
 
   function setHackerWorld(awake: boolean) {
     if (awake === hackerAwaken) return;
-    timer *= hackerClockScale(awake) / hackerClockScale(hackerAwaken);
+    timer *= hackerClockScale(awake) / hackerClockScale(hackerAwaken, hackerSkillMakes);
     hackerAwaken = awake;
+    hackerSkillMakes = 0;
   }
 
   function noteRainDropCombo(count: number) {
@@ -6772,6 +6776,10 @@ export function createGame(
     // Clones cannot replace the real ball's final shot or extend its window.
     if (ghost && (buzzer || timeUp)) return;
     const hackerEffect = !ghost && isHacker() ? hackerDeepArmed : null;
+    if (hackerAwaken && hackerEffect !== null) {
+      hackerSkillMakes += 1;
+      timer *= 0.98;
+    }
     const hackerBonus = !ghost && isHacker() ? hackerComboBonus(hackerProgress, hackerAwaken) : 0;
     const earnsHackerArrow = hackerEffect === "arrow" && hackerAwaken;
     const entersHackerWorld = hackerEffect === "rain" && hackerRainEnterPending;
@@ -7944,9 +7952,10 @@ export function createGame(
         birdBaseBonus,
         frostBonus, glassBase, glassProtectionLeft, quantumTunnelLeft, hackerAwaken, streak,
         hackerJumpLocked,
+        hackerSkillMakes,
         hackerProgress: { ...hackerProgress },
         hackerComboBonus: hackerComboBonus(hackerProgress, hackerAwaken),
-        hackerClockScale: hackerClockScale(hackerAwaken),
+        hackerClockScale: hackerClockScale(hackerAwaken, hackerSkillMakes),
         hackerCharge: {
           ...hackerCharge,
           display: chargeDisplayMakes(hackerCharge),

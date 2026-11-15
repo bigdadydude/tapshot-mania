@@ -294,3 +294,10 @@ test("both worlds spend whole tiers, refund partial progress, and expose full ch
   assert.equal(releaseChargeHold(full), "rain");
   assert.equal(full.makes, 0);
 });
+
+test("code skill baskets shrink their world budget by two percent each, cleared on exit", () => {
+ assert.equal(hackerClockScale(true,1),.94*.98);
+ assert.equal(hackerClockScale(true,2),.94*.98*.98);
+ assert.equal(hackerClockScale(false,5),1);
+ assert.equal(hackerClockScale(true,0),.94);
+});
