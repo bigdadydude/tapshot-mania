@@ -119,7 +119,7 @@ function drawQuantumBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean
       ctx.save();
       ctx.globalCompositeOperation = "screen";
       ctx.globalAlpha = ball.blink ? 1 : 0.9;
-      ctx.rotate(time * 0.5);
+      ctx.rotate(time * Math.PI * 6); // Aura only: three rotations per second.
       ctx.drawImage(aura, -r, -r, r * 2, r * 2);
       // A second low-opacity screen pass brightens luminous strokes without
       // flattening the source artwork into a solid white disk.
