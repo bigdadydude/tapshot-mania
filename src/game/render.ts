@@ -90,7 +90,7 @@ function quantumBaseTexture() {
 }
 
 const QUANTUM_AURA_BREATH_PERIOD = 2;
-const QUANTUM_AURA_BREATH_AMPLITUDE = 0.18;
+const QUANTUM_AURA_BREATH_AMPLITUDE = 0.35;
 
 function drawQuantumBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean, time: number) {
   // Tunneling remains legible by disappearing on alternating phase frames.
@@ -122,9 +122,16 @@ function drawQuantumBall(ctx: CanvasRenderingContext2D, ball: Ball, lit: boolean
       ctx.save();
       ctx.globalCompositeOperation = "screen";
       const breath = 1 + QUANTUM_AURA_BREATH_AMPLITUDE * Math.sin(2 * Math.PI * time / QUANTUM_AURA_BREATH_PERIOD);
-      ctx.globalAlpha = Math.max(0, Math.min(1, (ball.blink ? 1 : 0.9) * breath));
+      const base = ball.blink ? 1 : 0.9;
+      ctx.globalAlpha = Math.max(0, Math.min(1, base * breath));
       ctx.rotate(time * Math.PI * 6); // Aura only: three rotations per second.
       ctx.drawImage(aura, -r, -r, r * 2, r * 2);
+      // When the first layer would exceed 1, keep the overflow as another
+      // screen pass so the bright half of the breath stays visible.
+      if (base * breath > 1) {
+        ctx.globalAlpha = Math.min(1, base * breath - 1);
+        ctx.drawImage(aura, -r, -r, r * 2, r * 2);
+      }
       // A second low-opacity screen pass brightens luminous strokes without
       // flattening the source artwork into a solid white disk.
       ctx.globalAlpha = Math.max(0, Math.min(1, (ball.blink ? 0.48 : 0.28) * breath));
