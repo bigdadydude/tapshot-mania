@@ -874,6 +874,7 @@ export function createGame(
   let timerMax = TIMER_START;
   let timerArmed = false;
   let madeCount = 0;
+  let blueprintMadeCount = 0;
   let comboClock = 0;
   let comboCounting = true;
   /** True after a jump until the next *new* shot opens. Mid-air re-taps keep this. */
@@ -1046,6 +1047,7 @@ export function createGame(
     buzzerTimer: number;
     timeUp: boolean;
     madeCount: number;
+    blueprintMadeCount: number;
     chain: Chain | null;
     ninjaGhosts: NinjaGhost[];
     ninjaGates: NinjaGate[];
@@ -1103,7 +1105,7 @@ export function createGame(
       antiRecovery: { ...antiRecovery },
       boltTrail: structuredClone(boltTrail),
       quantumTunnelLeft, mazeRespawnLeft,
-      score, combo, streak, comboClock, comboCounting, comboRescue, timer, timerMax, timerArmed, buzzer, buzzerTimer, timeUp, madeCount,
+      score, combo, streak, comboClock, comboCounting, comboRescue, timer, timerMax, timerArmed, buzzer, buzzerTimer, timeUp, madeCount, blueprintMadeCount,
       chain: chain ? structuredClone(chain) : null,
       ninjaGhosts: structuredClone(ninjaGhosts),
       ninjaGates: structuredClone(ninjaGates),
@@ -1170,6 +1172,7 @@ export function createGame(
     buzzerTimer = snapshot.buzzerTimer;
     timeUp = snapshot.timeUp;
     madeCount = snapshot.madeCount;
+    blueprintMadeCount = snapshot.blueprintMadeCount;
     chain = snapshot.chain ? structuredClone(snapshot.chain) : null;
     ninjaGhosts = structuredClone(snapshot.ninjaGhosts);
     ninjaGates = structuredClone(snapshot.ninjaGates);
@@ -3077,6 +3080,7 @@ export function createGame(
     hackerSpeed = HACKER_SPEED_BASE;
     clearSparseCodeRain();
     madeCount = 0;
+    blueprintMadeCount = 0;
     resetTrainScroll();
     resetBlueprintProgress();
     ball.sootLeft = 0;
@@ -3456,6 +3460,7 @@ export function createGame(
     traffic = createTraffic();
     ball.trafficSafe = false;
     madeCount = 0;
+    blueprintMadeCount = 0;
     resetTrainScroll();
     resetBlueprintProgress(true); // Same rogue run keeps permanent green-block rewards.
     ball.sootLeft = 0;
@@ -4359,6 +4364,7 @@ export function createGame(
     streak = 0;
     hint = true;
     madeCount = 0;
+    blueprintMadeCount = 0;
     resetTrainScroll();
     resetBlueprint();
     ball.sootLeft = 0;
@@ -5091,7 +5097,7 @@ export function createGame(
     }
     if (blueprintOn()) {
       stepBlueprint(dt, phase === "playing", {
-        goals: madeCount,
+        goals: blueprintMadeCount,
         ballX: ball.x,
         ballY: ball.y,
         hoopX: hoop.x,
@@ -6495,6 +6501,7 @@ export function createGame(
     }
 
     madeCount += 1;
+    if (!ghost) blueprintMadeCount += 1;
     if (trainBackdropOn()) startTrainScroll();
     if (!ghost) {
       // Dynamic hoop: +0.4% chance per make, cap 50%; scoring a mover raises speed hi.
@@ -7533,6 +7540,7 @@ export function createGame(
         buzzerTimer,
         timeUp,
         madeCount,
+        blueprintMadeCount,
         champDoublePending, champHalfClock, champClutchControlled,
         hoopInner: hoop.inner,
         timeEnergy,
