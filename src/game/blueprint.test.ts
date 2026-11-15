@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { getScene, SCENE_LABELS, setScene } from "./scenes.ts";
 import {
+  getBlueprintFloorDensity, setBlueprintFloorDensity, blueprintMajorColumn,
   BLUEPRINT_BALL_CLEAR,
   BLUEPRINT_LIT_RGB,
   BLUEPRINT_KIND_WEIGHTS,
@@ -1608,4 +1609,13 @@ test("前五球只有一格白块，前十五球数量和彩块逐步恢复", ()
     late += blueprintSampleCount(16, i / 99);
   }
   assert.ok(early < late / 2);
+});
+
+test("粗竖线右移一格，地面横线密度可调且默认可还原", () => {
+  assert.equal(blueprintMajorColumn(0),false);assert.equal(blueprintMajorColumn(1),true);assert.equal(blueprintMajorColumn(5),true);
+  setBlueprintFloorDensity(1);const normal=blueprintFloorRowY(world,1);
+  setBlueprintFloorDensity(2);assert.ok(blueprintFloorRowY(world,1)<normal);
+  setBlueprintFloorDensity(.5);assert.ok(blueprintFloorRowY(world,1)>normal);
+  assert.equal(setBlueprintFloorDensity(99),2.5);assert.equal(setBlueprintFloorDensity(-1),.4);
+  setBlueprintFloorDensity(1);assert.equal(getBlueprintFloorDensity(),1);assert.equal(blueprintFloorRowY(world,1),normal);
 });

@@ -63,6 +63,14 @@ export const BLUEPRINT_BOUNCE_CLEAR = 0.16;
  * 第一格高度仍等于墙面格子，消失点因此在交线上方，不压在交线上。
  */
 export const BLUEPRINT_FLOOR_SPREAD = 2;
+let floorLineDensity = 1;
+export function getBlueprintFloorDensity() { return floorLineDensity; }
+/** Developer-only drawing calibration. Does not change grid collision cells. */
+export function setBlueprintFloorDensity(value: number) {
+  floorLineDensity = Number.isFinite(value) ? Math.max(0.4, Math.min(2.5, value)) : 1;
+  return floorLineDensity;
+}
+export function blueprintMajorColumn(index: number) { return ((index - 1) % 4 + 4) % 4 === 0; }
 /**
  * 完全凸出时，浅色罩在蓝底上的不透明度。
  * 仍比没凸起的格子亮，但不要洗成发白。
@@ -620,9 +628,10 @@ export function blueprintFloorRowY(world: View, n: number) {
   const size = blueprintGrid(world).size;
   const vp = blueprintVanishingPoint(world);
   const lift = world.floorY - vp.y;
-  const denom = lift + size * (1 - n);
+  const spacing = size / floorLineDensity;
+  const denom = lift + spacing * (1 - n);
   if (denom <= 1e-3) return Number.POSITIVE_INFINITY;
-  return vp.y + (lift * (lift + size)) / denom;
+  return vp.y + (lift * (lift + spacing)) / denom;
 }
 
 /** 交线处横坐标 junctionX 的纵线，在画面高度 y 上的位置。 */
@@ -1502,7 +1511,7 @@ function strokeGrid(ctx: CanvasRenderingContext2D, world: View) {
         const p = origin + i * grid.size;
         if (p < -1 || p > limit + 1) continue;
         const index = Math.round((p - origin) / grid.size);
-        if (major !== (index % 4 === 0)) continue;
+        if (major !== (horizontal ? index % 4 === 0 : blueprintMajorColumn(index))) continue;
         const line = Math.round(p) + 0.5;
         if (horizontal) {
           ctx.moveTo(0, line);
@@ -1542,7 +1551,7 @@ function drawPerspectiveFloor(ctx: CanvasRenderingContext2D, world: View) {
   const drawDepth = (major: boolean) => {
     ctx.beginPath();
     for (let i = 0; i <= grid.cols; i++) {
-      if (major !== (i % 4 === 0)) continue;
+      if (major !== blueprintMajorColumn(i)) continue;
       const x = Math.round(grid.ox + i * grid.size);
       ctx.moveTo(x + 0.5, floorY);
       ctx.lineTo(blueprintFloorDepthX(world, x, h + 1) + 0.5, h + 1);
@@ -1551,7 +1560,7 @@ function drawPerspectiveFloor(ctx: CanvasRenderingContext2D, world: View) {
   };
   const drawBands = (major: boolean) => {
     ctx.beginPath();
-    for (let n = 1; n < 16; n++) {
+    for (let n = 1; n < 64; n++) {
       if (major !== (n % 4 === 0)) continue;
       const y = blueprintFloorRowY(world, n);
       if (y > h - 1) break;
