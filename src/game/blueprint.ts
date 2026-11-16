@@ -1636,6 +1636,12 @@ export function blueprintCellPixels(cell: Rect) {
   };
 }
 
+/** 凸块白描边的矩形。落在该格四条网格线上，用来盖住背景网格，不是填色内侧再套一圈。 */
+export function blueprintBlockStrokeRect(cell: Rect) {
+  const { left, top, right, bottom } = blueprintCellPixels(cell);
+  return { x: left + 0.5, y: top + 0.5, w: right - left, h: bottom - top };
+}
+
 export type BlueprintShadowBox = { x: number; y: number; w: number; h: number };
 export type BlueprintShadowPiece = BlueprintShadowBox & { keep: number };
 
@@ -1786,6 +1792,11 @@ function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock, others:
     ctx.fillStyle = `rgba(236, 244, 255, ${blueprintFillAlpha(extend)})`;
     ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
   }
+  // 不透明白描边压在该格四条网格线上，盖住底下的网格；所有已画出的凸块都画，含未点亮白块。
+  const stroke = blueprintBlockStrokeRect(block.cell);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(stroke.x, stroke.y, stroke.w, stroke.h);
 }
 
 /** Redraw only solid blocks after the code-world dark wash, preserving their colors. */

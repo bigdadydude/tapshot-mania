@@ -32,6 +32,7 @@ import {
   BLUEPRINT_SHAPES,
   blueprintBlockSize,
   blueprintBlocks,
+  blueprintBlockStrokeRect,
   blueprintCellCover,
   blueprintCellPixels,
   blueprintDespawnChance,
@@ -72,6 +73,7 @@ import {
   consumeBlueprintLitForHole,
   settleBlueprintBasket,
   collideBlueprint,
+  drawBlueprint,
   getBlueprintClock,
   resetBlueprint,
   restoreBlueprintClock,
@@ -823,6 +825,113 @@ test("凸出填色贴住网格线", () => {
     assert.equal(px.fill.y, px.top + 1);
     assert.equal(px.fill.x + px.fill.w, px.right);
     assert.equal(px.fill.y + px.fill.h, px.bottom);
+  }
+});
+
+function oldInsetStrokeRect(fill: { x: number; y: number; w: number; h: number }) {
+  return { x: fill.x + 1.5, y: fill.y + 1.5, w: fill.w - 3, h: fill.h - 3 };
+}
+
+test("凸块白描边落在网格线上，不是旧的填色内缩矩形", () => {
+  const batch = rollBlueprintBatch(world, { seed: 8, serial: 1, goals: 3, ball: null, hoop: null });
+  for (const block of blueprintBlocks(world, clock({ cells: batch.cells, goals: 3, cycle: BLUEPRINT_RAISE, duration: BLUEPRINT_RAISE }))) {
+    const px = blueprintCellPixels(block.cell);
+    const stroke = blueprintBlockStrokeRect(block.cell);
+    // 与 strokeGrid 相同：线画在 Math.round(p)+0.5，宽高为格子左右/上下边之差。
+    assert.equal(stroke.x, px.left + 0.5);
+    assert.equal(stroke.y, px.top + 0.5);
+    assert.equal(stroke.w, px.right - px.left);
+    assert.equal(stroke.h, px.bottom - px.top);
+    const inset = oldInsetStrokeRect(px.fill);
+    assert.notDeepEqual(stroke, inset);
+    assert.notEqual(stroke.x, inset.x);
+    assert.notEqual(stroke.y, inset.y);
+    assert.notEqual(stroke.w, inset.w);
+    assert.notEqual(stroke.h, inset.h);
+  }
+});
+
+function recordingCtx() {
+  const strokes: { style: string; lineWidth: number; x: number; y: number; w: number; h: number }[] = [];
+  let strokeStyle = "";
+  let lineWidth = 0;
+  const ctx = {
+    fillStyle: "",
+    globalAlpha: 1,
+    get strokeStyle() { return strokeStyle; },
+    set strokeStyle(value: string) { strokeStyle = String(value); },
+    get lineWidth() { return lineWidth; },
+    set lineWidth(value: number) { lineWidth = Number(value); },
+    beginPath() {},
+    moveTo() {},
+    lineTo() {},
+    stroke() {},
+    fillRect() {},
+    save() {},
+    restore() {},
+    clip() {},
+    rect() {},
+    createLinearGradient() {
+      return { addColorStop() {} };
+    },
+    strokeRect(x: number, y: number, w: number, h: number) {
+      strokes.push({ style: strokeStyle, lineWidth, x, y, w, h });
+    },
+  };
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, strokes };
+}
+
+test("已画出的凸块都在网格线上描不透明白边，含未点亮白块、亮白、绿、红", () => {
+  const cells: BlueprintCellRef[] = [
+    { col: 4, row: 8, kind: "white" },
+    { col: 5, row: 8, kind: "white" },
+    { col: 6, row: 8, kind: "green" },
+    { col: 7, row: 8, kind: "red" },
+  ];
+  resetBlueprint(1);
+  restoreBlueprintClock(clock({
+    staticCells: cells,
+    staticAge: BLUEPRINT_RAISE,
+    duration: BLUEPRINT_RAISE,
+    lit: ["5:8"],
+  }));
+  const { ctx, strokes } = recordingCtx();
+  drawBlueprint(ctx, world);
+  const blocks = blueprintBlocks(world, getBlueprintClock());
+  const tags = new Set(blocks.map((block) => `${block.kind}:${block.lit}`));
+  assert.ok(tags.has("white:false"), "unlit white");
+  assert.ok(tags.has("white:true"), "lit white");
+  assert.ok(tags.has("green:false"), "green");
+  assert.ok(tags.has("red:false"), "red");
+  assert.equal(blocks.length, 4);
+  for (const block of blocks) {
+    assert.ok(block.extend >= 0.04);
+    const expected = blueprintBlockStrokeRect(block.cell);
+    const hit = strokes.find((stroke) => stroke.x === expected.x && stroke.y === expected.y && stroke.w === expected.w && stroke.h === expected.h);
+    assert.ok(hit, `missing grid-aligned stroke for ${block.kind} lit=${block.lit}`);
+    assert.equal(hit!.style, "#ffffff");
+    assert.equal(hit!.lineWidth, 1);
+    const inset = oldInsetStrokeRect(blueprintCellPixels(block.cell).fill);
+    assert.notDeepEqual({ x: hit!.x, y: hit!.y, w: hit!.w, h: hit!.h }, inset);
+  }
+
+  // 尚未凸出到绘制阈值的格子不描边。
+  restoreBlueprintClock(clock({
+    staticCells: [{ col: 4, row: 9, kind: "white" }],
+    staticAge: 0,
+    duration: BLUEPRINT_RAISE,
+  }));
+  const flatBlocks = blueprintBlocks(world, getBlueprintClock());
+  const { ctx: flatCtx, strokes: flatStrokes } = recordingCtx();
+  drawBlueprint(flatCtx, world);
+  assert.ok(flatBlocks.length > 0);
+  for (const block of flatBlocks) {
+    assert.ok(block.extend < 0.04);
+    const expected = blueprintBlockStrokeRect(block.cell);
+    assert.equal(
+      flatStrokes.filter((stroke) => stroke.x === expected.x && stroke.y === expected.y && stroke.w === expected.w && stroke.h === expected.h).length,
+      0,
+    );
   }
 });
 
