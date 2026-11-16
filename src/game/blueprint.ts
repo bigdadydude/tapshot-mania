@@ -204,6 +204,26 @@ let clearing: BlueprintClearingCell[] = [];
 let rewards: BlueprintRewards = { base: 0, combo: 0, seconds: 0 };
 let rewardSerial = 0;
 let rewardEvents: BlueprintRewardEvent[] = [];
+/** 由引擎按模式设置。默认 true，保持经典/肉鸽与现有模块测试的三选一。 */
+let allowSeconds = true;
+
+export function setBlueprintAllowSeconds(allow: boolean) {
+  allowSeconds = Boolean(allow);
+}
+
+export function getBlueprintAllowSeconds() {
+  return allowSeconds;
+}
+
+/** 一分钟模式 HUD / 续钟分母只返回 timerMax，避免被 rewards.seconds 撑大。 */
+export function blueprintHudClockBudget(timerMax: number, rewardSeconds: number, minuteMode: boolean) {
+  return minuteMode ? timerMax : timerMax + rewardSeconds;
+}
+
+/** 一分钟模式即使收到 seconds 也不加时、不弹时钟文案。 */
+export function blueprintAppliesClockReward(minuteMode: boolean) {
+  return !minuteMode;
+}
 
 export function getBlueprintRewards(): BlueprintRewards {
   return { ...rewards };
@@ -1230,8 +1250,11 @@ function layersAt(ref: BlueprintCellRef) {
 function rewardClearedGreens(cells: readonly BlueprintCellRef[]) {
   for (const cell of uniqueCells(cells)) {
     if (!layersAt(cell).some((layer) => layer.kind === "green")) continue;
-    const choices: BlueprintRewardEvent[] = ["base", "combo", "seconds"];
-    const event = choices[Math.min(2, Math.floor(unitAt(seed, rewardSerial++, 41) * 3))]!;
+    // 一分钟模式直接从池里去掉 seconds，二项等概率；不要先三选一再丢掉。
+    const choices: BlueprintRewardEvent[] = allowSeconds
+      ? ["base", "combo", "seconds"]
+      : ["base", "combo"];
+    const event = choices[Math.min(choices.length - 1, Math.floor(unitAt(seed, rewardSerial++, 41) * choices.length))]!;
     rewards[event] += event === "base" ? 2 : event === "combo" ? 1 : 3;
     rewardEvents.push(event);
   }

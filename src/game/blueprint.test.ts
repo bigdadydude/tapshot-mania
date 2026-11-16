@@ -10,6 +10,10 @@ import {
   BLUEPRINT_KIND_WEIGHTS,
   getBlueprintRewards,
   drainBlueprintRewardEvents,
+  getBlueprintAllowSeconds,
+  setBlueprintAllowSeconds,
+  blueprintHudClockBudget,
+  blueprintAppliesClockReward,
   resetBlueprintProgress,
   BLUEPRINT_BLOCK_SIZE,
   BLUEPRINT_BOUNCE_CLEAR,
@@ -1640,4 +1644,122 @@ test("正式默认固定横线140%纵线180%，无效输入恢复所选默认", 
   assert.equal(setBlueprintFloorDensity(NaN),1.4);
   assert.equal(setBlueprintFloorSpread(NaN),1.8);
   setBlueprintFloorDensity(1);setBlueprintFloorSpread(1);
+});
+
+
+function clearIsolatedGreen(seed: number) {
+  const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
+  restoreBlueprintClock(clock({ seed, staticCells: [green], staticAge: 1 }));
+  assert.equal(touchBlueprintCell(world, 4, 8), 1);
+  return drainBlueprintRewardEvents();
+}
+
+test("一分钟 + 蓝图：多次绿消除只有 base/combo，seconds 为 0，timer 与 HUD 分母保持 60", () => {
+  const previous = getBlueprintAllowSeconds();
+  setBlueprintAllowSeconds(false);
+  try {
+    const seen = new Set<string>();
+    let eventCount = 0;
+    let grantedSeconds = 0;
+    for (let seed = 1; seed <= 80; seed++) {
+      const events = clearIsolatedGreen(seed);
+      assert.equal(events.length, 1, "每个绿块都要发出一项奖励，不能先三选一再丢掉 seconds");
+      assert.ok(events[0] === "base" || events[0] === "combo");
+      seen.add(events[0]!);
+      eventCount += events.length;
+      grantedSeconds += getBlueprintRewards().seconds;
+    }
+    assert.deepEqual([...seen].sort(), ["base", "combo"]);
+    assert.equal(eventCount, 80);
+    assert.equal(grantedSeconds, 0);
+    assert.equal(getBlueprintRewards().seconds, 0);
+
+    let timer = 60;
+    const timerMax = 60;
+    // 模拟 showBlueprintRewards：一分钟即使误收到 seconds 也不加时、不弹时钟文案。
+    for (const reward of ["base", "combo", "seconds"] as const) {
+      if (reward === "seconds" && !blueprintAppliesClockReward(true)) continue;
+      if (reward === "seconds") timer += 3;
+    }
+    assert.equal(timer, 60);
+    assert.equal(timerMax, 60);
+    assert.equal(blueprintHudClockBudget(timerMax, getBlueprintRewards().seconds, true), 60);
+    assert.equal(blueprintHudClockBudget(timerMax, 9, true), 60, "兜底：分母不被 rewards.seconds 撑大");
+    assert.equal(blueprintAppliesClockReward(true), false);
+  } finally {
+    setBlueprintAllowSeconds(previous);
+  }
+});
+
+test("一分钟模式红叉连带与黑洞清绿块同样不加时", () => {
+  const previous = getBlueprintAllowSeconds();
+  setBlueprintAllowSeconds(false);
+  try {
+    const red: BlueprintCellRef = { col: 5, row: 9, kind: "red" };
+    const cross: BlueprintCellRef[] = [red, { col: 4, row: 9 }, { col: 6, row: 9, kind: "green" }, { col: 5, row: 8 }, { col: 5, row: 10 }];
+    restoreBlueprintClock(clock({ seed: 11, staticCells: cross, staticAge: 1 }));
+    assert.equal(touchBlueprintCell(world, red.col, red.row), 5);
+    const fromRed = drainBlueprintRewardEvents();
+    assert.equal(fromRed.length, 1);
+    assert.ok(fromRed[0] === "base" || fromRed[0] === "combo");
+    assert.equal(getBlueprintRewards().seconds, 0);
+
+    const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
+    restoreBlueprintClock(clock({ seed: 21, staticCells: [green], staticAge: 1 }));
+    assert.equal(consumeBlueprintLitForHole(), 0);
+    const fromHole = drainBlueprintRewardEvents();
+    assert.equal(fromHole.length, 1);
+    assert.ok(fromHole[0] === "base" || fromHole[0] === "combo");
+    assert.equal(getBlueprintRewards().seconds, 0);
+  } finally {
+    setBlueprintAllowSeconds(previous);
+  }
+});
+
+test("经典 + 蓝图：seconds 仍可发出，timer 加 3，累计进入后续续钟预算", () => {
+  const previous = getBlueprintAllowSeconds();
+  setBlueprintAllowSeconds(true);
+  try {
+    assert.equal(blueprintAppliesClockReward(false), true);
+    let secondsEvent: string | undefined;
+    let timer = 15;
+    const timerMax = 15;
+    for (let seed = 1; seed <= 40; seed++) {
+      const events = clearIsolatedGreen(seed);
+      assert.equal(events.length, 1);
+      if (events[0] === "seconds") {
+        secondsEvent = events[0];
+        if (blueprintAppliesClockReward(false)) timer += 3;
+        break;
+      }
+    }
+    assert.equal(secondsEvent, "seconds");
+    assert.equal(getBlueprintRewards().seconds, 3);
+    assert.equal(timer, 18);
+    assert.equal(blueprintHudClockBudget(timerMax, getBlueprintRewards().seconds, false), 18, "续钟预算含累计 +3");
+    assert.equal(blueprintHudClockBudget(timerMax, 6, false), 21);
+  } finally {
+    setBlueprintAllowSeconds(previous);
+  }
+});
+
+test("一分钟兜底：即使收到 seconds 也不加时、不弹时钟文案", () => {
+  assert.equal(blueprintAppliesClockReward(true), false);
+  assert.equal(blueprintAppliesClockReward(false), true);
+  assert.equal(blueprintHudClockBudget(60, 3, true), 60);
+  assert.equal(blueprintHudClockBudget(15, 3, false), 18);
+
+  let toast: string | null = null;
+  let timer = 60;
+  if (blueprintAppliesClockReward(true)) {
+    timer += 3;
+    toast = "永久时钟 +3秒";
+  }
+  assert.equal(timer, 60);
+  assert.equal(toast, null);
+
+  setBlueprintAllowSeconds(true);
+  assert.equal(getBlueprintAllowSeconds(), true);
+  resetBlueprint(1);
+  assert.equal(getBlueprintAllowSeconds(), true, "resetBlueprint 不改模式标志");
 });

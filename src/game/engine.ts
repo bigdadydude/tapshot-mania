@@ -46,7 +46,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, rainClearTraffic, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
-import { collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, type BlueprintClock } from "./blueprint";
+import { collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage, isClothNet } from "./types";
@@ -216,6 +216,7 @@ export function createGame(
   let bestRogue = save.bestRogue ?? 0;
   let playMode: PlayMode =
     save.playMode === "minute" || save.playMode === "rogue" ? save.playMode : "classic";
+  setBlueprintAllowSeconds(playMode !== "minute");
   let rogueRun: RogueRun | null = null;
   /** Active for current rogue stage only (from rest "缓时"). */
   let rogueStageDecay: number | null = null;
@@ -1348,16 +1349,26 @@ export function createGame(
     return TIMER_DECAY;
   }
 
+  function syncBlueprintClockReward() {
+    setBlueprintAllowSeconds(!isMinuteMode());
+  }
+
   function blueprintClockBudget() {
-    return timerMax + (blueprintOn() ? getBlueprintRewards().seconds : 0);
+    const seconds = blueprintOn() ? getBlueprintRewards().seconds : 0;
+    return blueprintHudClockBudget(timerMax, seconds, isMinuteMode());
   }
 
   function showBlueprintRewards() {
     if (!blueprintOn()) return;
     const events = drainBlueprintRewardEvents();
+    const grantClock = blueprintAppliesClockReward(isMinuteMode());
     for (const reward of events) {
       // Adding time raises current remaining time too, without resetting the running clock.
-      if (reward === "seconds" && !buzzer && !timeUp) timer += 3 * hackerClockScale(hackerAwaken, hackerSkillMakes);
+      if (reward === "seconds") {
+        // 一分钟模式兜底：即使收到 seconds 也不加时、不弹时钟文案。
+        if (!grantClock) continue;
+        if (!buzzer && !timeUp) timer += 3 * hackerClockScale(hackerAwaken, hackerSkillMakes);
+      }
       const text = reward === "base" ? "永久基础 +2" : reward === "combo" ? "每球连击 +1" : "永久时钟 +3秒";
       callouts.push({ text, x:ball.x, y:ball.y-ball.r*2.4, life:1.3, max:1.3, kind:"tag" });
     }
@@ -3091,6 +3102,7 @@ export function createGame(
   }
 
   function beginPlay() {
+    syncBlueprintClockReward();
     birdBaseBonus = 0;
     birds = createBirds();
     traffic = createTraffic();
@@ -4660,6 +4672,7 @@ export function createGame(
   }
 
   function goTitle() {
+    syncBlueprintClockReward();
     birdBaseBonus = 0;
     birds = createBirds();
     traffic = createTraffic();
@@ -4832,6 +4845,7 @@ export function createGame(
         if (balanceLocked()) return;
         if (cmd.mode !== "classic" && cmd.mode !== "minute" && cmd.mode !== "rogue") return;
         playMode = cmd.mode;
+        syncBlueprintClockReward();
         persist();
         if (!devOn) enterSandbox();
         else {
@@ -4856,6 +4870,7 @@ export function createGame(
       case "rogueTool": {
         if (!devOn) enterSandbox();
         playMode = "rogue";
+        syncBlueprintClockReward();
         persist();
         if (!rogueRun) {
           rogueRun = createRogueRun();
@@ -4960,6 +4975,7 @@ export function createGame(
       case "rogueFuse": {
         if (!devOn) enterSandbox();
         playMode = "rogue";
+        syncBlueprintClockReward();
         persist();
         if (!rogueRun) {
           rogueRun = createRogueRun();
@@ -5136,6 +5152,7 @@ export function createGame(
         }
         // Start the selected ball as-is — Classic runs feed B; specials feed R0/R1.
         playMode = "minute";
+        syncBlueprintClockReward();
         applyBall(testBall);
         if (testBall === baselineBall) balanceSkillOn = true;
         beginPlay();
@@ -5174,6 +5191,7 @@ export function createGame(
           recordBalanceTrial("retry");
         }
         playMode = "minute";
+        syncBlueprintClockReward();
         beginPlay();
         hint = false;
         emitHud();
@@ -7881,6 +7899,7 @@ export function createGame(
       if (mode !== "classic" && mode !== "minute" && mode !== "rogue") return;
       if (playMode === mode) return;
       playMode = mode;
+      syncBlueprintClockReward();
       if (phase === "title" || phase === "over") {
         timerMax = timerBudget();
         timer = hackerClockBudget();
@@ -8082,6 +8101,7 @@ export function createGame(
     /** Dev: jump to stage-5 clear settle for UI QA. */
     forceRogueClearSettle() {
       playMode = "rogue";
+      syncBlueprintClockReward();
       rogueRun = createRogueRun();
       rogueRun.stage = ROGUE_CAMPAIGN_STAGES;
       rogueRun.target = 200;
