@@ -437,8 +437,10 @@ export function restoreBlueprintClock(next: BlueprintClock) {
   if (next.layerStateVersion !== 1) {
     // 旧坐标快照无法恢复所属层：只迁移给该格最高的非黑层，不复制给两层。
     for (const key of lit) {
-      const top = topLayerAtKey(key);
-      if (top && blueprintBlockKind(top.cell) !== "black") top.cell.lit = true;
+      const top = blueprintTopLayer(liveLayerEntries().filter((layer) => (
+        cellKey(layer.cell) === key && blueprintBlockKind(layer.cell) !== "black"
+      )));
+      if (top) top.cell.lit = true;
     }
   }
   pendingBonus = finiteBonus(next.pendingBonus);

@@ -279,3 +279,58 @@ test("消除动画不是叠亮来源，也不遮挡新到同格的live层能力"
   tick(); tick();
   assert.deepEqual(events(), []);
 });
+
+
+test("旧坐标快照：移动黑覆盖固定white时，亮迁移给底层固定white", () => {
+  load([at(5, 9)], dyn([at(5, 9, "black")]), { layerStateVersion: undefined, lit: ["5:9"] });
+  const restored = getBlueprintClock();
+  assert.deepEqual(restored.lit, ["5:9"]);
+  assert.equal(restored.staticCells[0]!.lit, true);
+  assert.equal(restored.dynamic!.cells[0]!.lit, undefined);
+  assert.deepEqual(events(), []);
+});
+
+test("旧坐标快照：固定黑覆盖移动white时，亮迁移给底层移动white", () => {
+  load([at(5, 9, "black")], dyn([at(5, 9)]), { layerStateVersion: undefined, lit: ["5:9"] });
+  const restored = getBlueprintClock();
+  assert.deepEqual(restored.lit, ["5:9"]);
+  assert.equal(restored.dynamic!.cells[0]!.lit, true);
+  assert.equal(restored.staticCells[0]!.lit, undefined);
+  assert.deepEqual(events(), []);
+});
+
+test("旧坐标快照：全黑叠层无可迁移层，不点亮黑", () => {
+  load([at(5, 9, "black")], dyn([at(5, 9, "black")]), { layerStateVersion: undefined, lit: ["5:9"] });
+  const restored = getBlueprintClock();
+  assert.deepEqual(restored.lit, []);
+  assert.equal(restored.staticCells[0]!.lit, undefined);
+  assert.equal(restored.dynamic!.cells[0]!.lit, undefined);
+  assert.deepEqual(events(), []);
+});
+
+test("旧坐标快照：非黑候选仍按原四档优先级，只迁移给一层", () => {
+  for (const [fixedKind, movingKind, expectedMoving] of [
+    ["white", "white", true], ["green", "white", false], ["green", "red", true],
+  ] as const) {
+    load([at(5, 9, fixedKind)], dyn([at(5, 9, movingKind)]), { layerStateVersion: undefined, lit: ["5:9"] });
+    const restored = getBlueprintClock();
+    assert.equal(restored.staticCells[0]!.lit ?? false, !expectedMoving);
+    assert.equal(restored.dynamic!.cells[0]!.lit ?? false, expectedMoving);
+    assert.equal(live().filter((cell) => cell.lit).length, 1);
+    assert.deepEqual(events(), []);
+  }
+});
+
+test("现代逐层快照不走旧坐标迁移，不补亮底层或改写触发标记", () => {
+  for (const movingBlack of [true, false]) {
+    const white = { ...at(5, 9, "white", true), overlapSuppressed: true };
+    load([movingBlack ? white : at(5, 9, "black")], dyn([movingBlack ? at(5, 9, "black") : white]));
+    const saved = getBlueprintClock();
+    restoreBlueprintClock(saved);
+    assert.deepEqual(getBlueprintClock(), saved);
+    assert.deepEqual(events(), []);
+  }
+  load([at(5, 9)], dyn([at(5, 9, "black")]), { layerStateVersion: 1, lit: ["5:9"] });
+  assert.deepEqual(getBlueprintClock().lit, [], "modern coordinate projection is not ownership truth");
+  assert.equal(getBlueprintClock().staticCells[0]!.lit, undefined);
+});
