@@ -46,7 +46,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, rainClearTraffic, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
-import { collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, BLUEPRINT_CLOCK_SECONDS, type BlueprintClock } from "./blueprint";
+import { collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, blueprintRewardToast, BLUEPRINT_CLOCK_SECONDS, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage, isClothNet } from "./types";
@@ -1369,7 +1369,8 @@ export function createGame(
         if (!grantClock) continue;
         if (!buzzer && !timeUp) timer += BLUEPRINT_CLOCK_SECONDS * hackerClockScale(hackerAwaken, hackerSkillMakes);
       }
-      const text = reward === "base" ? "永久基础 +2" : reward === "combo" ? "每球连击 +1" : `永久时钟 +${BLUEPRINT_CLOCK_SECONDS}秒`;
+      const text = blueprintRewardToast(reward);
+      if (!text) continue;
       callouts.push({ text, x:ball.x, y:ball.y-ball.r*2.4, life:1.3, max:1.3, kind:"tag" });
     }
     if (events.length) emitHud();
@@ -7081,14 +7082,17 @@ export function createGame(
     }
     if (hackerEffect === "lock") gain *= 2;
     const banked = gain;
-    score += banked;
     // 黄标签只保留最后一条，单独的「清格 +N」会被同帧「空心球」盖掉。清格分并进主飘字。
     let rowBonus = 0;
+    let payout = banked;
+    let scoreDoubled = false;
     if (blueprintOn() && !ghost) {
       const settled = settleBlueprintBasket(gain, true);
       rowBonus = settled.bonus;
-      score += rowBonus;
+      payout = settled.shown;
+      scoreDoubled = settled.doubled === true;
     }
+    score += payout;
     if(!ghost && isSuper()) superScore(superBall,superShieldScore);
     if (!ghost && balanceSession) {
       const plainCore = bunshinGhost || ninjaGhost ? 0 : basePart + streakPart + extra + (freed ? prisonBonus : 0) + (clutch && !ninjaGhost ? 5 : 0);
@@ -7194,7 +7198,7 @@ export function createGame(
     const hideMakeScore = (isAnti() && legacyHole()) || (ninjaGhost && gain <= 0);
     if (!hideMakeScore) {
       callouts.push({
-        text: `+${banked + rowBonus}`,
+        text: scoreDoubled ? `+${payout} ×2` : `+${payout}`,
         x: popX,
         y: popY - popInner * RIM_RY - 14,
         capY: boardTop + 8,
@@ -7231,7 +7235,8 @@ export function createGame(
       });
     }
     const clearNote = rowBonus > 0 ? `清格 +${rowBonus}` : "";
-    const tagLine = [tag, clearNote].filter(Boolean).join("  ");
+    const doubleNote = scoreDoubled ? "得分 ×2" : "";
+    const tagLine = [tag, clearNote, doubleNote].filter(Boolean).join("  ");
     if (tagLine && !hideMakeScore) {
       callouts.push({
         text: tagLine,
