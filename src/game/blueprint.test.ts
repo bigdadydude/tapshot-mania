@@ -2150,14 +2150,14 @@ test("叠层只走可清除的那一层，黑洞可以收走黑块", () => {
     dynamic: dyn({ cells: [white], stepSpan: 10 }),
     staticAge: 1,
   }));
-  // 同格有黑则整格锁定：白层可被点亮但不能按层清走。
+  // 固定彩黑优先于移动白；直接碰撞不能穿透黑把底层白点亮。
   assert.equal(touchBlueprintCell(world, 4, 8), 0);
   const after = getBlueprintClock();
   assert.ok(after.staticCells.some((cell) => cell.kind === "black" && cell.col === 4 && cell.row === 8));
   assert.equal((after.dynamic?.cells ?? []).some((cell) => cell.col === 4 && cell.row === 8 && cell.kind === "white"), true);
-  assert.equal(after.lit.includes("4:8"), true);
+  assert.equal(after.lit.includes("4:8"), false);
   assert.equal(after.pendingBonus, 0);
-  assert.equal(consumeBlueprintLitForHole(), 1);
+  assert.equal(consumeBlueprintLitForHole(), 0);
   assert.deepEqual(getBlueprintClock().staticCells, []);
   assert.equal(getBlueprintClock().dynamic, null);
 });
@@ -2573,7 +2573,7 @@ test("绿范围锁保留：锁定绿红不清不触发，只有已激活红十�
     found = true;
     assert.deepEqual(events, ["areaClear"]);
     const after = getBlueprintClock();
-    assert.deepEqual(after.staticCells, [black, lockedWhite, lockedGreen, lockedRed]);
+    assert.deepEqual(after.staticCells, [black, { ...lockedWhite, lit: true }, { ...lockedGreen, lit: true }, lockedRed]);
     assert.equal(after.pendingBonus, 1);
     assert.ok(after.lit.includes("4:8"));
     break;
@@ -2601,7 +2601,7 @@ test("绿范围激活未锁红后，十字目标豁免锁，但同波普通范�
     if (drainBlueprintRewardEvents()[0] !== "areaClear") continue;
     found = true;
     const after = getBlueprintClock();
-    assert.deepEqual(after.staticCells, [lockedArea, ...blacks]);
+    assert.deepEqual(after.staticCells, [{ ...lockedArea, lit: true }, ...blacks]);
     assert.ok(after.lit.includes("4:8"));
     assert.equal(after.pendingBonus, 4);
     break;
@@ -2880,7 +2880,8 @@ test("真实新生组按原消失式离开后，同次换批可按原概率重�
     stepBlueprint(BLUEPRINT_RAISE, true, aimAt(30), world);
     assert.equal(getBlueprintClock().dynamic?.phase, "hold");
     const old = getBlueprintClock();
-    restoreBlueprintClock({ ...old, lit: old.dynamic!.cells.map((cell) => `${cell.col}:${cell.row}`) });
+    restoreBlueprintClock({ ...old, dynamic: { ...old.dynamic!, cells: old.dynamic!.cells.map((cell) => ({ ...cell, lit: true })) } });
+    assert.equal(getBlueprintClock().lit.length, old.dynamic!.cells.length);
     stepBlueprint(0, true, aim, world);
     const next = getBlueprintClock();
     assert.equal(next.dynamic?.phase, "raise", "a new group, not retained old hold phase");

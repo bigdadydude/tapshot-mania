@@ -188,7 +188,12 @@ type Cell = Rect & { col: number; row: number };
 
 export const BLUEPRINT_SHAPES = ["line", "diag", "z", "l", "s", "u", "v", "c"] as const;
 export type BlueprintShape = (typeof BLUEPRINT_SHAPES)[number];
-export type BlueprintCellRef = { col: number; row: number; /** 旧快照缺省为 white。 */ kind?: BlueprintBlockKind };
+export type BlueprintCellRef = {
+  col: number; row: number; /** 旧快照缺省为 white。 */ kind?: BlueprintBlockKind;
+  /** 逐层亮态，随本块移动；缺省未亮。 */ lit?: boolean;
+  /** 叠亮绿已进入双轴判定，不能从普通 OR 清段旁路领奖。 */ overlapGreen?: boolean;
+  /** 转红后当前叠亮接触暂不激活；离开该接触后解除。 */ overlapSuppressed?: boolean;
+};
 export type BlueprintAim = {
   goals: number;
   ballX: number;
@@ -247,6 +252,8 @@ export type BlueprintClock = {
   duration: number;
   /** 已点亮的格子，`col:row`。只增不减，格离开场上后丢掉。 */
   lit: string[];
+  /** 1 表示 cells 内逐层亮态为真值；lit 仅为坐标兼容投影。 */
+  layerStateVersion?: 1;
   /** 清排或清列后挂着的加分。下一次进球加进得分再清零。 */
   pendingBonus: number;
   /** 正在缩回、尚未离场的清格。 */
@@ -274,6 +281,8 @@ export type BlueprintBlock = {
   col: number;
   row: number;
   dynamic: boolean;
+  /** 仅消除动画，不再参与亮态或直接触碰能力。 */
+  retracting?: boolean;
   /** 篮球踩亮后为 true。只亮不灭。 */
   lit: boolean;
   extend: number;
@@ -347,7 +356,7 @@ let aim: BlueprintAim | null = null;
 let view: View | null = null;
 
 function copyCells(list: readonly BlueprintCellRef[]) {
-  return list.map((cell) => ({ col: cell.col, row: cell.row, ...(cell.kind ? { kind: cell.kind } : {}) }));
+  return list.map((cell) => ({ ...cell }));
 }
 
 function normalizeDynamicPhase(phase: string | undefined): BlueprintDynamicPhase {
@@ -405,6 +414,7 @@ export function getBlueprintClock(): BlueprintClock {
     cycle: staticAge,
     duration: staticRaise,
     lit: [...lit],
+    layerStateVersion: 1,
     pendingBonus,
     rewards: { ...rewards },
     rewardSerial,
@@ -424,6 +434,13 @@ export function restoreBlueprintClock(next: BlueprintClock) {
   staticRaise = next.staticRaise > 0 ? next.staticRaise : next.duration > 0 ? next.duration : BLUEPRINT_RAISE;
   dynamic = next.dynamic ? copyDynamic(next.dynamic) : null;
   lit = new Set((next.lit ?? []).filter((key) => typeof key === "string" && key.includes(":")));
+  if (next.layerStateVersion !== 1) {
+    // 旧坐标快照无法恢复所属层：只迁移给该格最高的非黑层，不复制给两层。
+    for (const key of lit) {
+      const top = topLayerAtKey(key);
+      if (top && blueprintBlockKind(top.cell) !== "black") top.cell.lit = true;
+    }
+  }
   pendingBonus = finiteBonus(next.pendingBonus);
   rewards = { base: finiteBonus(next.rewards?.base), combo: finiteBonus(next.rewards?.combo), seconds: finiteBonus(next.rewards?.seconds) };
   rewardSerial = finiteBonus(next.rewardSerial);
@@ -498,35 +515,34 @@ function finiteBonus(value: number | undefined) {
   return Math.max(0, Math.floor(value ?? 0));
 }
 
-/** 点亮只保留还在场上、且仍有可清除层的格。纯黑格不保持点亮。 */
+/** 坐标亮态只是逐层状态的投影，不再作为移动/快照真值。 */
 function pruneLit() {
-  const live = new Set<string>();
-  for (const cell of staticCells) if (blueprintKindClearable(cell.kind)) live.add(cellKey(cell));
-  if (dynamic) for (const cell of dynamic.cells) if (blueprintKindClearable(cell.kind)) live.add(cellKey(cell));
-  for (const key of lit) if (!live.has(key)) lit.delete(key);
+  lit = new Set<string>();
+  for (const cell of [...staticCells, ...(dynamic?.cells ?? [])]) {
+    if (blueprintBlockKind(cell) === "black") { delete cell.lit; continue; }
+    if (cell.lit) lit.add(cellKey(cell));
+  }
 }
 
-/** 换批前记下还在场上的动态格里，哪些已经点亮。 */
-function dynamicLitKeys() {
-  const keep = new Set<string>();
-  if (!dynamic) return keep;
-  for (const cell of dynamic.cells) {
-    const key = cellKey(cell);
-    if (lit.has(key)) keep.add(key);
-  }
-  return keep;
+/** 同一选择器同时用于显示和直接触碰能力，低层不因遮挡删除。 */
+export function blueprintLayerPriority(layer: { kind?: BlueprintBlockKind; dynamic: boolean }) {
+  return (blueprintBlockKind(layer) !== "white" ? 2 : 0) + (layer.dynamic ? 1 : 0);
 }
-
-/** 新静态一律未点亮。只有换批后仍在的动态格沿用进球前的亮。 */
-function keepOnlyDynamicLit(keep: Set<string>) {
-  const next = new Set<string>();
-  if (dynamic) {
-    for (const cell of dynamic.cells) {
-      const key = cellKey(cell);
-      if (keep.has(key)) next.add(key);
-    }
+export function blueprintTopLayer<T extends { kind?: BlueprintBlockKind; dynamic: boolean }>(layers: readonly T[]): T | undefined {
+  return layers.reduce<T | undefined>((top, layer) => !top || blueprintLayerPriority(layer) > blueprintLayerPriority(top) ? layer : top, undefined);
+}
+function liveLayerEntries() {
+  return [...staticCells.map((cell) => ({ cell, dynamic: false, kind: cell.kind })),
+    ...(dynamic?.cells ?? []).map((cell) => ({ cell, dynamic: true, kind: cell.kind }))];
+}
+function topLayerAtKey(key: string) {
+  return blueprintTopLayer(liveLayerEntries().filter((layer) => cellKey(layer.cell) === key));
+}
+function lightLayersAt(ref: BlueprintCellRef, onlyWhite = false) {
+  for (const layer of layersAt(ref)) {
+    if (blueprintBlockKind(layer) !== "black" && (!onlyWhite || blueprintBlockKind(layer) === "white")) layer.lit = true;
   }
-  lit = next;
+  pruneLit();
 }
 
 export function blueprintDespawnChance(made: number) {
@@ -609,7 +625,6 @@ function trySpawnDynamic(goalsNow: number, room: number) {
 function applyGoalChange(goalsNow: number) {
   // 还没收到 world 时先别落批，等下一帧。
   if (goalsNow > 0 && !view) return;
-  const carriedLit = dynamicLitKeys();
   const beforeLocks = blueprintLockedLines();
   if (hasBatch && goalsNow !== goals) serial += 1;
   goals = goalsNow;
@@ -652,7 +667,8 @@ function applyGoalChange(goalsNow: number) {
   staticCells = batch.cells.slice(0, staticWant);
   hasBatch = true;
   // 只有原组保留才继承其点亮，新生组不能继承刚消失原组的同坐标点亮。
-  keepOnlyDynamicLit(retainedDynamic ? carriedLit : new Set());
+  pruneLit();
+  recheckOverlapActivations();
   // 只有黑锁发生变化时才补判：避免换批后把仍点亮的孤立动态格立刻清掉。
   const afterLocks = blueprintLockedLines();
   if (beforeLocks.rows.size !== afterLocks.rows.size || beforeLocks.cols.size !== afterLocks.cols.size
@@ -698,32 +714,21 @@ function stepDynamic(dt: number) {
     }
   } else if (d.phase === "cross_out") {
     if (d.age >= d.raise) {
-      const from = copyCells(d.cells);
-      const to = copyCells(d.pending);
+      const to = d.pending.map((target, i) => ({
+        ...d.cells[i]!, col: target.col, row: target.row,
+      }));
       if (!to.length) {
         dynamic = null;
         return;
       }
       dynamic = { ...d, cells: to, pending: [], phase: "cross_in", age: 0 };
-      carryDynamicLit(from, to);
+      pruneLit();
+      recheckOverlapActivations();
       recheckFieldLines();
       return;
     }
   }
   dynamic = d;
-}
-
-/** 动态格挪走时，亮跟着这块走。底下还压着的静态保持亮，不算踩灭。 */
-function carryDynamicLit(from: readonly BlueprintCellRef[], to: readonly BlueprintCellRef[]) {
-  const staying = staticKeySet();
-  const n = Math.min(from.length, to.length);
-  for (let i = 0; i < n; i++) {
-    const src = cellKey(from[i]!);
-    const dst = cellKey(to[i]!);
-    if (src === dst || !lit.has(src)) continue;
-    lit.add(dst);
-    if (!staying.has(src)) lit.delete(src);
-  }
 }
 
 function stepClearing(dt: number) {
@@ -749,6 +754,7 @@ export function stepBlueprint(
   // 黑洞存在时不换静态、不新生成动态。已在场上的照常伸缩。洞结束后进球数若已变，再按当前数补一批。
   if (!opts?.generationHold && (!hasBatch || goalsNow !== goals)) applyGoalChange(goalsNow);
   pruneLit();
+  if (playing) recheckOverlapActivations();
   if (!(dt > 0)) return;
   if (playing) {
     elapsed += dt;
@@ -1234,6 +1240,7 @@ function pushBlock(
     col: ref.col,
     row: ref.row,
     dynamic: isDynamic,
+    ...(force ? { retracting: true } : {}),
     lit: isLit,
     extend,
     cell: base,
@@ -1283,7 +1290,7 @@ export function blueprintBlocks(world: View, clock = getBlueprintClock()): Bluep
   const litKeys = new Set(clock.lit ?? []);
   const staticSeen = new Set<string>();
   for (const ref of staticList) {
-    pushBlock(blocks, world, grid, ref, staticExtend, false, staticSeen, litKeys.has(cellKey(ref)));
+    pushBlock(blocks, world, grid, ref, staticExtend, false, staticSeen, blueprintBlockKind(ref) !== "black" && (ref.lit ?? (clock.layerStateVersion !== 1 && litKeys.has(cellKey(ref)))));
   }
   const dyn = clock.dynamic;
   if (dyn?.cells?.length) {
@@ -1291,7 +1298,7 @@ export function blueprintBlocks(world: View, clock = getBlueprintClock()): Bluep
     for (const ref of blueprintDynamicDrawCells(dyn)) {
       const extend = blueprintDynamicCellExtend(dyn, ref, staticKeys);
       if (extend <= 0) continue;
-      pushBlock(blocks, world, grid, ref, extend, true, dynamicSeen, litKeys.has(cellKey(ref)));
+      pushBlock(blocks, world, grid, ref, extend, true, dynamicSeen, blueprintBlockKind(ref) !== "black" && (ref.lit ?? (clock.layerStateVersion !== 1 && litKeys.has(cellKey(ref)))));
     }
   }
   for (const cell of clock.clearing ?? []) {
@@ -1300,6 +1307,19 @@ export function blueprintBlocks(world: View, clock = getBlueprintClock()): Bluep
     pushBlock(blocks, world, grid, cell, extend, false, new Set(), true, true);
   }
   return blocks;
+}
+
+export function blueprintVisibleBlocks(world: View, clock = getBlueprintClock()) {
+  const byKey = new Map<string, BlueprintBlock[]>();
+  for (const block of blueprintBlocks(world, clock)) {
+    if (block.extend <= 0) continue;
+    const key = cellKey(block);
+    byKey.set(key, [...(byKey.get(key) ?? []), block]);
+  }
+  return [...byKey.values()].map((layers) => {
+    const live = layers.filter((layer) => !layer.retracting);
+    return blueprintTopLayer(live.length ? live : layers)!;
+  });
 }
 
 /** 清排 / 清列缩回：从开始时的高度线性收到 0，时长与动态组缩回相同。 */
@@ -1475,9 +1495,7 @@ function dropClearableLayers(keys: Set<string>) {
       dynamic = { ...dynamic, cells, pending };
     }
   }
-  for (const key of keys) {
-    if (!layersAtKey(key).some((layer) => blueprintKindClearable(layer.kind))) lit.delete(key);
-  }
+  pruneLit();
 }
 
 /** 反物质开洞：连黑块一并收走。 */
@@ -1494,7 +1512,7 @@ function dropAllLayers(keys: Set<string>) {
       dynamic = { ...dynamic, cells, pending };
     }
   }
-  for (const key of keys) lit.delete(key);
+  pruneLit();
 }
 
 function layersAtKey(key: string) {
@@ -1518,14 +1536,15 @@ function hasBlackLayer(ref: BlueprintCellRef) {
 }
 
 function alreadyRetracting(ref: BlueprintCellRef) {
-  return clearing.some((item) => item.col === ref.col && item.row === ref.row);
+  // 消除层早已从 live 层表移出；新移动到同格的层不继承旧动画的“正在缩回”。
+  return !layersAt(ref).length && clearing.some((item) => item.col === ref.col && item.row === ref.row);
 }
 
 function displayKindAt(ref: BlueprintCellRef): BlueprintBlockKind {
-  const clearable = clearableLayersAt(ref);
-  if (clearable.length) return blueprintBlockKind(clearable.at(-1));
-  const layers = layersAt(ref);
-  return layers.length ? blueprintBlockKind(layers.at(-1)) : "white";
+  const layers = liveLayerEntries().filter((layer) => (
+    cellKey(layer.cell) === cellKey(ref) && blueprintKindClearable(layer.kind)
+  ));
+  return blueprintBlockKind(blueprintTopLayer(layers)?.cell);
 }
 
 /** 红十字豁免行列锁。各方向独立延伸，遇空格或实际黑层停止；叠层只清非黑层。 */
@@ -1598,12 +1617,12 @@ function applyAreaClear(center: BlueprintCellRef) {
     if (locked) {
       // 锁定白块只点亮、不缩回；锁定绿/红不清除、不领奖、不引爆；黑块本来就不清。
       if (clearableLayersAt(neighbor).some((layer) => blueprintBlockKind(layer) === "white")) {
-        lit.add(cellKey(neighbor));
+        lightLayersAt(neighbor, true);
       }
       continue;
     }
     if (!hasClearableLayer(neighbor)) continue;
-    lit.add(cellKey(neighbor));
+    lightLayersAt(neighbor);
     if (clearableLayersAt(neighbor).some((layer) => layer.kind === "red")) reds.push(neighbor);
     else toClear.push(neighbor);
   }
@@ -1611,9 +1630,9 @@ function applyAreaClear(center: BlueprintCellRef) {
   const redTargets = uniqueCells(reds.flatMap((red) => blueprintRedCrossCells(red.col, red.row)));
   const redCleared = beginLineClear(redTargets, true, false, "redCross");
   for (const cell of toClear) {
-    if (hasClearableLayer(cell) && !alreadyRetracting(cell)) lit.add(cellKey(cell));
+    if (hasClearableLayer(cell) && !alreadyRetracting(cell)) lightLayersAt(cell);
   }
-  return redCleared + beginLineClear(toClear, true, false);
+  return redCleared + beginLineClear(toClear, true, false, "area");
 }
 
 /** 把邻格改写成红色。这是改写不是消除，锁定格也转变；新红不立刻引爆。 */
@@ -1634,7 +1653,9 @@ function paintCellRed(ref: BlueprintCellRef) {
         continue;
       }
       keptRed = true;
-      out.push({ ...cell, kind: "red" });
+      out.push(blueprintBlockKind(cell) === "red" ? cell : {
+        ...cell, kind: "red", overlapGreen: false, overlapSuppressed: true,
+      });
     }
     return out;
   };
@@ -1658,7 +1679,8 @@ function applyTurnRed(center: BlueprintCellRef) {
   for (const neighbor of blueprintTurnRedNeighbors(center.col, center.row)) {
     paintCellRed(neighbor);
   }
-  // 黑被改成红后立刻重算锁，并对已点亮且不再锁定的白块补判清段。
+  // 不从转红调用叠亮激活；重算锁并补判普通亮段。
+  pruneLit();
   return recheckFieldLines();
 }
 
@@ -1671,12 +1693,16 @@ function beginLineClear(
   cells: readonly BlueprintCellRef[],
   payPending = true,
   applyFieldEffects = true,
-  cause: "normal" | "redCross" = "normal",
+  cause: "normal" | "redCross" | "area" | "overlap" = "normal",
 ) {
   const fresh = uniqueCells(cells).filter((cell) => (
     hasClearableLayer(cell)
     && !alreadyRetracting(cell)
     && (cause === "redCross" || !blueprintCellLocked(cell.col, cell.row))
+    && (cause !== "normal" || !layersAt(cell).some((layer) => (
+      layer.kind === "green" && layer.overlapGreen && !greenOverlapReady(layer)
+    )))
+    && (cause !== "normal" || !layersAt(cell).some((layer) => layer.kind === "red" && layer.overlapSuppressed))
   ));
   if (!fresh.length) return 0;
   const { areaCenters, turnRedCenters } = rewardClearedGreens(fresh, applyFieldEffects);
@@ -1713,6 +1739,54 @@ export function consumeBlueprintLitForHole() {
   return litCount;
 }
 
+/** 绿叠亮要求当前横连续段 AND 竖连续段都亮；单格轴也包含本格。 */
+function greenOverlapReady(center: BlueprintCellRef) {
+  const field = blueprintFieldCells(getBlueprintClock());
+  const occupied = new Set(field.map(cellKey));
+  const bright = (ref: BlueprintCellRef) => !hasBlackLayer(ref) && lit.has(cellKey(ref));
+  if (!bright(center)) return false;
+  for (const { dc, dr } of BLUEPRINT_DIR_DELTA) {
+    for (let col = center.col + dc, row = center.row + dr; occupied.has(`${col}:${row}`); col += dc, row += dr) {
+      if (!bright({ col, row })) return false;
+    }
+  }
+  return true;
+}
+let checkingOverlaps = false;
+function recheckOverlapActivations() {
+  if (checkingOverlaps) return 0;
+  checkingOverlaps = true;
+  let count = 0;
+  try {
+    let progressed: boolean;
+    do {
+      progressed = false;
+      for (const ref of blueprintFieldCells(getBlueprintClock())) {
+        if (alreadyRetracting(ref)) continue;
+        const top = topLayerAtKey(cellKey(ref));
+        if (!top) continue;
+        const cell = top.cell;
+        const otherBright = layersAt(ref).some((other) => other !== cell && other.lit && blueprintBlockKind(other) !== "black");
+        if (!otherBright) delete cell.overlapSuppressed;
+        if (cell.overlapSuppressed || blueprintBlockKind(cell) === "black") continue;
+        let activated = 0;
+        if (otherBright && cell.kind === "red") {
+          activated = beginLineClear(blueprintRedCrossCells(cell.col, cell.row), true, true, "redCross");
+        } else if (cell.kind === "green") {
+          if (otherBright) { cell.lit = true; cell.overlapGreen = true; pruneLit(); }
+          if (cell.overlapGreen && !blueprintCellLocked(cell.col, cell.row) && greenOverlapReady(cell)) {
+            activated = beginLineClear([cell], true, true, "overlap");
+          }
+        }
+        count += activated;
+        progressed ||= activated > 0;
+      }
+      // 每次成功只会减少 live 层，无生成；让连带清除/解锁后的待激活绿同次补判至稳定。
+    } while (progressed);
+  } finally { checkingOverlaps = false; }
+  return count;
+}
+
 /** 落地、点亮或锁解除之后，把当前在场的每一行、每一列再判一次。锁定格不参与清段。 */
 function recheckFieldLines() {
   const clock = getBlueprintClock();
@@ -1742,18 +1816,25 @@ export function touchBlueprintCell(world: View, col: number, row: number) {
   const ref = { col, row };
   // 纯黑格只做普通碰撞：不点亮，不进入清段。
   if (!hasClearableLayer(ref)) return 0;
-  lit.add(key);
-  if (clearableLayersAt(ref).some((cell) => cell.kind === "red")) {
-    return beginLineClear(blueprintRedCrossCells(col, row), true, true, "redCross");
+  const shown = blueprintVisibleBlocks(world).find((block) => cellKey(block) === key);
+  const top = shown && liveLayerEntries().find((layer) => layer.dynamic === shown.dynamic && cellKey(layer.cell) === key);
+  if (!top || shown?.retracting || blueprintBlockKind(top.cell) === "black") return 0;
+  top.cell.lit = true;
+  pruneLit();
+  if (top.cell.kind === "red") {
+    const count = beginLineClear(blueprintRedCrossCells(col, row), true, true, "redCross");
+    return count + recheckOverlapActivations();
   }
-  if (blueprintCellLocked(col, row, clock)) return 0;
-  const field = blueprintSegmentFieldCells(clock);
+  const overlapped = recheckOverlapActivations();
+  if (!layersAt(ref).length || blueprintCellLocked(col, row)) return overlapped;
+  const field = blueprintSegmentFieldCells(getBlueprintClock());
   const cleared = uniqueCells([
     ...blueprintRowClears(row, field, lit),
     ...blueprintColClears(col, field, lit),
   ]);
-  if (!cleared.length) return 0;
-  return beginLineClear(cleared);
+  if (!cleared.length) return overlapped;
+  const count = beginLineClear(cleared);
+  return overlapped + count + recheckOverlapActivations();
 }
 
 /** 领走待领分并清零。没有挂分时返回 0。 */
@@ -2258,12 +2339,7 @@ export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View, hudBot
 }
 
 function drawBlueprintBlocks(ctx: CanvasRenderingContext2D, world: View, hudBottom: number) {
-  const clock = getBlueprintClock();
-  const blocks = blueprintBlocks(world, clock);
-  const covered = new Set((clock.dynamic?.cells ?? []).map((cell) => `${cell.col}:${cell.row}`));
-  // 重叠格只按动态组的高度画。静态那一层仍参与碰撞（取较高的），但不把组内几格衬得高低不齐。
-  const visible = blocks
-    .filter((block) => block.dynamic || !covered.has(`${block.col}:${block.row}`))
-    .sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x || Number(a.dynamic) - Number(b.dynamic));
+  const visible = blueprintVisibleBlocks(world)
+    .sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x);
   for (const block of visible) drawBlock(ctx, block, visible, hudBottom);
 }
