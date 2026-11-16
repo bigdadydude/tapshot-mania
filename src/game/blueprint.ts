@@ -26,8 +26,6 @@ export const BLUEPRINT_RAISE = 0.35;
 export const BLUEPRINT_CROSS_RAISE = 0.2;
 /** @deprecated 旧周期下限；现改用 BLUEPRINT_RAISE，保留别名以免外部旧引用断裂。 */
 export const BLUEPRINT_EXTEND_MIN = BLUEPRINT_RAISE;
-/** 从第 2 球起，按真实进球数每多一球给复数偏置加这么多，第 16 球叠到 0.9。 */
-export const BLUEPRINT_MULTI_PER_GOAL = 0.06;
 /** 进球时若场上无动态，尝试生成一组的概率。 */
 export const BLUEPRINT_DYNAMIC_SPAWN = 0.45;
 /** 进球时动态整组消失：起步概率。 */
@@ -627,7 +625,7 @@ function applyGoalChange(goalsNow: number) {
   }
   const ball = aimBall();
   const hoop = aimHoop();
-  // softMax 是静态 + 动态的合计目标；先抽一次格数，再在剩余名额里考虑动态组。
+  // softMax 只限制可抽范围，不是密度目标。先均匀抽合计格数，再扣除留下的动态占用。
   const want = Math.min(softMax, BLUEPRINT_MAX_COUNT, blueprintSampleCount(goalsNow, unitAt(seed, serial, 0)));
   if (dynamic) {
     if (unitAt(seed, serial, 9) < blueprintDespawnChance(goalsNow)) dynamic = null;
@@ -637,8 +635,8 @@ function applyGoalChange(goalsNow: number) {
     }
   }
   const reserved = dynamic ? dynamic.cells.length : 0;
-  // 已留下的动态组占用合计上限；本批抽样只填剩余名额。组本身要等消失式或超上限才走。
-  const staticWant = Math.max(0, Math.min(want, softMax) - reserved);
+  // 不补到 softMax：动态多于本次抽样时静态为 0，不强行摘掉整组；消失式不变。
+  const staticWant = Math.max(0, want - reserved);
   const batch = rollBlueprintBatch(view, { seed, serial, goals: goalsNow, ball, hoop, maxCount: staticWant, want: staticWant });
   staticCells = batch.cells.slice(0, staticWant);
   if (!dynamic && want > staticCells.length && goalsNow >= 3) {
@@ -890,7 +888,7 @@ export function blueprintQuota(requested: number) {
 /**
  * 本批可能生成的格数上限（静态 + 动态合计）。
  * 前 3 个实体进球（actual 0–2，含开局）为 0；之后每 3 球 +1，第 30 球起封顶 10。
- * 抽样仍用幂偏置，偏小值更常见，随进球略抬高，不提前顶满。
+ * 上限只决定抽样范围，不是后期密度目标；范围内各整数等概率。
  */
 export function blueprintCountSoftMax(made: number) {
   const actual = finiteGoals(made);
@@ -899,15 +897,12 @@ export function blueprintCountSoftMax(made: number) {
 }
 
 export function blueprintSampleCount(made: number, roll: number) {
-  const actual = finiteGoals(made);
-  const softMax = blueprintCountSoftMax(actual);
+  const softMax = blueprintCountSoftMax(made);
   if (softMax <= 0) return 0;
   if (softMax === 1) return 1;
-  const bias = Math.min(0.9, (actual - 1) * BLUEPRINT_MULTI_PER_GOAL);
-  const p = Math.max(0.28, 1 - bias);
+  // 随机输入通常在 [0,1)，仍容忍 1 / 越界值；非有限输入沿用 0 的安全回退。
   const t = Math.min(1, Math.max(0, Number.isFinite(roll) ? roll : 0));
-  const u = Math.pow(t, p);
-  return Math.max(1, Math.min(softMax, 1 + Math.floor(u * softMax)));
+  return Math.min(softMax, 1 + Math.floor(t * softMax));
 }
 
 /** @deprecated 旧时长区间；现一批保持到下一次进球，升起用 BLUEPRINT_RAISE。 */
