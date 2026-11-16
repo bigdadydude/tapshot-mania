@@ -46,7 +46,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, rainClearTraffic, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
-import { collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, type BlueprintClock } from "./blueprint";
+import { collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, BLUEPRINT_CLOCK_SECONDS, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage, isClothNet } from "./types";
@@ -1367,9 +1367,9 @@ export function createGame(
       if (reward === "seconds") {
         // 一分钟模式兜底：即使收到 seconds 也不加时、不弹时钟文案。
         if (!grantClock) continue;
-        if (!buzzer && !timeUp) timer += 3 * hackerClockScale(hackerAwaken, hackerSkillMakes);
+        if (!buzzer && !timeUp) timer += BLUEPRINT_CLOCK_SECONDS * hackerClockScale(hackerAwaken, hackerSkillMakes);
       }
-      const text = reward === "base" ? "永久基础 +2" : reward === "combo" ? "每球连击 +1" : "永久时钟 +3秒";
+      const text = reward === "base" ? "永久基础 +2" : reward === "combo" ? "每球连击 +1" : `永久时钟 +${BLUEPRINT_CLOCK_SECONDS}秒`;
       callouts.push({ text, x:ball.x, y:ball.y-ball.r*2.4, life:1.3, max:1.3, kind:"tag" });
     }
     if (events.length) emitHud();

@@ -89,6 +89,9 @@ export const BLUEPRINT_BLUE = "#11448f";
 /** 可调的生成权重；颜色与奖励只使用快照中的 seed / serial。 */
 export const BLUEPRINT_KIND_WEIGHTS = { white: 0.8, green: 0.12, red: 0.08 } as const;
 export const BLUEPRINT_LIT_RGB = "255, 255, 255";
+export const BLUEPRINT_RED_RGB = "217, 0, 27";
+/** 经典 / 肉鸽绿块抽到时钟奖时的加时额度（秒）。一分钟模式不发放此项。 */
+export const BLUEPRINT_CLOCK_SECONDS = 1;
 export type BlueprintBlockKind = "white" | "green" | "red";
 export type BlueprintRewardEvent = "base" | "combo" | "seconds";
 export type BlueprintRewards = { base: number; combo: number; seconds: number };
@@ -1255,7 +1258,7 @@ function rewardClearedGreens(cells: readonly BlueprintCellRef[]) {
       ? ["base", "combo", "seconds"]
       : ["base", "combo"];
     const event = choices[Math.min(choices.length - 1, Math.floor(unitAt(seed, rewardSerial++, 41) * choices.length))]!;
-    rewards[event] += event === "base" ? 2 : event === "combo" ? 1 : 3;
+    rewards[event] += event === "base" ? 2 : event === "combo" ? 1 : BLUEPRINT_CLOCK_SECONDS;
     rewardEvents.push(event);
   }
 }
@@ -1776,12 +1779,9 @@ function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock, others:
     paintShadow(ctx, shadow, clipped, extend);
   }
   if (block.lit || block.kind !== "white") {
-    const rgb = block.kind === "green" ? "76, 230, 133" : block.kind === "red" ? "255, 83, 92" : BLUEPRINT_LIT_RGB;
+    const rgb = block.kind === "green" ? "76, 230, 133" : block.kind === "red" ? BLUEPRINT_RED_RGB : BLUEPRINT_LIT_RGB;
     ctx.fillStyle = `rgba(${rgb}, ${(block.lit ? 0.55 : 0.35) + 0.4 * Math.min(1, extend)})`;
     ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.96)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(fill.x + 1.5, fill.y + 1.5, Math.max(0, fill.w - 3), Math.max(0, fill.h - 3));
   } else {
     ctx.fillStyle = `rgba(236, 244, 255, ${blueprintFillAlpha(extend)})`;
     ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
