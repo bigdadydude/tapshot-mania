@@ -2,6 +2,7 @@ import { HOOP_HOLD, hoopRetirementDone, stepHoopRetirement } from "./hoop-retire
 import { stepTrainSmoke } from "./train-smoke";
 import { createAntiRecovery, launchAntiRecovery, scoreAntiRecovery, stepAntiRecovery, antiRecoveryIgnoresHoops, type AntiRecovery } from "./anti-recovery";
 import { BUZZER_WINDOW, BUZZER_SPEED, hasBuzzerChance } from "./buzzer";
+import { buzzerRejectsTap, champClutchAppliesHalfClock, isChampClutchWindow } from "./champ-clutch";
 import { miniMeStreakPerStack, streakAfterMake } from "./make-streak";
 import { touchesAntimatter } from "./antimatter-pickup";
 import { getTrainTunnel, restoreTrainTunnel, stepTrainTunnel, tunnelPassing, tunnelReserved, tunnelHoopMin, tunnelGeometry, collideTunnel } from "./train-tunnel.ts";
@@ -4197,9 +4198,10 @@ export function createGame(
     if (stageMod.holdsBall?.()) return false;
     const heroClutch =
       isRogueMode() && rogueRun && hasHeroMoment(rogueRun) && (buzzer || timeUp);
-    const champClutch = isChamp() && buzzer && buzzerTimer > 0;
-    if (champClutch && champClutchControlled) return false;
-    if ((buzzer || timeUp) && !heroClutch && !champClutch) return false;
+    const champClutch = isChampClutchWindow(isChamp(), buzzer, buzzerTimer);
+    // Count limit removed: champClutchControlled still marks "operated" for half-clock,
+    // but must not reject later taps in this window.
+    if (buzzerRejectsTap({ buzzer, timeUp, heroClutch: Boolean(heroClutch), champClutch })) return false;
     if (tapLock > 0) return false;
     if (ballHidden() && !onApproachSide() && !stageMod.allowHiddenTap?.()) return false;
     if (shotOpen && !shotMade && !shotMissed) {
@@ -6786,7 +6788,12 @@ export function createGame(
     const clutch = !ghost && buzzer;
     const finalMinuteMake = clutch && isMinuteMode();
     const champReward = clutch && isChamp() && !isMinuteMode();
-    const champClockPenalty = champReward && champClutchControlled;
+    const champClockPenalty = champClutchAppliesHalfClock({
+      clutchMake: clutch,
+      isChamp: isChamp(),
+      isMinuteMode: isMinuteMode(),
+      champClutchControlled,
+    });
     const scoredHoop = opts?.at ?? hoop;
     if (!ghost) {
       if ("net" in scoredHoop) (scoredHoop as Hoop).comboScored = true;

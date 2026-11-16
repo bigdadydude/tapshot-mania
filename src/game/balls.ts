@@ -228,7 +228,7 @@ export const BALLS: BallKit[] = [
   {
     id: "champ",
     name: "冠军球",
-    skill: "每次绝杀5秒内仅可操作1次；绝杀进球后下一球×2；若操作过，下一钟减半；奖励不叠加；1分钟仅终局绝杀可操作1次",
+    skill: "每次绝杀开窗5秒；绝杀进球后下一球×2；若操作过，下一钟减半；奖励不叠加",
     heat: false,
     champ: true,
     wrap: "ground",
