@@ -1886,6 +1886,8 @@ export function collideBlueprint(
   prevY: number,
   blockImpact?: (nx: number, ny: number) => boolean,
   clock?: BlueprintClock,
+  /** 玻璃球复用地面有效法向反弹（含静止阈值）；其它球缺省走原凸块响应。 */
+  normalRebound?: (incomingNormalSpeed: number) => number,
 ) {
   const dx = ball.x - prevX;
   const dy = ball.y - prevY;
@@ -1926,14 +1928,16 @@ export function collideBlueprint(
   ball.y = y;
   const vn = ball.vx * hit.nx + ball.vy * hit.ny;
   if (vn < 0) {
-    ball.vx -= BLUEPRINT_BOUNCE * vn * hit.nx;
-    ball.vy -= BLUEPRINT_BOUNCE * vn * hit.ny;
+    const impulse = normalRebound ? -vn + normalRebound(-vn) : -BLUEPRINT_BOUNCE * vn;
+    ball.vx += impulse * hit.nx;
+    ball.vy += impulse * hit.ny;
   }
   const vnOut = ball.vx * hit.nx + ball.vy * hit.ny;
   const embedded = hit.t === 0 && hit.depth > 0.5;
   const landedOnTop = hit.ny < -0.5;
   const escape = topEscapeSpeed(world);
-  if ((vn < 0 && landedOnTop) || embedded) {
+  // 地面响应不能再被普通凸块的最小弹起/侧滑助推覆盖（玻璃默认地面恢复系数为 0）。
+  if (!normalRebound && ((vn < 0 && landedOnTop) || embedded)) {
     if (vnOut < escape) {
       const add = escape - vnOut;
       ball.vx += add * hit.nx;

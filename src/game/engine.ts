@@ -1,3 +1,4 @@
+import { floorRestitution, floorReboundSpeed } from "./floor-response";
 import { HOOP_HOLD, hoopRetirementDone, stepHoopRetirement } from "./hoop-retirement";
 import { stepTrainSmoke } from "./train-smoke";
 import { createAntiRecovery, launchAntiRecovery, scoreAntiRecovery, stepAntiRecovery, antiRecoveryIgnoresHoops, type AntiRecovery } from "./anti-recovery";
@@ -1653,23 +1654,20 @@ export function createGame(
     const ballK = pMul("ball");
     const floorK = pMul("floor");
     const hoopK = pMul("hoop");
-    const raw =
-      kind === "floorHi"
-        ? 0.7 * ballK * floorK
-        : kind === "floorLo"
-          ? 0.64 * ballK * floorK
-          : kind === "rim"
-            ? 0.56 * ballK * hoopK
-            : 0.76 * ballK * hoopK;
-    // Floor must stay < ~0.88 or fallBoost (1.28g down) pumps energy each bounce.
-    const cap = kind === "floorHi" || kind === "floorLo" ? 0.84 : 0.95;
-    return Math.max(0, Math.min(cap, raw));
+    if (kind === "floorHi" || kind === "floorLo") return floorRestitution(kind, ballK, floorK);
+    const raw = kind === "rim" ? 0.56 * ballK * hoopK : 0.76 * ballK * hoopK;
+    return Math.max(0, Math.min(0.95, raw));
   }
 
   function mazeRestitution(impact: number, _base: number) {
     // This ball rolls on the whole tilted court. Contacts must stay lively even
     // at low speed, then approach a hard-board rebound as impact increases.
     return clamp(0.68 + Math.min(0.24, impact / 1500), 0.68, 0.92);
+  }
+
+  /** 使用当前有效物理倍率及既有地面修正；玻璃凸块只借用法向响应。 */
+  function floorRebound(incoming: number) {
+    return floorReboundSpeed(incoming, bounceRest, isMaze() ? mazeRestitution : undefined);
   }
 
   function shotSide(): -1 | 1 {
@@ -5856,7 +5854,12 @@ export function createGame(
       if (!hackerScripted && blueprintOn() && quantumTunnelLeft <= 0) {
         const incomingVx = ball.vx;
         const incomingVy = ball.vy;
-        if (collideBlueprint(world, ball, prevBallX, prevBallY, isSuper() ? (nx, ny) => superCancelsSolid(nx, ny) : undefined)) {
+        if (collideBlueprint(
+          world, ball, prevBallX, prevBallY,
+          isSuper() ? (nx, ny) => superCancelsSolid(nx, ny) : undefined,
+          undefined,
+          isGlass() ? floorRebound : undefined,
+        )) {
           vectorCollision(incomingVx, incomingVy);
           shotAirborne = true;
           prevBallX = ball.x;
@@ -6660,9 +6663,7 @@ export function createGame(
       if (dmg > 0) hurtGlass(dmg, ball.x, ball.y - ball.r * 2.2);
     }
     if (incoming > 40) {
-      const baseRest = bounceRest(incoming > 140 ? "floorHi" : "floorLo");
-      const rest = isMaze() ? mazeRestitution(incoming, baseRest) : baseRest;
-      const rebound = incoming * rest;
+      const rebound = floorRebound(incoming);
       if (rebound > 40) {
         if (phase !== "title") audio.bounce(Math.min(1, incoming / 900));
         ball.vy = -rebound;
