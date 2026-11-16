@@ -1526,17 +1526,20 @@ function displayKindAt(ref: BlueprintCellRef): BlueprintBlockKind {
   return layers.length ? blueprintBlockKind(layers.at(-1)) : "white";
 }
 
-/** 以红块为中心的横竖连续段。遇空格、黑块或锁定格停止，不跨空挡，也不清除锁定格。 */
+/** 红十字豁免行列锁。各方向独立延伸，遇空格或实际黑层停止；叠层只清非黑层。 */
 export function blueprintRedCrossCells(col: number, row: number) {
-  const clock = getBlueprintClock();
   const cross: BlueprintCellRef[] = [{ col, row }];
+  // 触发格自身叠黑时只清它的非黑层，不穿过同格黑层向外传播。
+  if (hasBlackLayer({ col, row })) return cross;
   for (const { dc, dr } of BLUEPRINT_DIR_DELTA) {
     for (let c = col + dc, r = row + dr; ; c += dc, r += dr) {
       const ref = { col: c, row: r };
       const layers = layersAt(ref);
       if (!layers.length) break;
-      // 有黑的行/列上所有格都锁定：该格不清并停止延伸。
-      if (hasBlackLayer(ref) || blueprintCellLocked(c, r, clock)) break;
+      if (hasBlackLayer(ref)) {
+        if (hasClearableLayer(ref)) cross.push(ref);
+        break;
+      }
       cross.push(ref);
     }
   }
@@ -1602,13 +1605,13 @@ function applyAreaClear(center: BlueprintCellRef) {
     if (clearableLayersAt(neighbor).some((layer) => layer.kind === "red")) reds.push(neighbor);
     else toClear.push(neighbor);
   }
-  for (const red of reds) {
-    if (blueprintCellLocked(red.col, red.row, clock)) continue;
-    toClear.push(...blueprintRedCrossCells(red.col, red.row));
+  // 先固定这一波的十字路径。只有红爆目标豁免锁，普通范围目标仍走默认锁过滤。
+  const redTargets = uniqueCells(reds.flatMap((red) => blueprintRedCrossCells(red.col, red.row)));
+  const redCleared = beginLineClear(redTargets, true, false, "redCross");
+  for (const cell of toClear) {
+    if (hasClearableLayer(cell) && !alreadyRetracting(cell)) lit.add(cellKey(cell));
   }
-  if (!toClear.length) return 0;
-  for (const cell of toClear) lit.add(cellKey(cell));
-  return beginLineClear(toClear, true, false);
+  return redCleared + beginLineClear(toClear, true, false);
 }
 
 /** 把邻格改写成红色。这是改写不是消除，锁定格也转变；新红不立刻引爆。 */
@@ -1662,11 +1665,16 @@ export function applyBlueprintTurnRed(col: number, row: number) {
   return applyTurnRed({ col, row });
 }
 
-function beginLineClear(cells: readonly BlueprintCellRef[], payPending = true, applyFieldEffects = true) {
+function beginLineClear(
+  cells: readonly BlueprintCellRef[],
+  payPending = true,
+  applyFieldEffects = true,
+  cause: "normal" | "redCross" = "normal",
+) {
   const fresh = uniqueCells(cells).filter((cell) => (
     hasClearableLayer(cell)
     && !alreadyRetracting(cell)
-    && !blueprintCellLocked(cell.col, cell.row)
+    && (cause === "redCross" || !blueprintCellLocked(cell.col, cell.row))
   ));
   if (!fresh.length) return 0;
   const { areaCenters, turnRedCenters } = rewardClearedGreens(fresh, applyFieldEffects);
@@ -1719,7 +1727,7 @@ function recheckFieldLines() {
  * 篮球踩到已凸出的格就点亮。已亮再踩无事。
  * 四向都没有邻块时，点亮就缩回这一格。有邻块则要所在横段或竖段全部点亮，才整段缩回。
  * 同一格同时属于刚触发的行和列时只缩一次、只计一次。
- * 锁定行/列可以点亮但不能消除：踩锁定绿/红不领奖、不引爆。
+ * 锁定行/列普通清段、踩绿仍受锁；实体碰撞红块先触发十字，红爆豁免行列锁。
  * 返回本次开始缩回的格数。
  */
 export function touchBlueprintCell(world: View, col: number, row: number) {
@@ -1733,10 +1741,10 @@ export function touchBlueprintCell(world: View, col: number, row: number) {
   // 纯黑格只做普通碰撞：不点亮，不进入清段。
   if (!hasClearableLayer(ref)) return 0;
   lit.add(key);
-  if (blueprintCellLocked(col, row, clock)) return 0;
   if (clearableLayersAt(ref).some((cell) => cell.kind === "red")) {
-    return beginLineClear(blueprintRedCrossCells(col, row));
+    return beginLineClear(blueprintRedCrossCells(col, row), true, true, "redCross");
   }
+  if (blueprintCellLocked(col, row, clock)) return 0;
   const field = blueprintSegmentFieldCells(clock);
   const cleared = uniqueCells([
     ...blueprintRowClears(row, field, lit),

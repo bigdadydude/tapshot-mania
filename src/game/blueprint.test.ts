@@ -2122,18 +2122,20 @@ test("黑块：踩亮/清段/8格/红十字都清不掉，并截断连续段", (
   assert.ok(mid.staticCells.some((cell) => cell.col === 6 && cell.row === 9));
   assert.equal(mid.lit.includes("4:9"), true);
   assert.equal(mid.pendingBonus, 0);
+  assert.equal(touchBlueprintCell(world, 6, 9), 0);
+  assert.equal(getBlueprintClock().pendingBonus, 0, "both lit whites remain row-locked");
 
   const red: BlueprintCellRef = { col: 5, row: 8, kind: "red" };
   const beyond: BlueprintCellRef = { col: 5, row: 10 };
   restoreBlueprintClock(clock({ staticCells: [red, black, beyond], staticAge: 1 }));
-  // 触发红自己就在锁定列上，这次触发无效、红留下。
+  // 触发红在锁定列上仍引爆，但实际黑块阻挡延伸。
   assert.equal(blueprintCellLocked(5, 8), true);
   const cross = blueprintRedCrossCells(5, 8);
   assert.ok(!cross.some((cell) => cell.col === 5 && cell.row === 9));
   assert.ok(!cross.some((cell) => cell.col === 5 && cell.row === 10));
-  assert.equal(touchBlueprintCell(world, 5, 8), 0);
+  assert.equal(touchBlueprintCell(world, 5, 8), 1);
   const afterRed = getBlueprintClock();
-  assert.ok(afterRed.staticCells.some((cell) => cell.col === 5 && cell.row === 8 && cell.kind === "red"));
+  assert.ok(!afterRed.staticCells.some((cell) => cell.col === 5 && cell.row === 8 && cell.kind === "red"));
   assert.ok(afterRed.staticCells.some((cell) => cell.col === 5 && cell.row === 9 && cell.kind === "black"));
   assert.ok(afterRed.staticCells.some((cell) => cell.col === 5 && cell.row === 10));
 });
@@ -2339,17 +2341,17 @@ test("行列锁：有黑的行和列可点亮不可清除，未锁定两侧可�
   assert.ok(!getBlueprintClock().staticCells.some((cell) => cell.col === 4 && cell.row === 8));
   assert.equal(touchBlueprintCell(world, 6, 8), 1);
   assert.ok(!getBlueprintClock().staticCells.some((cell) => cell.col === 6 && cell.row === 8));
-  // 踩锁定绿 / 锁定红无效。
+  // 踩锁定绿仍无效；红块豁免锁。
   const pending = getBlueprintClock().pendingBonus;
   assert.equal(touchBlueprintCell(world, 6, 9), 0);
   assert.ok(getBlueprintClock().staticCells.some((cell) => cell.col === 6 && cell.row === 9 && cell.kind === "green"));
   assert.deepEqual(drainBlueprintRewardEvents(), []);
-  assert.equal(touchBlueprintCell(world, 5, 7), 0);
-  assert.ok(getBlueprintClock().staticCells.some((cell) => cell.col === 5 && cell.row === 7 && cell.kind === "red"));
-  assert.equal(getBlueprintClock().pendingBonus, pending);
+  assert.equal(touchBlueprintCell(world, 5, 7), 2);
+  assert.ok(!getBlueprintClock().staticCells.some((cell) => cell.col === 5 && cell.row === 7 && cell.kind === "red"));
+  assert.equal(getBlueprintClock().pendingBonus, pending + 2);
 });
 
-test("范围消除遇到锁定格只点亮不清除；红十字遇锁停止", () => {
+test("范围消除仍受锁；红十字穿过仅被远处黑锁住的目标", () => {
   const black: BlueprintCellRef = { col: 3, row: 9, kind: "black" };
   const center: BlueprintCellRef = { col: 5, row: 8, kind: "green" };
   const lockedWhite: BlueprintCellRef = { col: 4, row: 9 };
@@ -2400,14 +2402,14 @@ test("范围消除遇到锁定格只点亮不清除；红十字遇锁停止", ()
   }));
   const cross = blueprintRedCrossCells(7, 8);
   assert.ok(cross.some((cell) => cell.col === 6 && cell.row === 8));
-  assert.ok(!cross.some((cell) => cell.col === 5 && cell.row === 8), "stops at locked cell");
-  assert.ok(!cross.some((cell) => cell.col === 4 && cell.row === 8));
+  assert.ok(cross.some((cell) => cell.col === 5 && cell.row === 8), "row/col lock is not a physical black");
+  assert.ok(cross.some((cell) => cell.col === 4 && cell.row === 8));
   touchBlueprintCell(world, 7, 8);
   const after = getBlueprintClock();
   assert.ok(!after.staticCells.some((cell) => cell.col === 7 && cell.row === 8 && cell.kind === "red"));
   assert.ok(!after.staticCells.some((cell) => cell.col === 6 && cell.row === 8));
-  assert.ok(after.staticCells.some((cell) => cell.col === 5 && cell.row === 8), "locked arm stays");
-  assert.ok(after.staticCells.some((cell) => cell.col === 4 && cell.row === 8), "beyond lock stays");
+  assert.ok(!after.staticCells.some((cell) => cell.col === 5 && cell.row === 8), "locked arm clears in red cross");
+  assert.ok(!after.staticCells.some((cell) => cell.col === 4 && cell.row === 8), "path extends beyond lock");
 });
 
 test("动态黑搬走后锁跟随；开洞仍能收黑", () => {
@@ -2483,4 +2485,141 @@ test("actual < 9 清绿不抽奖；一分钟任何时期都不抽 seconds；27 �
     assert.notEqual(events[0], "areaClear");
     assert.notEqual(events[0], "turnRed");
   }
+});
+
+
+/** 从上方实体撞击指定凸块，覆盖 collideBlueprint → touch → beginLineClear → dropClearableLayers。 */
+function collideRedCell(col: number, row: number) {
+  const block = blueprintBlocks(world).find((cell) => cell.col === col && cell.row === row && cell.solid)!;
+  assert.ok(block);
+  const x = block.cell.x + block.cell.w / 2;
+  const y = block.cell.y + 2;
+  const ball = { x, y, vx: 0, vy: 500, r: 3 };
+  assert.equal(collideBlueprint(world, ball, x, block.cell.y - 5), true);
+}
+
+test("红实体碰撞豁免行/列黑锁：红—白—黑—白只清黑前目标", () => {
+  for (const vertical of [false, true]) {
+    const ref = (i: number, kind: BlueprintCellRef["kind"] = "white"): BlueprintCellRef => ({
+      col: 5 + (vertical ? 0 : i), row: 9 + (vertical ? i : 0), kind,
+    });
+    const cells = [ref(0, "red"), ref(1), ref(2, "black"), ref(3)];
+    restoreBlueprintClock(clock({ goals: 21, staticCells: cells, staticAge: 1 }));
+    assert.equal(blueprintCellLocked(5, 9), true);
+    collideRedCell(5, 9);
+    const after = getBlueprintClock();
+    assert.deepEqual(after.staticCells, cells.slice(2), "black and everything behind it stay");
+    assert.equal(after.pendingBonus, 2);
+    assert.equal(after.clearing.length, 2);
+  }
+});
+
+test("红十字四向独立，目标被远处黑锁住也清除，连带红不递归", () => {
+  const red: BlueprintCellRef = { col: 5, row: 9, kind: "red" };
+  const left: BlueprintCellRef = { col: 4, row: 9 };
+  const leftBlack: BlueprintCellRef = { col: 3, row: 9, kind: "black" };
+  const leftBeyond: BlueprintCellRef = { col: 2, row: 9 };
+  const up: BlueprintCellRef = { col: 5, row: 8 };
+  const upBeyondGap: BlueprintCellRef = { col: 5, row: 6 };
+  const down: BlueprintCellRef = { col: 5, row: 10 };
+  const rightRed: BlueprintCellRef = { col: 6, row: 9, kind: "red" };
+  const right: BlueprintCellRef = { col: 7, row: 9 };
+  const sideArm: BlueprintCellRef = { col: 6, row: 8 };
+  const remoteBlack: BlueprintCellRef = { col: 5, row: 13, kind: "black" };
+  const survivors = [leftBlack, leftBeyond, upBeyondGap, sideArm, remoteBlack];
+  restoreBlueprintClock(clock({ goals: 21, staticCells: [red, left, up, down, rightRed, right, ...survivors], staticAge: 1 }));
+  assert.equal(blueprintCellLocked(5, 8), true, "up target locked by distant black");
+  assert.equal(blueprintCellLocked(7, 9), true, "right target locked by perpendicular black");
+  collideRedCell(5, 9);
+  const after = getBlueprintClock();
+  assert.deepEqual(after.staticCells, survivors);
+  assert.equal(after.pendingBonus, 6);
+  assert.equal(after.clearing.length, 6);
+});
+
+test("红十字叠层按层清除：静态或动态黑层留下并挡住后方", () => {
+  for (const blackInDynamic of [false, true]) {
+    const red: BlueprintCellRef = { col: 5, row: 9, kind: "red" };
+    const black: BlueprintCellRef = { col: 7, row: 9, kind: "black" };
+    const overlay: BlueprintCellRef = { col: 7, row: 9, kind: "white" };
+    const arm: BlueprintCellRef = { col: 6, row: 9 };
+    const beyond: BlueprintCellRef = { col: 8, row: 9 };
+    restoreBlueprintClock(clock({
+      goals: 21, staticAge: 1,
+      staticCells: [red, arm, beyond, blackInDynamic ? overlay : black],
+      dynamic: dyn({ cells: [blackInDynamic ? black : overlay], stepSpan: 10 }),
+    }));
+    collideRedCell(5, 9);
+    const after = getBlueprintClock();
+    const layers = [...after.staticCells, ...(after.dynamic?.cells ?? [])];
+    assert.ok(layers.some((cell) => cell.col === 7 && cell.row === 9 && cell.kind === "black"));
+    assert.ok(!layers.some((cell) => cell.col === 7 && cell.row === 9 && cell.kind === "white"));
+    assert.ok(layers.some((cell) => cell.col === 8 && cell.row === 9));
+    assert.equal(after.pendingBonus, 3, "black itself never grants clear points");
+  }
+});
+
+test("绿范围锁保留：锁定绿红不清不触发，只有已激活红十字可豁免目标锁", () => {
+  const center: BlueprintCellRef = { col: 5, row: 9, kind: "green" };
+  const black: BlueprintCellRef = { col: 3, row: 8, kind: "black" };
+  const lockedWhite: BlueprintCellRef = { col: 4, row: 8 };
+  const lockedGreen: BlueprintCellRef = { col: 5, row: 8, kind: "green" };
+  const lockedRed: BlueprintCellRef = { col: 6, row: 8, kind: "red" };
+  let found = false;
+  for (let seed = 1; seed <= 200; seed++) {
+    restoreBlueprintClock(clock({ seed, goals: 12, staticCells: [center, black, lockedWhite, lockedGreen, lockedRed], staticAge: 1, lit: ["5:8"] }));
+    // 锁定邻格不参与清段，中心绿可作为孤立格触发范围奖励。
+    touchBlueprintCell(world, 5, 9);
+    const events = drainBlueprintRewardEvents();
+    if (events[0] !== "areaClear") continue;
+    found = true;
+    assert.deepEqual(events, ["areaClear"]);
+    const after = getBlueprintClock();
+    assert.deepEqual(after.staticCells, [black, lockedWhite, lockedGreen, lockedRed]);
+    assert.equal(after.pendingBonus, 1);
+    assert.ok(after.lit.includes("4:8"));
+    break;
+  }
+  assert.equal(found, true);
+});
+
+
+test("绿范围激活未锁红后，十字目标豁免锁，但同波普通范围目标不豁免", () => {
+  const center: BlueprintCellRef = { col: 5, row: 9, kind: "green" };
+  const red: BlueprintCellRef = { col: 6, row: 8, kind: "red" };
+  const lockedTarget: BlueprintCellRef = { col: 7, row: 8 };
+  const beyond: BlueprintCellRef = { col: 8, row: 8 };
+  const lockedArea: BlueprintCellRef = { col: 4, row: 8 };
+  const blacks: BlueprintCellRef[] = [
+    { col: 7, row: 6, kind: "black" }, { col: 4, row: 11, kind: "black" },
+  ];
+  let found = false;
+  for (let seed = 1; seed <= 200; seed++) {
+    restoreBlueprintClock(clock({ seed, goals: 12, staticCells: [center, red, lockedTarget, beyond, lockedArea, ...blacks], staticAge: 1 }));
+    assert.equal(blueprintCellLocked(6, 8), false);
+    assert.equal(blueprintCellLocked(7, 8), true);
+    assert.equal(blueprintCellLocked(4, 8), true);
+    touchBlueprintCell(world, 5, 9);
+    if (drainBlueprintRewardEvents()[0] !== "areaClear") continue;
+    found = true;
+    const after = getBlueprintClock();
+    assert.deepEqual(after.staticCells, [lockedArea, ...blacks]);
+    assert.ok(after.lit.includes("4:8"));
+    assert.equal(after.pendingBonus, 4);
+    break;
+  }
+  assert.equal(found, true);
+});
+
+
+test("触发红自身叠黑：只清红层，黑层保留且不向外穿透", () => {
+  const red: BlueprintCellRef = { col: 5, row: 9, kind: "red" };
+  const black: BlueprintCellRef = { col: 5, row: 9, kind: "black" };
+  const arm: BlueprintCellRef = { col: 6, row: 9 };
+  restoreBlueprintClock(clock({ goals: 21, staticAge: 1, staticCells: [black, arm], dynamic: dyn({ cells: [red], stepSpan: 10 }) }));
+  collideRedCell(5, 9);
+  const after = getBlueprintClock();
+  assert.deepEqual(after.staticCells, [black, arm]);
+  assert.equal(after.dynamic, null);
+  assert.equal(after.pendingBonus, 1);
 });
