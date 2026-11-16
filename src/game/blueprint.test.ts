@@ -2719,7 +2719,7 @@ test("实际换批：保留动态扣除占用，小抽样静态为 0，不补满
       const kept = after.dynamic?.cells.length ?? 0;
       const total = after.staticCells.length + kept;
       assert.ok(total <= blueprintCountSoftMax(31));
-      if (kept) {
+      if (kept && after.dynamic!.phase === "hold") {
         assert.deepEqual(after.dynamic!.cells, cells, "smaller sample must not trim/despawn kept group");
         assert.equal(after.staticCells.length, Math.max(0, target - size));
         assert.equal(total, Math.max(target, size));
@@ -2749,7 +2749,7 @@ test("保留大动态密度调查：不改消失式，记录固定种子 10 格�
     for (let actual = 31; actual <= 50; actual++) {
       stepBlueprint(0, true, { ...aimAt(actual), ballX: -400, ballY: -400 }, world);
       const after = getBlueprintClock();
-      if (!after.dynamic) break;
+      if (!after.dynamic || after.dynamic.phase === "raise") break;
       assert.equal(after.dynamic.cells.length, 10);
       assert.equal(after.staticCells.length, 0, "retained full group leaves no static budget");
       survived++;
@@ -2760,4 +2760,137 @@ test("保留大动态密度调查：不改消失式，记录固定种子 10 格�
   assert.equal(Object.values(histogram).reduce((sum, n) => sum + n, 0), 500);
   assert.equal(blueprintDespawnChance(31), 0.85);
   t.diagnostic(JSON.stringify({ samples: 500, groupSize: 10, continuedRefreshes: histogram }));
+});
+
+
+/** 独立复算现有确定性掷签，只用于核对实际 stepBlueprint 的 .45/.85 概率门。 */
+function dynamicTestUnit(seed: number, serial: number, channel: number) {
+  const n = Math.sin(seed * 12.9898 + (serial + 1) * 78.233 + (channel + 1) * 39.425) * 43758.5453;
+  return n - Math.floor(n);
+}
+
+function stepFromNoDynamic(seed: number, actual: number) {
+  resetBlueprint(seed);
+  restoreBlueprintClock(clock({ seed, goals: actual - 1, serial: 5, staticCells: [], dynamic: null }));
+  assert.equal(getBlueprintClock().dynamic, null, "start from a genuinely empty dynamic slot");
+  const aim = aimAt(actual);
+  const target = rollBlueprintBatch(world, {
+    seed, serial: 6, goals: actual,
+    ball: { x: aim.ballX, y: aim.ballY }, hoop: { x: aim.hoopX, y: aim.hoopY },
+  }).target;
+  stepBlueprint(0, true, aim, world);
+  return { after: getBlueprintClock(), target };
+}
+
+test("实际空动态槽换批：原概率成功会新生，概率失败不生，合计不越均匀样本", (t) => {
+  for (const actual of [6, 9, 15, 30, 100]) {
+    let spawned = 0, eligible = 0, failedChance = 0;
+    let firstSpawnSeed = 0, firstFailedChanceSeed = 0;
+    for (let seed = 1; seed <= 300; seed++) {
+      const { after, target } = stepFromNoDynamic(seed, actual);
+      const chance = dynamicTestUnit(seed, 6, 10);
+      const shouldSpawn = target > 1 && chance < 0.45;
+      assert.equal(Boolean(after.dynamic), shouldSpawn, `actual=${actual}, seed=${seed}, want=${target}, roll=${chance}`);
+      const count = after.staticCells.length + (after.dynamic?.cells.length ?? 0);
+      assert.equal(count, target, "ample legal positions fill only sampled combined target");
+      assert.ok(count <= blueprintCountSoftMax(actual));
+      if (target > 1) eligible++;
+      if (after.dynamic) {
+        spawned++;
+        firstSpawnSeed ||= seed;
+        assert.ok(after.staticCells.length >= 1);
+        const keys = new Set(after.dynamic.cells.map((cell) => `${cell.col}:${cell.row}`));
+        assert.ok(after.staticCells.every((cell) => !keys.has(`${cell.col}:${cell.row}`)), "new dynamic positions reserved before static fill");
+        const legal = new Set(blueprintLegalCells(world, { x: aimAt(actual).ballX, y: aimAt(actual).ballY }).map((cell) => `${cell.col}:${cell.row}`));
+        for (const key of keys) assert.ok(legal.has(key));
+      } else if (target > 1 && chance >= 0.45) {
+        failedChance++;
+        firstFailedChanceSeed ||= seed;
+      }
+    }
+    assert.ok(spawned > 0 && failedChance > 0);
+    t.diagnostic(JSON.stringify({ actual, trials: 300, eligible, spawned, failedChance, firstSpawnSeed, firstFailedChanceSeed }));
+  }
+});
+
+test("实际空动态槽：softMax 0 没块、softMax 1 只一静态，want=1 也不额外生动态", () => {
+  for (const actual of [0, 1, 2, 3, 4, 5]) {
+    for (let seed = 1; seed <= 60; seed++) {
+      const { after, target } = stepFromNoDynamic(seed, actual);
+      assert.equal(after.dynamic, null);
+      assert.equal(after.staticCells.length, target);
+      assert.equal(target, actual < 3 ? 0 : 1);
+    }
+  }
+  let checked = 0;
+  for (let seed = 1; seed <= 100; seed++) {
+    const { after, target } = stepFromNoDynamic(seed, 30);
+    if (target !== 1 || dynamicTestUnit(seed, 6, 10) >= 0.45) continue;
+    checked++;
+    assert.equal(after.dynamic, null, "even a successful chance roll cannot exceed want=1");
+    assert.equal(after.staticCells.length, 1);
+  }
+  assert.ok(checked > 0);
+});
+
+test("从空槽真实新生的动态组会升起可见并继续挪移，不只是预载快照", (t) => {
+  let found = false;
+  for (let seed = 1; seed <= 100 && !found; seed++) {
+    const { after } = stepFromNoDynamic(seed, 9);
+    if (!after.dynamic) continue;
+    const aim = aimAt(9);
+    assert.equal(after.dynamic.phase, "raise");
+    stepBlueprint(BLUEPRINT_RAISE, true, aim, world);
+    const raised = getBlueprintClock();
+    assert.equal(raised.dynamic?.phase, "hold");
+    const visible = blueprintBlocks(world).filter((block) => block.dynamic);
+    assert.equal(visible.length, raised.dynamic!.cells.length);
+    assert.ok(visible.every((block) => block.extend > 0.99 && block.solid));
+    const before = raised.dynamic!.cells.map((cell) => `${cell.col}:${cell.row}`);
+    stepBlueprint(raised.dynamic!.stepSpan + 0.01, true, aim, world);
+    const moving = getBlueprintClock();
+    if (moving.dynamic?.phase !== "cross_out") continue;
+    assert.ok(moving.dynamic.pending.length > 0);
+    stepBlueprint(moving.dynamic.raise, true, aim, world);
+    const landed = getBlueprintClock();
+    assert.equal(landed.dynamic?.phase, "cross_in");
+    const to = landed.dynamic!.cells.map((cell) => `${cell.col}:${cell.row}`);
+    assert.notDeepEqual(to, before);
+    stepBlueprint(landed.dynamic!.raise, true, aim, world);
+    assert.ok(blueprintBlocks(world).some((block) => block.dynamic && block.extend > 0.99));
+    found = true;
+    t.diagnostic(JSON.stringify({ movingNewbornSeed: seed, actual: 9, from: before, to }));
+  }
+  assert.equal(found, true);
+});
+
+test("真实新生组按原消失式离开后，同次换批可按原概率重新生成", (t) => {
+  let found = false;
+  for (let seed = 1; seed <= 300 && !found; seed++) {
+    const { after } = stepFromNoDynamic(seed, 30);
+    if (!after.dynamic) continue;
+    const aim = aimAt(31);
+    const target = rollBlueprintBatch(world, {
+      seed, serial: 7, goals: 31,
+      ball: { x: aim.ballX, y: aim.ballY }, hoop: { x: aim.hoopX, y: aim.hoopY },
+    }).target;
+    const despawn = dynamicTestUnit(seed, 7, 9);
+    const spawn = dynamicTestUnit(seed, 7, 10);
+    if (!(target > 1 && despawn < blueprintDespawnChance(31) && spawn < 0.45)) continue;
+    stepBlueprint(BLUEPRINT_RAISE, true, aimAt(30), world);
+    assert.equal(getBlueprintClock().dynamic?.phase, "hold");
+    const old = getBlueprintClock();
+    restoreBlueprintClock({ ...old, lit: old.dynamic!.cells.map((cell) => `${cell.col}:${cell.row}`) });
+    stepBlueprint(0, true, aim, world);
+    const next = getBlueprintClock();
+    assert.equal(next.dynamic?.phase, "raise", "a new group, not retained old hold phase");
+    assert.equal(next.dynamic?.age, 0);
+    assert.equal(next.serial, 7);
+    assert.equal(next.staticCells.length + next.dynamic!.cells.length, target);
+    assert.ok(next.staticCells.length + next.dynamic!.cells.length <= blueprintCountSoftMax(31));
+    assert.deepEqual(next.lit, [], "new group starts unlit");
+    found = true;
+    t.diagnostic(JSON.stringify({ regeneratedSeed: seed, actual: 31, despawnRoll: despawn, spawnRoll: spawn, target, dynamicCount: next.dynamic!.cells.length }));
+  }
+  assert.equal(found, true);
 });

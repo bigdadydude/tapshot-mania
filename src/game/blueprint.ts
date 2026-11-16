@@ -634,18 +634,25 @@ function applyGoalChange(goalsNow: number) {
       dynamic = null;
     }
   }
+  const retainedDynamic = dynamic !== null;
+  // 旧静态已换批，不能占用新动态的合法位置。先给新动态留名额，避免静态先填满 want。
+  staticCells = [];
+  if (!dynamic && want > 1 && unitAt(seed, serial, 10) < BLUEPRINT_DYNAMIC_SPAWN) {
+    // 至少留一格静态；want == 1 不额外生动态。生成/消失掷签及移动参数均不变。
+    trySpawnDynamic(goalsNow, want - 1);
+  }
   const reserved = dynamic ? dynamic.cells.length : 0;
   // 不补到 softMax：动态多于本次抽样时静态为 0，不强行摘掉整组；消失式不变。
   const staticWant = Math.max(0, want - reserved);
-  const batch = rollBlueprintBatch(view, { seed, serial, goals: goalsNow, ball, hoop, maxCount: staticWant, want: staticWant });
+  const batch = rollBlueprintBatch(view, {
+    seed, serial, goals: goalsNow, ball, hoop, maxCount: staticWant, want: staticWant,
+    // 仅预留新生动态的位置；已存在的动态依旧允许与新静态重叠，不改叠层规则。
+    exclude: !retainedDynamic ? dynamic?.cells : undefined,
+  });
   staticCells = batch.cells.slice(0, staticWant);
-  if (!dynamic && want > staticCells.length && goalsNow >= 3) {
-    if (unitAt(seed, serial, 10) < BLUEPRINT_DYNAMIC_SPAWN) {
-      trySpawnDynamic(goalsNow, want - staticCells.length);
-    }
-  }
   hasBatch = true;
-  keepOnlyDynamicLit(carriedLit);
+  // 只有原组保留才继承其点亮，新生组不能继承刚消失原组的同坐标点亮。
+  keepOnlyDynamicLit(retainedDynamic ? carriedLit : new Set());
   // 只有黑锁发生变化时才补判：避免换批后把仍点亮的孤立动态格立刻清掉。
   const afterLocks = blueprintLockedLines();
   if (beforeLocks.rows.size !== afterLocks.rows.size || beforeLocks.cols.size !== afterLocks.cols.size
