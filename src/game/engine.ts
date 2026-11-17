@@ -91,7 +91,6 @@ const TIMER_DECAY = 0.972;
 const GRAF_IN = 1.2;
 const COMBO_STOP = 6;
 const COMBO_DROP = 2;
-const FIRE_HOLD = 1.35;
 const FROST_DUR_FIRST = 4;
 const FROST_DUR_REFRESH = 3;
 const FROST_CHANCE_BASE = 0.1;
@@ -7288,10 +7287,7 @@ export function createGame(
         if (!isFrost() && other && stage >= 2) {
           const sear = (stage === 2 ? 1 : stage === 3 ? 2 : 3) as 1 | 2 | 3;
           if (sear > other.sear) other.sear = sear;
-          other.hold = Math.max(
-            other.hold,
-            stage >= 4 ? FIRE_HOLD : stage >= 3 ? 1.05 : 0.88,
-          );
+          // Heat effects must not extend the ordinary post-score retirement hold.
           if (stage >= 4) {
             other.burning = true;
             audio.burn();
