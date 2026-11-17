@@ -1,3 +1,4 @@
+import { resolveComboBreak } from "./combo-break";
 import { floorRestitution, floorReboundSpeed } from "./floor-response";
 import { HOOP_HOLD, hoopRetirementDone, stepHoopRetirement } from "./hoop-retirement";
 import { stepTrainSmoke } from "./train-smoke";
@@ -47,7 +48,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, rainClearTraffic, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
-import { collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, blueprintRewardToast, BLUEPRINT_CLOCK_SECONDS, type BlueprintClock } from "./blueprint";
+import { consumeBlueprintComboProtection, collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, blueprintRewardToast, BLUEPRINT_CLOCK_SECONDS, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage, isClothNet } from "./types";
@@ -639,21 +640,24 @@ export function createGame(
 
   /** Break active streak (timeout or finished miss jump). Heat may keep decaying. */
   function breakComboStreak() {
-    if (buzzer) return;
-    if (streak <= 0 && !comboCounting && combo <= 0) return;
-    if (
-      isRogueMode() &&
-      rogueRun &&
-      !rogueRun.pendingStreakSave &&
-      streak >= 3 &&
-      rogueRun.streakSaveCharges > 0
-    ) {
+    const action = resolveComboBreak({
+      mode: playMode, blueprint: blueprintOn(), buzzer, streak, comboCounting, combo,
+      rogueRun: Boolean(rogueRun), pendingPaid: Boolean(rogueRun?.pendingStreakSave),
+      paidCharges: rogueRun?.streakSaveCharges ?? 0, rogueSaved: Boolean(rogueRun?.streakSave),
+    }, consumeBlueprintComboProtection);
+    if (action === "ignored") return;
+    if (action === "blueprint") {
+      comboClock = 0;
+      emitHud();
+      return;
+    }
+    if (action === "paidPrompt" && rogueRun) {
       rogueRun.pendingStreakSave = true;
       paused = true;
       emitHud();
       return;
     }
-    if (isRogueMode() && rogueRun?.streakSave) {
+    if (action === "rogueSaved" && rogueRun) {
       rogueRun.streakSave = false;
       comboClock = 0;
       callouts.push({

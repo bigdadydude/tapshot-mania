@@ -93,7 +93,7 @@ export const BLUEPRINT_BLACK = "#1A1A1A";
 /** 经典 / 肉鸽绿块抽到时钟奖时的加时额度（秒）。一分钟模式不发放此项。 */
 export const BLUEPRINT_CLOCK_SECONDS = 1;
 export type BlueprintBlockKind = "white" | "green" | "red" | "black";
-export type BlueprintRewardEvent = "base" | "combo" | "seconds" | "scoreDouble" | "areaClear" | "turnRed";
+export type BlueprintRewardEvent = "base" | "combo" | "seconds" | "scoreDouble" | "comboProtection" | "areaClear" | "turnRed";
 export type BlueprintRewards = { base: number; combo: number; seconds: number };
 /** 种类按实体进球数解锁；未解锁权重为 0，再按原权重归一化。 */
 export const BLUEPRINT_KIND_UNLOCK = { white: 3, green: 9, red: 15, black: 21 } as const;
@@ -103,6 +103,7 @@ export const BLUEPRINT_REWARD_UNLOCK = {
   combo: 9,
   seconds: 9,
   scoreDouble: 9,
+  comboProtection: 9,
   areaClear: 12,
   turnRed: 27,
 } as const;
@@ -114,6 +115,7 @@ export function blueprintRewardPool(allowClock: boolean, actual: number): Bluepr
   pool.push("base", "combo");
   if (allowClock && made >= BLUEPRINT_REWARD_UNLOCK.seconds) pool.push("seconds");
   if (made >= BLUEPRINT_REWARD_UNLOCK.scoreDouble) pool.push("scoreDouble");
+  if (made >= BLUEPRINT_REWARD_UNLOCK.comboProtection) pool.push("comboProtection");
   if (made >= BLUEPRINT_REWARD_UNLOCK.areaClear) pool.push("areaClear");
   if (made >= BLUEPRINT_REWARD_UNLOCK.turnRed) pool.push("turnRed");
   return pool;
@@ -123,6 +125,7 @@ export function blueprintRewardToast(reward: BlueprintRewardEvent) {
   if (reward === "base") return "永久基础 +2";
   if (reward === "combo") return "每球连击 +1";
   if (reward === "scoreDouble") return "下一次进球得分 ×2";
+  if (reward === "comboProtection") return "连击保护 +1次";
   if (reward === "areaClear") return "点亮并消除周围方块";
   if (reward === "turnRed") return "相邻方块变为红色";
   if (reward === "seconds") return `永久时钟 +${BLUEPRINT_CLOCK_SECONDS}秒`;
@@ -263,6 +266,8 @@ export type BlueprintClock = {
   rewardSerial?: number;
   /** 尚未兑现的「下一次实体进球得分 ×2」次数。旧快照缺省为 0。 */
   scoreDoubleCharges?: number;
+  comboProtectionCharges?: number;
+  comboProtectionFlash?: number;
 };
 
 export type BlueprintClearingCell = {
@@ -317,6 +322,21 @@ let rewardSerial = 0;
 let rewardEvents: BlueprintRewardEvent[] = [];
 /** 尚未兑现的实体进球得分 ×2 次数。 */
 let scoreDoubleCharges = 0;
+export const BLUEPRINT_COMBO_PROTECTION_CAP = 3;
+export const BLUEPRINT_COMBO_FLASH_SECONDS = 0.75;
+let comboProtectionCharges = 0;
+let comboProtectionFlash = 0;
+export function getBlueprintComboProtection() { return comboProtectionCharges; }
+export function blueprintComboFlashAlpha() {
+  return Math.sin(Math.PI * Math.max(0, Math.min(1, comboProtectionFlash / BLUEPRINT_COMBO_FLASH_SECONDS)));
+}
+/** 只由有效断连入口调用，获取奖励本身不产生闪光。 */
+export function consumeBlueprintComboProtection() {
+  if (comboProtectionCharges <= 0) return false;
+  comboProtectionCharges--;
+  comboProtectionFlash = BLUEPRINT_COMBO_FLASH_SECONDS;
+  return true;
+}
 /** 由引擎按模式设置。默认 true，保持经典/肉鸽与现有模块测试的奖励池。 */
 let allowSeconds = true;
 
@@ -419,6 +439,8 @@ export function getBlueprintClock(): BlueprintClock {
     rewards: { ...rewards },
     rewardSerial,
     scoreDoubleCharges,
+    comboProtectionCharges,
+    comboProtectionFlash,
     clearing: clearing.map((cell) => ({ ...cell })),
   };
 }
@@ -447,6 +469,8 @@ export function restoreBlueprintClock(next: BlueprintClock) {
   rewards = { base: finiteBonus(next.rewards?.base), combo: finiteBonus(next.rewards?.combo), seconds: finiteBonus(next.rewards?.seconds) };
   rewardSerial = finiteBonus(next.rewardSerial);
   scoreDoubleCharges = finiteBonus(next.scoreDoubleCharges);
+  comboProtectionCharges = Math.min(BLUEPRINT_COMBO_PROTECTION_CAP, finiteBonus(next.comboProtectionCharges));
+  comboProtectionFlash = Math.min(BLUEPRINT_COMBO_FLASH_SECONDS, Math.max(0, Number.isFinite(next.comboProtectionFlash) ? next.comboProtectionFlash! : 0));
   rewardEvents = [];
   clearing = (next.clearing ?? []).map((cell) => ({
     col: cell.col,
@@ -475,6 +499,8 @@ export function resetBlueprint(nextSeed = Math.random() * 1e6) {
   rewards = { base: 0, combo: 0, seconds: 0 };
   rewardSerial = 0;
   scoreDoubleCharges = 0;
+  comboProtectionCharges = 0;
+  comboProtectionFlash = 0;
   rewardEvents = [];
   clearing = [];
   hasBatch = false;
@@ -486,6 +512,7 @@ export function resetBlueprintProgress(preserveRewards = false) {
   const carriedRewards = rewards;
   const carriedRewardSerial = rewardSerial;
   const carriedDoubles = scoreDoubleCharges;
+  const carriedProtection = comboProtectionCharges;
   elapsed = 0;
   goals = 0;
   staticCells = [];
@@ -497,6 +524,8 @@ export function resetBlueprintProgress(preserveRewards = false) {
   rewards = { base: 0, combo: 0, seconds: 0 };
   rewardSerial = 0;
   scoreDoubleCharges = 0;
+  comboProtectionCharges = 0;
+  comboProtectionFlash = 0;
   rewardEvents = [];
   clearing = [];
   hasBatch = false;
@@ -504,6 +533,7 @@ export function resetBlueprintProgress(preserveRewards = false) {
     rewards = carriedRewards;
     rewardSerial = carriedRewardSerial;
     scoreDoubleCharges = carriedDoubles;
+    comboProtectionCharges = carriedProtection;
   }
 }
 
@@ -759,6 +789,7 @@ export function stepBlueprint(
   if (playing) recheckOverlapActivations();
   if (!(dt > 0)) return;
   if (playing) {
+    comboProtectionFlash = Math.max(0, comboProtectionFlash - dt);
     elapsed += dt;
     staticAge += dt;
     stepDynamic(dt);
@@ -1584,6 +1615,7 @@ function grantRewardEvent(event: BlueprintRewardEvent) {
   else if (event === "combo") rewards.combo += 1;
   else if (event === "seconds") rewards.seconds += BLUEPRINT_CLOCK_SECONDS;
   else if (event === "scoreDouble") scoreDoubleCharges += 1;
+  else if (event === "comboProtection") comboProtectionCharges = Math.min(BLUEPRINT_COMBO_PROTECTION_CAP, comboProtectionCharges + 1);
   rewardEvents.push(event);
 }
 
@@ -2317,17 +2349,20 @@ export function drawBlueprintCodeBlocks(ctx: CanvasRenderingContext2D, world: Vi
   ctx.restore();
 }
 
-function drawScoreDoubleHint(ctx: CanvasRenderingContext2D, world: View, hudBottom: number) {
-  if (scoreDoubleCharges <= 0) return;
-  const text = scoreDoubleCharges > 1 ? `进球得分 ×2 ×${scoreDoubleCharges}` : "下一次进球 ×2";
+export function drawBlueprintRewardHints(ctx: CanvasRenderingContext2D, world: View, hudBottom: number) {
+  const hints: string[] = [];
+  if (scoreDoubleCharges > 0) hints.push(scoreDoubleCharges > 1 ? `进球得分 ×2 ×${scoreDoubleCharges}` : "下一次进球 ×2");
+  if (comboProtectionCharges > 0) hints.push(`连击保护×${comboProtectionCharges}`);
+  if (!hints.length) return;
   ctx.save();
   ctx.globalAlpha = 1;
+  const size = Math.max(12, Math.round(world.w * 0.035));
+  ctx.font = `${size}px system-ui, sans-serif`;
   ctx.fillStyle = "#ffffff";
-  ctx.font = `${Math.max(12, Math.round(world.w * 0.035))}px system-ui, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   const y = Math.max(hudBottom + 6, world.h * 0.08);
-  ctx.fillText(text, world.w / 2, y);
+  hints.forEach((text, i) => ctx.fillText(text, world.w / 2, y + i * (size + 4)));
   ctx.restore();
 }
 
@@ -2337,7 +2372,7 @@ export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View, hudBot
   strokeGrid(ctx, world);
   drawPerspectiveFloor(ctx, world);
   drawBlueprintBlocks(ctx, world, hudBottom);
-  drawScoreDoubleHint(ctx, world, hudBottom);
+  drawBlueprintRewardHints(ctx, world, hudBottom);
 }
 
 function drawBlueprintBlocks(ctx: CanvasRenderingContext2D, world: View, hudBottom: number) {

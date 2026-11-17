@@ -1679,7 +1679,7 @@ test("PR31 green 真正消除才按已解锁奖池抽一项，叠层/重触/清�
     consumeBlueprintLitForHole();
     assert.deepEqual(drainBlueprintRewardEvents(), []);
   }
-  assert.deepEqual([...seen].sort(), ["areaClear", "base", "combo", "scoreDouble", "seconds"]);
+  assert.deepEqual([...seen].sort(), ["areaClear", "base", "combo", "comboProtection", "scoreDouble", "seconds"]);
 });
 
 test("PR31 红碰撞清横竖连续十字，不越空格、不要求lit，连带green领奖", () => {
@@ -1840,13 +1840,13 @@ test("一分钟 + 蓝图：多次绿消除只有 base/combo，seconds 为 0，ti
     for (let seed = 1; seed <= 160; seed++) {
       const events = clearIsolatedGreen(seed);
       assert.equal(events.length, 1, "每个绿块都要发出一项奖励，不能先抽秒再丢掉");
-      assert.ok(events[0] === "base" || events[0] === "combo" || events[0] === "scoreDouble" || events[0] === "areaClear");
+      assert.ok(events[0] === "comboProtection" || events[0] === "base" || events[0] === "combo" || events[0] === "scoreDouble" || events[0] === "areaClear");
       assert.notEqual(events[0], "seconds");
       seen.add(events[0]!);
       eventCount += events.length;
       grantedSeconds += getBlueprintRewards().seconds;
     }
-    assert.deepEqual([...seen].sort(), ["areaClear", "base", "combo", "scoreDouble"]);
+    assert.deepEqual([...seen].sort(), ["areaClear", "base", "combo", "comboProtection", "scoreDouble"]);
     assert.equal(eventCount, 160);
     assert.equal(grantedSeconds, 0);
     assert.equal(getBlueprintRewards().seconds, 0);
@@ -1878,7 +1878,7 @@ test("一分钟模式红叉连带与黑洞清绿块同样不加时", () => {
     assert.equal(touchBlueprintCell(world, red.col, red.row), 5);
     const fromRed = drainBlueprintRewardEvents();
     assert.equal(fromRed.length, 1);
-    assert.ok(fromRed[0] === "base" || fromRed[0] === "combo" || fromRed[0] === "scoreDouble" || fromRed[0] === "areaClear");
+    assert.ok(fromRed[0] === "comboProtection" || fromRed[0] === "base" || fromRed[0] === "combo" || fromRed[0] === "scoreDouble" || fromRed[0] === "areaClear");
     assert.notEqual(fromRed[0], "seconds");
     assert.equal(getBlueprintRewards().seconds, 0);
 
@@ -1887,7 +1887,7 @@ test("一分钟模式红叉连带与黑洞清绿块同样不加时", () => {
     assert.equal(consumeBlueprintLitForHole(), 0);
     const fromHole = drainBlueprintRewardEvents();
     assert.equal(fromHole.length, 1);
-    assert.ok(fromHole[0] === "base" || fromHole[0] === "combo" || fromHole[0] === "scoreDouble" || fromHole[0] === "areaClear");
+    assert.ok(fromHole[0] === "comboProtection" || fromHole[0] === "base" || fromHole[0] === "combo" || fromHole[0] === "scoreDouble" || fromHole[0] === "areaClear");
     assert.notEqual(fromHole[0], "seconds");
     assert.equal(getBlueprintRewards().seconds, 0);
   } finally {
@@ -1947,13 +1947,13 @@ test("一分钟兜底：即使收到 seconds 也不加时、不弹时钟文案",
 
 test("奖励池按进球数解锁；一分钟永不写 seconds", () => {
   assert.deepEqual(blueprintRewardPool(true, 8), []);
-  assert.deepEqual(blueprintRewardPool(true, 9), ["base", "combo", "seconds", "scoreDouble"]);
-  assert.deepEqual(blueprintRewardPool(false, 9), ["base", "combo", "scoreDouble"]);
-  assert.deepEqual(blueprintRewardPool(true, 12), ["base", "combo", "seconds", "scoreDouble", "areaClear"]);
-  assert.deepEqual(blueprintRewardPool(false, 12), ["base", "combo", "scoreDouble", "areaClear"]);
-  assert.deepEqual(blueprintRewardPool(true, 26), ["base", "combo", "seconds", "scoreDouble", "areaClear"]);
-  assert.deepEqual(blueprintRewardPool(true, 27), ["base", "combo", "seconds", "scoreDouble", "areaClear", "turnRed"]);
-  assert.deepEqual(blueprintRewardPool(false, 27), ["base", "combo", "scoreDouble", "areaClear", "turnRed"]);
+  assert.deepEqual(blueprintRewardPool(true, 9), ["base", "combo", "seconds", "scoreDouble", "comboProtection"]);
+  assert.deepEqual(blueprintRewardPool(false, 9), ["base", "combo", "scoreDouble", "comboProtection"]);
+  assert.deepEqual(blueprintRewardPool(true, 12), ["base", "combo", "seconds", "scoreDouble", "comboProtection", "areaClear"]);
+  assert.deepEqual(blueprintRewardPool(false, 12), ["base", "combo", "scoreDouble", "comboProtection", "areaClear"]);
+  assert.deepEqual(blueprintRewardPool(true, 26), ["base", "combo", "seconds", "scoreDouble", "comboProtection", "areaClear"]);
+  assert.deepEqual(blueprintRewardPool(true, 27), ["base", "combo", "seconds", "scoreDouble", "comboProtection", "areaClear", "turnRed"]);
+  assert.deepEqual(blueprintRewardPool(false, 27), ["base", "combo", "scoreDouble", "comboProtection", "areaClear", "turnRed"]);
   assert.equal(blueprintRewardToast("base"), "永久基础 +2");
   assert.equal(blueprintRewardToast("combo"), "每球连击 +1");
   assert.equal(blueprintRewardToast("seconds"), "永久时钟 +1秒");

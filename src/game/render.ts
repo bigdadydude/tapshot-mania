@@ -1,7 +1,7 @@
 import { drawTrainSmoke, sootFilter } from "./train-smoke";
 import { drawBlackHole } from "./black-hole-render";
 import { drawCity } from "./city-render";
-import { blueprintHudBar, drawBlueprint, drawBlueprintCodeBlocks } from "./blueprint";
+import { blueprintComboFlashAlpha, blueprintHudBar, drawBlueprint, drawBlueprintCodeBlocks } from "./blueprint";
 import { drawTrainBackdrop, getTrainScroll } from "./train-bg";
 import { drawTrainGantryWarnings } from "./train-gantry";
 import { birdOwnsBall, drawBirds, drawEagleWarnings, type BirdState } from "./birds";
@@ -3115,6 +3115,12 @@ function drawHud(
 	}
 	let tag = null;
 	for (const c of callouts) if (c.kind === "tag") tag = c;
+	ctx.save();
+	const blueprintComboGlow = getSceneId() === "blueprint" ? blueprintComboFlashAlpha() : 0;
+	if (blueprintComboGlow > 0) {
+		ctx.shadowColor = "#a6ffd0";
+		ctx.shadowBlur = 24 * blueprintComboGlow;
+	}
 	if (trafficNearMiss > 0 || birdBaseBonus > 0) {
 		// Keep the avoidance base bonus on the combo baseline, even after combo expires.
 		const comboText = comboBanner || (combo >= 2 ? `连击×${combo}` : "");
@@ -3139,7 +3145,7 @@ function drawHud(
 		ctx.strokeText(comboBanner, w / 2, g.comboY);
 		ctx.fillText(comboBanner, w / 2, g.comboY);
 		ctx.restore();
-	} else if (combo >= 1 && (shackled || combo >= 2)) {
+	} else if (combo >= 1 && (shackled || combo >= 2 || blueprintComboGlow > 0)) {
 		ctx.save();
 		const stage = fireStage(heat);
 		if (!shackled && stage >= 3) {
@@ -3166,6 +3172,7 @@ function drawHud(
 		ctx.fillText(`连击×${combo}`, w / 2, comboY);
 		ctx.restore();
 	}
+	ctx.restore();
 	if (tag) {
 		const t = tag.life / tag.max;
 		const isBreak = tag.text.includes("中断");
