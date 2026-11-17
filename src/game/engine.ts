@@ -1,3 +1,5 @@
+import { resolveComboBreak } from "./combo-break";
+import { floorRestitution, floorReboundSpeed } from "./floor-response";
 import { HOOP_HOLD, hoopRetirementDone, stepHoopRetirement } from "./hoop-retirement";
 import { stepTrainSmoke } from "./train-smoke";
 import { createAntiRecovery, launchAntiRecovery, scoreAntiRecovery, stepAntiRecovery, antiRecoveryIgnoresHoops, type AntiRecovery } from "./anti-recovery";
@@ -46,7 +48,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, rainClearTraffic, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
-import { collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, BLUEPRINT_CLOCK_SECONDS, type BlueprintClock } from "./blueprint";
+import { consumeBlueprintComboProtection, collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, blueprintRewardToast, BLUEPRINT_CLOCK_SECONDS, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage, isClothNet } from "./types";
@@ -638,21 +640,24 @@ export function createGame(
 
   /** Break active streak (timeout or finished miss jump). Heat may keep decaying. */
   function breakComboStreak() {
-    if (buzzer) return;
-    if (streak <= 0 && !comboCounting && combo <= 0) return;
-    if (
-      isRogueMode() &&
-      rogueRun &&
-      !rogueRun.pendingStreakSave &&
-      streak >= 3 &&
-      rogueRun.streakSaveCharges > 0
-    ) {
+    const action = resolveComboBreak({
+      mode: playMode, blueprint: blueprintOn(), buzzer, streak, comboCounting, combo,
+      rogueRun: Boolean(rogueRun), pendingPaid: Boolean(rogueRun?.pendingStreakSave),
+      paidCharges: rogueRun?.streakSaveCharges ?? 0, rogueSaved: Boolean(rogueRun?.streakSave),
+    }, consumeBlueprintComboProtection);
+    if (action === "ignored") return;
+    if (action === "blueprint") {
+      comboClock = 0;
+      emitHud();
+      return;
+    }
+    if (action === "paidPrompt" && rogueRun) {
       rogueRun.pendingStreakSave = true;
       paused = true;
       emitHud();
       return;
     }
-    if (isRogueMode() && rogueRun?.streakSave) {
+    if (action === "rogueSaved" && rogueRun) {
       rogueRun.streakSave = false;
       comboClock = 0;
       callouts.push({
@@ -1369,7 +1374,8 @@ export function createGame(
         if (!grantClock) continue;
         if (!buzzer && !timeUp) timer += BLUEPRINT_CLOCK_SECONDS * hackerClockScale(hackerAwaken, hackerSkillMakes);
       }
-      const text = reward === "base" ? "永久基础 +2" : reward === "combo" ? "每球连击 +1" : `永久时钟 +${BLUEPRINT_CLOCK_SECONDS}秒`;
+      const text = blueprintRewardToast(reward);
+      if (!text) continue;
       callouts.push({ text, x:ball.x, y:ball.y-ball.r*2.4, life:1.3, max:1.3, kind:"tag" });
     }
     if (events.length) emitHud();
@@ -1652,23 +1658,20 @@ export function createGame(
     const ballK = pMul("ball");
     const floorK = pMul("floor");
     const hoopK = pMul("hoop");
-    const raw =
-      kind === "floorHi"
-        ? 0.7 * ballK * floorK
-        : kind === "floorLo"
-          ? 0.64 * ballK * floorK
-          : kind === "rim"
-            ? 0.56 * ballK * hoopK
-            : 0.76 * ballK * hoopK;
-    // Floor must stay < ~0.88 or fallBoost (1.28g down) pumps energy each bounce.
-    const cap = kind === "floorHi" || kind === "floorLo" ? 0.84 : 0.95;
-    return Math.max(0, Math.min(cap, raw));
+    if (kind === "floorHi" || kind === "floorLo") return floorRestitution(kind, ballK, floorK);
+    const raw = kind === "rim" ? 0.56 * ballK * hoopK : 0.76 * ballK * hoopK;
+    return Math.max(0, Math.min(0.95, raw));
   }
 
   function mazeRestitution(impact: number, _base: number) {
     // This ball rolls on the whole tilted court. Contacts must stay lively even
     // at low speed, then approach a hard-board rebound as impact increases.
     return clamp(0.68 + Math.min(0.24, impact / 1500), 0.68, 0.92);
+  }
+
+  /** 使用当前有效物理倍率及既有地面修正；玻璃凸块只借用法向响应。 */
+  function floorRebound(incoming: number) {
+    return floorReboundSpeed(incoming, bounceRest, isMaze() ? mazeRestitution : undefined);
   }
 
   function shotSide(): -1 | 1 {
@@ -5855,7 +5858,12 @@ export function createGame(
       if (!hackerScripted && blueprintOn() && quantumTunnelLeft <= 0) {
         const incomingVx = ball.vx;
         const incomingVy = ball.vy;
-        if (collideBlueprint(world, ball, prevBallX, prevBallY, isSuper() ? (nx, ny) => superCancelsSolid(nx, ny) : undefined)) {
+        if (collideBlueprint(
+          world, ball, prevBallX, prevBallY,
+          isSuper() ? (nx, ny) => superCancelsSolid(nx, ny) : undefined,
+          undefined,
+          isGlass() ? floorRebound : undefined,
+        )) {
           vectorCollision(incomingVx, incomingVy);
           shotAirborne = true;
           prevBallX = ball.x;
@@ -6659,9 +6667,7 @@ export function createGame(
       if (dmg > 0) hurtGlass(dmg, ball.x, ball.y - ball.r * 2.2);
     }
     if (incoming > 40) {
-      const baseRest = bounceRest(incoming > 140 ? "floorHi" : "floorLo");
-      const rest = isMaze() ? mazeRestitution(incoming, baseRest) : baseRest;
-      const rebound = incoming * rest;
+      const rebound = floorRebound(incoming);
       if (rebound > 40) {
         if (phase !== "title") audio.bounce(Math.min(1, incoming / 900));
         ball.vy = -rebound;
@@ -7081,14 +7087,17 @@ export function createGame(
     }
     if (hackerEffect === "lock") gain *= 2;
     const banked = gain;
-    score += banked;
     // 黄标签只保留最后一条，单独的「清格 +N」会被同帧「空心球」盖掉。清格分并进主飘字。
     let rowBonus = 0;
+    let payout = banked;
+    let scoreDoubled = false;
     if (blueprintOn() && !ghost) {
       const settled = settleBlueprintBasket(gain, true);
       rowBonus = settled.bonus;
-      score += rowBonus;
+      payout = settled.shown;
+      scoreDoubled = settled.doubled === true;
     }
+    score += payout;
     if(!ghost && isSuper()) superScore(superBall,superShieldScore);
     if (!ghost && balanceSession) {
       const plainCore = bunshinGhost || ninjaGhost ? 0 : basePart + streakPart + extra + (freed ? prisonBonus : 0) + (clutch && !ninjaGhost ? 5 : 0);
@@ -7194,7 +7203,7 @@ export function createGame(
     const hideMakeScore = (isAnti() && legacyHole()) || (ninjaGhost && gain <= 0);
     if (!hideMakeScore) {
       callouts.push({
-        text: `+${banked + rowBonus}`,
+        text: scoreDoubled ? `+${payout} ×2` : `+${payout}`,
         x: popX,
         y: popY - popInner * RIM_RY - 14,
         capY: boardTop + 8,
@@ -7231,7 +7240,8 @@ export function createGame(
       });
     }
     const clearNote = rowBonus > 0 ? `清格 +${rowBonus}` : "";
-    const tagLine = [tag, clearNote].filter(Boolean).join("  ");
+    const doubleNote = scoreDoubled ? "得分 ×2" : "";
+    const tagLine = [tag, clearNote, doubleNote].filter(Boolean).join("  ");
     if (tagLine && !hideMakeScore) {
       callouts.push({
         text: tagLine,

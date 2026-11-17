@@ -26,8 +26,6 @@ export const BLUEPRINT_RAISE = 0.35;
 export const BLUEPRINT_CROSS_RAISE = 0.2;
 /** @deprecated 旧周期下限；现改用 BLUEPRINT_RAISE，保留别名以免外部旧引用断裂。 */
 export const BLUEPRINT_EXTEND_MIN = BLUEPRINT_RAISE;
-/** 从第 2 球起，每多一球给「复数凸起」加的偏置（叠到约 0.9）。 */
-export const BLUEPRINT_MULTI_PER_GOAL = 0.12;
 /** 进球时若场上无动态，尝试生成一组的概率。 */
 export const BLUEPRINT_DYNAMIC_SPAWN = 0.45;
 /** 进球时动态整组消失：起步概率。 */
@@ -87,14 +85,105 @@ export const BLUEPRINT_MAX_LIGHTNESS = 0.18;
 
 export const BLUEPRINT_BLUE = "#11448f";
 /** 可调的生成权重；颜色与奖励只使用快照中的 seed / serial。 */
-export const BLUEPRINT_KIND_WEIGHTS = { white: 0.8, green: 0.12, red: 0.08 } as const;
+export const BLUEPRINT_KIND_WEIGHTS = { white: 0.74, green: 0.12, red: 0.08, black: 0.06 } as const;
 export const BLUEPRINT_LIT_RGB = "255, 255, 255";
 export const BLUEPRINT_RED_RGB = "217, 0, 27";
+/** 黑块填色。描边与其它凸块相同，保证在蓝底上能认出来。 */
+export const BLUEPRINT_BLACK = "#1A1A1A";
 /** 经典 / 肉鸽绿块抽到时钟奖时的加时额度（秒）。一分钟模式不发放此项。 */
 export const BLUEPRINT_CLOCK_SECONDS = 1;
-export type BlueprintBlockKind = "white" | "green" | "red";
-export type BlueprintRewardEvent = "base" | "combo" | "seconds";
+export type BlueprintBlockKind = "white" | "green" | "red" | "black";
+export type BlueprintRewardEvent = "base" | "combo" | "seconds" | "scoreDouble" | "comboProtection" | "areaClear" | "turnRed";
 export type BlueprintRewards = { base: number; combo: number; seconds: number };
+/** 种类按实体进球数解锁；未解锁权重为 0，再按原权重归一化。 */
+export const BLUEPRINT_KIND_UNLOCK = { white: 3, green: 9, red: 15, black: 21 } as const;
+/** 绿奖按清除当时的实体进球数解锁；外观仍是同一种绿。 */
+export const BLUEPRINT_REWARD_UNLOCK = {
+  base: 9,
+  combo: 9,
+  seconds: 9,
+  scoreDouble: 9,
+  comboProtection: 9,
+  areaClear: 12,
+  turnRed: 27,
+} as const;
+/** 已解锁的绿奖。一分钟不把时钟加时放入池中。 */
+export function blueprintRewardPool(allowClock: boolean, actual: number): BlueprintRewardEvent[] {
+  const made = finiteGoals(actual);
+  const pool: BlueprintRewardEvent[] = [];
+  if (made < BLUEPRINT_REWARD_UNLOCK.base) return pool;
+  pool.push("base", "combo");
+  if (allowClock && made >= BLUEPRINT_REWARD_UNLOCK.seconds) pool.push("seconds");
+  if (made >= BLUEPRINT_REWARD_UNLOCK.scoreDouble) pool.push("scoreDouble");
+  if (made >= BLUEPRINT_REWARD_UNLOCK.comboProtection) pool.push("comboProtection");
+  if (made >= BLUEPRINT_REWARD_UNLOCK.areaClear) pool.push("areaClear");
+  if (made >= BLUEPRINT_REWARD_UNLOCK.turnRed) pool.push("turnRed");
+  return pool;
+}
+
+export function blueprintRewardToast(reward: BlueprintRewardEvent) {
+  if (reward === "base") return "永久基础 +2";
+  if (reward === "combo") return "每球连击 +1";
+  if (reward === "scoreDouble") return "下一次进球得分 ×2";
+  if (reward === "comboProtection") return "连击保护 +1次";
+  if (reward === "areaClear") return "点亮并消除周围方块";
+  if (reward === "turnRed") return "相邻方块变为红色";
+  if (reward === "seconds") return `永久时钟 +${BLUEPRINT_CLOCK_SECONDS}秒`;
+  return "";
+}
+/** 周围 8 格（含斜线，不含自身）。 */
+export const BLUEPRINT_AREA_DELTAS = [
+  { dc: -1, dr: -1 }, { dc: 0, dr: -1 }, { dc: 1, dr: -1 },
+  { dc: -1, dr: 0 }, { dc: 1, dr: 0 },
+  { dc: -1, dr: 1 }, { dc: 0, dr: 1 }, { dc: 1, dr: 1 },
+] as const;
+export function blueprintAreaNeighbors(col: number, row: number) {
+  return BLUEPRINT_AREA_DELTAS.map((delta) => ({ col: col + delta.dc, row: row + delta.dr }));
+}
+/** 转红奖励：上下左右 4 格，不含斜线、不含自身。 */
+export const BLUEPRINT_TURN_RED_DELTAS = [
+  { dc: 0, dr: -1 }, { dc: -1, dr: 0 }, { dc: 1, dr: 0 }, { dc: 0, dr: 1 },
+] as const;
+export function blueprintTurnRedNeighbors(col: number, row: number) {
+  return BLUEPRINT_TURN_RED_DELTAS.map((delta) => ({ col: col + delta.dc, row: row + delta.dr }));
+}
+export function blueprintBlockKind(cell: { kind?: BlueprintBlockKind } | null | undefined): BlueprintBlockKind {
+  return cell?.kind ?? "white";
+}
+export function blueprintKindClearable(kind: BlueprintBlockKind | undefined) {
+  return blueprintBlockKind({ kind }) !== "black";
+}
+
+export type BlueprintKindWeights = Record<BlueprintBlockKind, number>;
+
+/** 未解锁种类权重视为 0，剩余种类按原权重再归一化。 */
+export function blueprintKindWeights(made: number): BlueprintKindWeights {
+  const actual = finiteGoals(made);
+  const unlocked: BlueprintKindWeights = {
+    white: actual >= BLUEPRINT_KIND_UNLOCK.white ? BLUEPRINT_KIND_WEIGHTS.white : 0,
+    green: actual >= BLUEPRINT_KIND_UNLOCK.green ? BLUEPRINT_KIND_WEIGHTS.green : 0,
+    red: actual >= BLUEPRINT_KIND_UNLOCK.red ? BLUEPRINT_KIND_WEIGHTS.red : 0,
+    black: actual >= BLUEPRINT_KIND_UNLOCK.black ? BLUEPRINT_KIND_WEIGHTS.black : 0,
+  };
+  const total = unlocked.white + unlocked.green + unlocked.red + unlocked.black;
+  if (!(total > 0)) return unlocked;
+  return {
+    white: unlocked.white / total,
+    green: unlocked.green / total,
+    red: unlocked.red / total,
+    black: unlocked.black / total,
+  };
+}
+
+export function blueprintPickKind(weights: BlueprintKindWeights, roll: number): BlueprintBlockKind {
+  const t = Math.min(1, Math.max(0, Number.isFinite(roll) ? roll : 0));
+  let acc = 0;
+  for (const kind of ["white", "green", "red", "black"] as const) {
+    acc += weights[kind];
+    if (t < acc) return kind;
+  }
+  return "white";
+}
 
 type View = Pick<World, "w" | "h" | "floorY" | "ballR" | "hoopInner">;
 type Rect = { x: number; y: number; w: number; h: number };
@@ -102,13 +191,26 @@ type Cell = Rect & { col: number; row: number };
 
 export const BLUEPRINT_SHAPES = ["line", "diag", "z", "l", "s", "u", "v", "c"] as const;
 export type BlueprintShape = (typeof BLUEPRINT_SHAPES)[number];
-export type BlueprintCellRef = { col: number; row: number; /** 旧快照缺省为 white。 */ kind?: BlueprintBlockKind };
+export type BlueprintCellRef = {
+  /** 稳定层身份，移动/变色不变，快照保留。 */ layerId?: string;
+  col: number; row: number; /** 旧快照缺省为 white。 */ kind?: BlueprintBlockKind;
+  /** 逐层亮态，随本块移动；缺省未亮。 */ lit?: boolean;
+  /** 叠亮绿已进入双轴判定，不能从普通 OR 清段旁路领奖。 */ overlapGreen?: boolean;
+  /** 转红后当前叠亮接触暂不激活；离开该接触后解除。 */ overlapSuppressed?: boolean;
+};
 export type BlueprintAim = {
   goals: number;
   ballX: number;
   ballY: number;
   hoopX: number;
   hoopY: number;
+};
+export type BlueprintBatchPiece = {
+  shape: BlueprintShape;
+  length: number;
+  variant: number;
+  anchor: BlueprintCellRef;
+  cells: BlueprintCellRef[];
 };
 export type BlueprintBatch = {
   cells: BlueprintCellRef[];
@@ -118,10 +220,17 @@ export type BlueprintBatch = {
   variant: number;
   mode: "idle" | "path";
   anchor: BlueprintCellRef | null;
+  /** 第 3 节抽到的目标格数。形状拼接不得私下裁短。 */
+  target: number;
+  /** 本批盖下的每一段形状；单格批次只有一段。 */
+  pieces: BlueprintBatchPiece[];
 };
 
 export type BlueprintDynamicPhase = "raise" | "hold" | "cross_out" | "cross_in";
 export type BlueprintDynamic = {
+  groupId?: string;
+  /** 多组时此对象为批兼容视图，cells/pending 为展平投影；groups 为真实组状态。 */
+  groups?: BlueprintDynamic[];
   cells: BlueprintCellRef[];
   /** cross_out 时已选定、尚未落到的下一格；否则为空。 */
   pending: BlueprintCellRef[];
@@ -142,6 +251,7 @@ export type BlueprintClock = {
   staticAge: number;
   staticRaise: number;
   dynamic: BlueprintDynamic | null;
+  identitySerial?: number;
   /** @deprecated 等同 staticCells，留给旧测试 / rewind。 */
   cells: BlueprintCellRef[];
   /** @deprecated 等同 staticAge。 */
@@ -150,6 +260,8 @@ export type BlueprintClock = {
   duration: number;
   /** 已点亮的格子，`col:row`。只增不减，格离开场上后丢掉。 */
   lit: string[];
+  /** 1 表示 cells 内逐层亮态为真值；lit 仅为坐标兼容投影。 */
+  layerStateVersion?: 1;
   /** 清排或清列后挂着的加分。下一次进球加进得分再清零。 */
   pendingBonus: number;
   /** 正在缩回、尚未离场的清格。 */
@@ -157,6 +269,10 @@ export type BlueprintClock = {
   /** 本局永久增量；可选仅为兼容旧快照。 */
   rewards?: BlueprintRewards;
   rewardSerial?: number;
+  /** 尚未兑现的「下一次实体进球得分 ×2」次数。旧快照缺省为 0。 */
+  scoreDoubleCharges?: number;
+  comboProtectionCharges?: number;
+  comboProtectionFlash?: number;
 };
 
 export type BlueprintClearingCell = {
@@ -175,6 +291,8 @@ export type BlueprintBlock = {
   col: number;
   row: number;
   dynamic: boolean;
+  /** 仅消除动画，不再参与亮态或直接触碰能力。 */
+  retracting?: boolean;
   /** 篮球踩亮后为 true。只亮不灭。 */
   lit: boolean;
   extend: number;
@@ -198,6 +316,7 @@ let staticCells: BlueprintCellRef[] = [];
 let staticAge = 0;
 let staticRaise = BLUEPRINT_RAISE;
 let dynamic: BlueprintDynamic | null = null;
+let identitySerial = 0;
 /** 已点亮的 `col:row`。 */
 let lit = new Set<string>();
 /** 清排 / 清列累计、尚未进球结算的加分。 */
@@ -207,7 +326,24 @@ let clearing: BlueprintClearingCell[] = [];
 let rewards: BlueprintRewards = { base: 0, combo: 0, seconds: 0 };
 let rewardSerial = 0;
 let rewardEvents: BlueprintRewardEvent[] = [];
-/** 由引擎按模式设置。默认 true，保持经典/肉鸽与现有模块测试的三选一。 */
+/** 尚未兑现的实体进球得分 ×2 次数。 */
+let scoreDoubleCharges = 0;
+export const BLUEPRINT_COMBO_PROTECTION_CAP = 3;
+export const BLUEPRINT_COMBO_FLASH_SECONDS = 0.75;
+let comboProtectionCharges = 0;
+let comboProtectionFlash = 0;
+export function getBlueprintComboProtection() { return comboProtectionCharges; }
+export function blueprintComboFlashAlpha() {
+  return Math.sin(Math.PI * Math.max(0, Math.min(1, comboProtectionFlash / BLUEPRINT_COMBO_FLASH_SECONDS)));
+}
+/** 只由有效断连入口调用，获取奖励本身不产生闪光。 */
+export function consumeBlueprintComboProtection() {
+  if (comboProtectionCharges <= 0) return false;
+  comboProtectionCharges--;
+  comboProtectionFlash = BLUEPRINT_COMBO_FLASH_SECONDS;
+  return true;
+}
+/** 由引擎按模式设置。默认 true，保持经典/肉鸽与现有模块测试的奖励池。 */
 let allowSeconds = true;
 
 export function setBlueprintAllowSeconds(allow: boolean) {
@@ -232,6 +368,10 @@ export function getBlueprintRewards(): BlueprintRewards {
   return { ...rewards };
 }
 
+export function getBlueprintScoreDoubleCharges() {
+  return scoreDoubleCharges;
+}
+
 /** 仅供 toast 消费；恢复快照不会重播历史提示。 */
 export function drainBlueprintRewardEvents(): BlueprintRewardEvent[] {
   return rewardEvents.splice(0);
@@ -242,7 +382,7 @@ let aim: BlueprintAim | null = null;
 let view: View | null = null;
 
 function copyCells(list: readonly BlueprintCellRef[]) {
-  return list.map((cell) => ({ col: cell.col, row: cell.row, ...(cell.kind ? { kind: cell.kind } : {}) }));
+  return list.map((cell) => ({ ...cell }));
 }
 
 function normalizeDynamicPhase(phase: string | undefined): BlueprintDynamicPhase {
@@ -252,7 +392,17 @@ function normalizeDynamicPhase(phase: string | undefined): BlueprintDynamicPhase
   return "hold";
 }
 
+/** 单组旧快照无需改相位；多组批使用 groups，兼容 cells 只做展平投影。 */
+export function blueprintDynamicGroups(batch: BlueprintDynamic | null | undefined): BlueprintDynamic[] {
+  return batch ? (batch.groups?.length ? batch.groups : [batch]) : [];
+}
+function packDynamic(groups: BlueprintDynamic[]): BlueprintDynamic | null {
+  if (!groups.length) return null;
+  if (groups.length === 1) return groups[0]!;
+  return { ...groups[0]!, cells: groups.flatMap((g) => g.cells), pending: groups.flatMap((g) => g.pending), groups };
+}
 function copyDynamic(next: BlueprintDynamic & { prev?: BlueprintCellRef[] }): BlueprintDynamic {
+  if (next.groups?.length) return packDynamic(next.groups.map((group) => copyDynamic(group)))!;
   const pending = next.pending?.length
     ? copyCells(next.pending)
     : next.prev?.length && normalizeDynamicPhase(next.phase) === "cross_out"
@@ -262,6 +412,7 @@ function copyDynamic(next: BlueprintDynamic & { prev?: BlueprintCellRef[] }): Bl
     ? copyCells(next.prev)
     : copyCells(next.cells);
   return {
+    ...(next.groupId ? { groupId: next.groupId } : {}),
     cells,
     pending,
     dir: clampDir(next.dir),
@@ -270,6 +421,28 @@ function copyDynamic(next: BlueprintDynamic & { prev?: BlueprintCellRef[] }): Bl
     stepSpan: next.stepSpan > 0 ? next.stepSpan : BLUEPRINT_STEP_MIN,
     raise: next.raise > 0 ? next.raise : BLUEPRINT_RAISE,
   };
+}
+
+function ensureLayerIdentities() {
+  const groups = blueprintDynamicGroups(dynamic);
+  const cells = [...staticCells, ...groups.flatMap((g) => g.cells)];
+  // 先保留全部旧 ID，避免缺失计数器的混合快照中新分配 ID 撞到后续旧层/组。
+  const reserved = new Set([...cells.map((c) => c.layerId), ...groups.map((g) => g.groupId)].filter(Boolean));
+  const used = new Set<string>();
+  const identity = (current: string | undefined, prefix: string) => {
+    if (current && !used.has(current)) { used.add(current); return current; }
+    let id: string;
+    do { id = `${prefix}:${++identitySerial}`; } while (used.has(id) || reserved.has(id));
+    used.add(id);
+    return id;
+  };
+  for (const cell of staticCells) cell.layerId = identity(cell.layerId, "layer");
+  for (const group of groups) {
+    group.groupId = identity(group.groupId, "group");
+    for (const cell of group.cells) cell.layerId = identity(cell.layerId, "layer");
+    group.pending = group.pending.map((cell, i) => ({ ...cell, layerId: group.cells[i]?.layerId ?? cell.layerId }));
+  }
+  dynamic = packDynamic(groups);
 }
 
 function clampDir(value: number): BlueprintDir {
@@ -296,13 +469,18 @@ export function getBlueprintClock(): BlueprintClock {
     staticAge,
     staticRaise,
     dynamic: dynamic ? copyDynamic(dynamic) : null,
+    identitySerial,
     cells,
     cycle: staticAge,
     duration: staticRaise,
     lit: [...lit],
+    layerStateVersion: 1,
     pendingBonus,
     rewards: { ...rewards },
     rewardSerial,
+    scoreDoubleCharges,
+    comboProtectionCharges,
+    comboProtectionFlash,
     clearing: clearing.map((cell) => ({ ...cell })),
   };
 }
@@ -317,10 +495,24 @@ export function restoreBlueprintClock(next: BlueprintClock) {
   staticAge = Number.isFinite(next.staticAge) ? next.staticAge : Number.isFinite(next.cycle) ? next.cycle : 0;
   staticRaise = next.staticRaise > 0 ? next.staticRaise : next.duration > 0 ? next.duration : BLUEPRINT_RAISE;
   dynamic = next.dynamic ? copyDynamic(next.dynamic) : null;
+  identitySerial = finiteBonus(next.identitySerial);
+  ensureLayerIdentities();
   lit = new Set((next.lit ?? []).filter((key) => typeof key === "string" && key.includes(":")));
+  if (next.layerStateVersion !== 1) {
+    // 旧坐标快照无法恢复所属层：只迁移给该格最高的非黑层，不复制给两层。
+    for (const key of lit) {
+      const top = blueprintTopLayer(liveLayerEntries().filter((layer) => (
+        cellKey(layer.cell) === key && blueprintBlockKind(layer.cell) !== "black"
+      )));
+      if (top) top.cell.lit = true;
+    }
+  }
   pendingBonus = finiteBonus(next.pendingBonus);
   rewards = { base: finiteBonus(next.rewards?.base), combo: finiteBonus(next.rewards?.combo), seconds: finiteBonus(next.rewards?.seconds) };
   rewardSerial = finiteBonus(next.rewardSerial);
+  scoreDoubleCharges = finiteBonus(next.scoreDoubleCharges);
+  comboProtectionCharges = Math.min(BLUEPRINT_COMBO_PROTECTION_CAP, finiteBonus(next.comboProtectionCharges));
+  comboProtectionFlash = Math.min(BLUEPRINT_COMBO_FLASH_SECONDS, Math.max(0, Number.isFinite(next.comboProtectionFlash) ? next.comboProtectionFlash! : 0));
   rewardEvents = [];
   clearing = (next.clearing ?? []).map((cell) => ({
     col: cell.col,
@@ -344,10 +536,14 @@ export function resetBlueprint(nextSeed = Math.random() * 1e6) {
   staticAge = 0;
   staticRaise = BLUEPRINT_RAISE;
   dynamic = null;
+  identitySerial = 0;
   lit = new Set();
   pendingBonus = 0;
   rewards = { base: 0, combo: 0, seconds: 0 };
   rewardSerial = 0;
+  scoreDoubleCharges = 0;
+  comboProtectionCharges = 0;
+  comboProtectionFlash = 0;
   rewardEvents = [];
   clearing = [];
   hasBatch = false;
@@ -358,22 +554,30 @@ export function resetBlueprint(nextSeed = Math.random() * 1e6) {
 export function resetBlueprintProgress(preserveRewards = false) {
   const carriedRewards = rewards;
   const carriedRewardSerial = rewardSerial;
+  const carriedDoubles = scoreDoubleCharges;
+  const carriedProtection = comboProtectionCharges;
   elapsed = 0;
   goals = 0;
   staticCells = [];
   staticAge = 0;
   staticRaise = BLUEPRINT_RAISE;
   dynamic = null;
+  identitySerial = 0;
   lit = new Set();
   pendingBonus = 0;
   rewards = { base: 0, combo: 0, seconds: 0 };
   rewardSerial = 0;
+  scoreDoubleCharges = 0;
+  comboProtectionCharges = 0;
+  comboProtectionFlash = 0;
   rewardEvents = [];
   clearing = [];
   hasBatch = false;
   if (preserveRewards) {
     rewards = carriedRewards;
     rewardSerial = carriedRewardSerial;
+    scoreDoubleCharges = carriedDoubles;
+    comboProtectionCharges = carriedProtection;
   }
 }
 
@@ -387,35 +591,38 @@ function finiteBonus(value: number | undefined) {
   return Math.max(0, Math.floor(value ?? 0));
 }
 
-/** 点亮只保留还在场上的格。已经离开的坐标删掉。 */
+/** 坐标亮态只是逐层状态的投影，不再作为移动/快照真值。 */
 function pruneLit() {
-  const live = new Set<string>();
-  for (const cell of staticCells) live.add(cellKey(cell));
-  if (dynamic) for (const cell of dynamic.cells) live.add(cellKey(cell));
-  for (const key of lit) if (!live.has(key)) lit.delete(key);
+  lit = new Set<string>();
+  for (const cell of [...staticCells, ...(dynamic?.cells ?? [])]) {
+    if (blueprintBlockKind(cell) === "black") { delete cell.lit; continue; }
+    if (cell.lit) lit.add(cellKey(cell));
+  }
 }
 
-/** 换批前记下还在场上的动态格里，哪些已经点亮。 */
-function dynamicLitKeys() {
-  const keep = new Set<string>();
-  if (!dynamic) return keep;
-  for (const cell of dynamic.cells) {
-    const key = cellKey(cell);
-    if (lit.has(key)) keep.add(key);
-  }
-  return keep;
+/** 同一选择器同时用于显示和直接触碰能力，低层不因遮挡删除。 */
+export function blueprintLayerPriority(layer: { kind?: BlueprintBlockKind; dynamic: boolean }) {
+  return (blueprintBlockKind(layer) !== "white" ? 2 : 0) + (layer.dynamic ? 1 : 0);
 }
-
-/** 新静态一律未点亮。只有换批后仍在的动态格沿用进球前的亮。 */
-function keepOnlyDynamicLit(keep: Set<string>) {
-  const next = new Set<string>();
-  if (dynamic) {
-    for (const cell of dynamic.cells) {
-      const key = cellKey(cell);
-      if (keep.has(key)) next.add(key);
-    }
+export function blueprintTopLayer<T extends { kind?: BlueprintBlockKind; dynamic: boolean; id?: string }>(layers: readonly T[]): T | undefined {
+  return layers.reduce<T | undefined>((top, layer) => {
+    if (!top) return layer;
+    const difference = blueprintLayerPriority(layer) - blueprintLayerPriority(top);
+    return difference > 0 || (difference === 0 && layer.id && top.id && layer.id < top.id) ? layer : top;
+  }, undefined);
+}
+function liveLayerEntries() {
+  return [...staticCells.map((cell) => ({ cell, dynamic: false, kind: cell.kind, id: cell.layerId })),
+    ...(dynamic?.cells ?? []).map((cell) => ({ cell, dynamic: true, kind: cell.kind, id: cell.layerId }))];
+}
+function topLayerAtKey(key: string) {
+  return blueprintTopLayer(liveLayerEntries().filter((layer) => cellKey(layer.cell) === key));
+}
+function lightLayersAt(ref: BlueprintCellRef, onlyWhite = false) {
+  for (const layer of layersAt(ref)) {
+    if (blueprintBlockKind(layer) !== "black" && (!onlyWhite || blueprintBlockKind(layer) === "white")) layer.lit = true;
   }
-  lit = next;
+  pruneLit();
 }
 
 export function blueprintDespawnChance(made: number) {
@@ -467,43 +674,40 @@ function sampleStepSpan(layoutSeed: number, batchSerial: number) {
   return BLUEPRINT_STEP_MIN + (BLUEPRINT_STEP_MAX - BLUEPRINT_STEP_MIN) * t;
 }
 
-function trySpawnDynamic(goalsNow: number) {
-  if (!view || dynamic) return;
-  const room = BLUEPRINT_MAX_COUNT - staticCells.length;
-  if (room <= 0) return;
-  const ball = aimBall();
-  const hoop = aimHoop();
-  const batch = rollBlueprintBatch(view, {
-    seed,
-    serial: serial + 17,
-    goals: goalsNow,
-    ball,
-    hoop,
-    maxCount: room,
-  });
-  if (!batch.cells.length) return;
-  const cells = batch.cells.slice(0, room);
-  if (!cells.length) return;
-  dynamic = {
-    cells,
-    pending: [],
-    dir: clampDir(Math.floor(unitAt(seed, serial + 17, 8) * 4)),
-    phase: "raise",
-    age: 0,
-    stepSpan: sampleStepSpan(seed, serial + 17),
-    raise: BLUEPRINT_RAISE,
-  };
+/** 动态预算>=4才拆为2..3个每组至少2格的小组，不增加采样预算或掷签次数。 */
+export function blueprintDynamicGroupBudgets(room: number) {
+  room = Math.min(BLUEPRINT_MAX_COUNT - 1, finiteBonus(room));
+  const count = room >= 4 ? Math.min(3, Math.floor(room / 2)) : room > 0 ? 1 : 0;
+  return Array.from({ length: count }, (_, i) => Math.floor(room / count) + (i < room % count ? 1 : 0));
+}
+function trySpawnDynamic(goalsNow: number, room: number) {
+  if (!view || dynamic || room <= 0 || goalsNow < 3) return;
+  const groups: BlueprintDynamic[] = [];
+  const baseDir = Math.floor(unitAt(seed, serial + 17, 8) * 4);
+  for (const [index, budget] of blueprintDynamicGroupBudgets(room).entries()) {
+    const batch = rollBlueprintBatch(view, {
+      seed, serial: serial + 17 + index, goals: goalsNow, ball: aimBall(), hoop: aimHoop(),
+      maxCount: budget, want: budget, exclude: [...staticCells, ...groups.flatMap((g) => g.cells)],
+    });
+    if (!batch.cells.length) continue;
+    groups.push({
+      cells: batch.cells.slice(0, budget), pending: [], dir: clampDir(baseDir + index),
+      phase: "raise", age: 0, stepSpan: sampleStepSpan(seed, serial + 17 + index), raise: BLUEPRINT_RAISE,
+    });
+  }
+  dynamic = packDynamic(groups);
 }
 
 function applyGoalChange(goalsNow: number) {
   // 还没收到 world 时先别落批，等下一帧。
   if (goalsNow > 0 && !view) return;
-  const carriedLit = dynamicLitKeys();
+  const beforeLocks = blueprintLockedLines();
   if (hasBatch && goalsNow !== goals) serial += 1;
   goals = goalsNow;
   staticAge = 0;
   staticRaise = BLUEPRINT_RAISE;
-  if (goalsNow <= 0 || !view) {
+  const softMax = blueprintCountSoftMax(goalsNow);
+  if (goalsNow <= 0 || !view || softMax <= 0) {
     staticCells = [];
     dynamic = null;
     hasBatch = true;
@@ -512,82 +716,80 @@ function applyGoalChange(goalsNow: number) {
   }
   const ball = aimBall();
   const hoop = aimHoop();
-  const batch = rollBlueprintBatch(view, { seed, serial, goals: goalsNow, ball, hoop });
-  staticCells = batch.cells.slice(0, BLUEPRINT_MAX_COUNT);
+  // softMax 只限制可抽范围，不是密度目标。先均匀抽合计格数，再扣除留下的动态占用。
+  const want = Math.min(softMax, BLUEPRINT_MAX_COUNT, blueprintSampleCount(goalsNow, unitAt(seed, serial, 0)));
   if (dynamic) {
     if (unitAt(seed, serial, 9) < blueprintDespawnChance(goalsNow)) dynamic = null;
-    else if (staticCells.length + dynamic.cells.length > BLUEPRINT_MAX_COUNT) {
+    else if (dynamic.cells.length > softMax || dynamic.cells.length > BLUEPRINT_MAX_COUNT) {
       // 合计放不下时整组离开，不裁掉其中几格。
       dynamic = null;
     }
-  } else if (unitAt(seed, serial, 10) < BLUEPRINT_DYNAMIC_SPAWN * blueprintEarlyRamp(goals)) {
-    trySpawnDynamic(goalsNow);
   }
+  const retainedDynamic = dynamic !== null;
+  // 旧静态已换批，不能占用新动态的合法位置。先给新动态留名额，避免静态先填满 want。
+  staticCells = [];
+  if (!dynamic && want > 1 && unitAt(seed, serial, 10) < BLUEPRINT_DYNAMIC_SPAWN) {
+    // 至少留一格静态；want == 1 不额外生动态。生成/消失掷签及移动参数均不变。
+    trySpawnDynamic(goalsNow, want - 1);
+  }
+  const reserved = dynamic ? dynamic.cells.length : 0;
+  // 不补到 softMax：动态多于本次抽样时静态为 0，不强行摘掉整组；消失式不变。
+  const staticWant = Math.max(0, want - reserved);
+  const batch = rollBlueprintBatch(view, {
+    seed, serial, goals: goalsNow, ball, hoop, maxCount: staticWant, want: staticWant,
+    // 仅预留新生动态的位置；已存在的动态依旧允许与新静态重叠，不改叠层规则。
+    exclude: !retainedDynamic ? dynamic?.cells : undefined,
+  });
+  staticCells = batch.cells.slice(0, staticWant);
+  ensureLayerIdentities();
   hasBatch = true;
-  keepOnlyDynamicLit(carriedLit);
-}
-
-function beginDynamicCross() {
-  if (!dynamic || !view) return;
-  const ball = aimBall();
-  const order: BlueprintDir[] = [0, 1, 2, 3].map((i) => clampDir(dynamic!.dir + i));
-  for (const dir of order) {
-    const next = blueprintTranslateCells(dynamic.cells, dir);
-    if (groupHardBlocked(view, next, ball)) continue;
-    // 先整组同步缩回，再落到新格同步升起；全程同一线性进度。
-    dynamic = {
-      ...dynamic,
-      dir,
-      pending: next,
-      phase: "cross_out",
-      age: 0,
-      raise: BLUEPRINT_CROSS_RAISE,
-    };
-    return;
+  // 只有原组保留才继承其点亮，新生组不能继承刚消失原组的同坐标点亮。
+  pruneLit();
+  recheckOverlapActivations();
+  // 只有黑锁发生变化时才补判：避免换批后把仍点亮的孤立动态格立刻清掉。
+  const afterLocks = blueprintLockedLines();
+  if (beforeLocks.rows.size !== afterLocks.rows.size || beforeLocks.cols.size !== afterLocks.cols.size
+    || [...beforeLocks.rows].some((row) => !afterLocks.rows.has(row))
+    || [...beforeLocks.cols].some((col) => !afterLocks.cols.has(col))) {
+    recheckFieldLines();
   }
-  // 四面都不通：跳过这一步，继续 hold。
-  dynamic = { ...dynamic, phase: "hold", age: 0, pending: [] };
 }
 
+function beginDynamicCross(group: BlueprintDynamic): BlueprintDynamic {
+  if (!view) return { ...group, phase: "hold", age: 0, pending: [] };
+  const ball = aimBall();
+  const order: BlueprintDir[] = [0, 1, 2, 3].map((i) => clampDir(group.dir + i));
+  for (const dir of order) {
+    const next = blueprintTranslateCells(group.cells, dir);
+    if (groupHardBlocked(view, next, ball)) continue;
+    return { ...group, dir, pending: next, phase: "cross_out", age: 0, raise: BLUEPRINT_CROSS_RAISE };
+  }
+  return { ...group, phase: "hold", age: 0, pending: [] };
+}
 function stepDynamic(dt: number) {
   if (!dynamic || !(dt > 0)) return;
-  let d = dynamic;
-  d = { ...d, age: d.age + dt };
-  if (d.phase === "raise" || d.phase === "cross_in") {
-    if (d.age >= d.raise) d = { ...d, phase: "hold", age: 0, pending: [] };
-  } else if (d.phase === "hold") {
-    if (d.age >= d.stepSpan) {
-      dynamic = d;
-      beginDynamicCross();
-      return;
+  let committed = false;
+  const groups: BlueprintDynamic[] = [];
+  for (const group of blueprintDynamicGroups(dynamic)) {
+    let d = { ...group, age: group.age + dt };
+    if (d.phase === "raise" || d.phase === "cross_in") {
+      if (d.age >= d.raise) d = { ...d, phase: "hold", age: 0, pending: [] };
+    } else if (d.phase === "hold") {
+      if (d.age >= d.stepSpan) d = beginDynamicCross(d);
+    } else if (d.phase === "cross_out" && d.age >= d.raise) {
+      committed = true;
+      const cells = d.pending.map((target, i) => ({ ...d.cells[i]!, col: target.col, row: target.row }));
+      if (!cells.length) continue;
+      d = { ...d, cells, pending: [], phase: "cross_in", age: 0 };
     }
-  } else if (d.phase === "cross_out") {
-    if (d.age >= d.raise) {
-      const from = copyCells(d.cells);
-      const to = copyCells(d.pending);
-      if (!to.length) {
-        dynamic = null;
-        return;
-      }
-      dynamic = { ...d, cells: to, pending: [], phase: "cross_in", age: 0 };
-      carryDynamicLit(from, to);
-      recheckFieldLines();
-      return;
-    }
+    groups.push(d);
   }
-  dynamic = d;
-}
-
-/** 动态格挪走时，亮跟着这块走。底下还压着的静态保持亮，不算踩灭。 */
-function carryDynamicLit(from: readonly BlueprintCellRef[], to: readonly BlueprintCellRef[]) {
-  const staying = staticKeySet();
-  const n = Math.min(from.length, to.length);
-  for (let i = 0; i < n; i++) {
-    const src = cellKey(from[i]!);
-    const dst = cellKey(to[i]!);
-    if (src === dst || !lit.has(src)) continue;
-    lit.add(dst);
-    if (!staying.has(src)) lit.delete(src);
+  // 事务提交：先完成所有组的位置，再以最终在场布局统一判叠亮、黑锁和清段。
+  dynamic = packDynamic(groups);
+  if (committed) {
+    pruneLit();
+    recheckOverlapActivations();
+    recheckFieldLines();
   }
 }
 
@@ -614,8 +816,10 @@ export function stepBlueprint(
   // 黑洞存在时不换静态、不新生成动态。已在场上的照常伸缩。洞结束后进球数若已变，再按当前数补一批。
   if (!opts?.generationHold && (!hasBatch || goalsNow !== goals)) applyGoalChange(goalsNow);
   pruneLit();
+  if (playing) recheckOverlapActivations();
   if (!(dt > 0)) return;
   if (playing) {
+    comboProtectionFlash = Math.max(0, comboProtectionFlash - dt);
     elapsed += dt;
     staticAge += dt;
     stepDynamic(dt);
@@ -758,25 +962,23 @@ export function blueprintQuota(requested: number) {
 }
 
 /**
- * 本批要凸出几格。
- * 进球前为 0；第 1 球固定 1；之后软上限随进球升高，且 `roll` 越容易落到更大值。
+ * 本批可能生成的格数上限（静态 + 动态合计）。
+ * 前 3 次实体进球完成后仍为 0（actual 0–3）；第 4 球开始，每 4 球 +1，第 40 球起封顶 10。
+ * 上限只决定抽样范围，不是后期密度目标；范围内各整数等概率。
  */
-/** First five makes are a quiet opening; full density returns at make 16. */
-export function blueprintEarlyRamp(made: number) {
-  return Math.max(0, Math.min(1, (finiteGoals(made) - 5) / 11));
+export function blueprintCountSoftMax(made: number) {
+  const actual = finiteGoals(made);
+  if (actual <= 3) return 0;
+  return Math.min(BLUEPRINT_MAX_COUNT, 1 + Math.floor((actual - 4) / 4));
 }
 
 export function blueprintSampleCount(made: number, roll: number) {
-  const actual = finiteGoals(made);
-  const g = actual <= 5 ? Math.min(1, actual) : actual < 16 ? 1 + Math.floor((actual - 5) / 2) : actual;
-  if (g <= 0) return 0;
-  if (g === 1) return 1;
-  const softMax = Math.min(BLUEPRINT_MAX_COUNT, 1 + g);
-  const bias = Math.min(0.9, (g - 1) * BLUEPRINT_MULTI_PER_GOAL);
-  const p = Math.max(0.28, 1 - bias);
+  const softMax = blueprintCountSoftMax(made);
+  if (softMax <= 0) return 0;
+  if (softMax === 1) return 1;
+  // 随机输入通常在 [0,1)，仍容忍 1 / 越界值；非有限输入沿用 0 的安全回退。
   const t = Math.min(1, Math.max(0, Number.isFinite(roll) ? roll : 0));
-  const u = Math.pow(t, p);
-  return Math.max(1, Math.min(softMax, 1 + Math.floor(u * softMax)));
+  return Math.min(softMax, 1 + Math.floor(t * softMax));
 }
 
 /** @deprecated 旧时长区间；现一批保持到下一次进球，升起用 BLUEPRINT_RAISE。 */
@@ -936,61 +1138,121 @@ export function rollBlueprintBatch(
     hoop?: { x: number; y: number } | null;
     exclude?: readonly BlueprintCellRef[] | null;
     maxCount?: number;
+    /** 若给出则不再抽样，直接作为本批目标格数（仍受 maxCount 限制）。 */
+    want?: number;
   },
 ): BlueprintBatch {
   const layoutSeed = Number.isFinite(opts.seed) ? opts.seed : 1;
   const batchSerial = Number.isFinite(opts.serial) ? opts.serial : 0;
   const made = finiteGoals(opts.goals);
   const cap = blueprintQuota(opts.maxCount ?? BLUEPRINT_MAX_COUNT);
-  const want = Math.min(cap, blueprintSampleCount(made, unitAt(layoutSeed, batchSerial, 0)));
+  const want = opts.want != null
+    ? Math.min(cap, Math.max(0, Math.floor(opts.want)))
+    : Math.min(cap, blueprintSampleCount(made, unitAt(layoutSeed, batchSerial, 0)));
   const duration = BLUEPRINT_RAISE;
-  if (want <= 0) {
-    return { cells: [], duration, shape: "line", length: 1, variant: 0, mode: "idle", anchor: null };
-  }
-  const shape = want === 1
-    ? "line"
-    : BLUEPRINT_SHAPES[Math.min(BLUEPRINT_SHAPES.length - 1, Math.floor(unitAt(layoutSeed, batchSerial, 1) * BLUEPRINT_SHAPES.length))]!;
-  const length = shapeLength(shape, want);
-  const variant = want === 1 ? 0 : Math.min(7, Math.floor(unitAt(layoutSeed, batchSerial, 3) * 8));
+  const empty = (): BlueprintBatch => ({ cells: [], duration, shape: "line", length: 1, variant: 0, mode: "idle", anchor: null, target: 0, pieces: [] });
+  if (want <= 0) return empty();
   const ball = opts.ball && Number.isFinite(opts.ball.x) && Number.isFinite(opts.ball.y) ? opts.ball : null;
   const hoop = opts.hoop && Number.isFinite(opts.hoop.x) && Number.isFinite(opts.hoop.y) ? opts.hoop : null;
   const banned = new Set((opts.exclude ?? []).map(cellKey));
   const legal = blueprintLegalCells(world, ball).filter((cell) => !banned.has(cellKey(cell)));
-  const allowed = new Set(legal.map((cell) => `${cell.col}:${cell.row}`));
   const path = ball && hoop ? legal.filter((cell) => blueprintOnShotPath(world, cell, ball, hoop)) : [];
   const wantPath = unitAt(layoutSeed, batchSerial, 4) < 0.5 && path.length > 0;
-  const pool = wantPath ? path : legal;
+  const firstPool = wantPath ? path : legal;
   const mode: "idle" | "path" = wantPath ? "path" : "idle";
-  const ordered = pool.slice().sort((a, b) => hash01(layoutSeed + batchSerial * 3.1, a) - hash01(layoutSeed + batchSerial * 3.1, b) || a.row - b.row || a.col - b.col);
-  let placed: BlueprintCellRef[] = [];
-  let anchor: BlueprintCellRef | null = null;
-  if (want === 1) {
-    const pick = ordered[0];
-    if (pick) {
-      placed = [{ col: pick.col, row: pick.row }];
-      anchor = { col: pick.col, row: pick.row };
-    }
-  } else {
-    for (const cell of ordered) {
+  const orderPool = (pool: Cell[]) => pool.slice().sort((a, b) => hash01(layoutSeed + batchSerial * 3.1, a) - hash01(layoutSeed + batchSerial * 3.1, b) || a.row - b.row || a.col - b.col);
+
+  const pieces: BlueprintBatchPiece[] = [];
+  const placed: BlueprintCellRef[] = [];
+  const occupied = new Set<string>();
+
+  const remainingLegal = (pool: Cell[]) => pool.filter((cell) => !occupied.has(cellKey(cell)));
+
+  const placeBest = (shape: BlueprintShape, length: number, variant: number, pool: Cell[], room: number) => {
+    const open = remainingLegal(pool);
+    const allowed = new Set(open.map((cell) => `${cell.col}:${cell.row}`));
+    let best: BlueprintCellRef[] = [];
+    let bestAnchor: BlueprintCellRef | null = null;
+    for (const cell of orderPool(open)) {
       const stamped = blueprintStamp(shape, length, variant, { col: cell.col, row: cell.row });
-      const kept = clipBlueprintCells(stamped, (col, row) => allowed.has(`${col}:${row}`));
-      if (kept.length > placed.length) {
-        placed = kept;
-        anchor = { col: cell.col, row: cell.row };
+      const kept = clipBlueprintCells(stamped, (col, row) => allowed.has(`${col}:${row}`)).slice(0, room);
+      if (kept.length > best.length) {
+        best = kept;
+        bestAnchor = { col: cell.col, row: cell.row };
       }
-      if (placed.length >= want) break;
+      if (best.length >= room) break;
+    }
+    return { cells: best, anchor: bestAnchor };
+  };
+
+  const commit = (shape: BlueprintShape, length: number, variant: number, anchor: BlueprintCellRef, cells: BlueprintCellRef[]) => {
+    const unique = cells.filter((cell) => {
+      const key = cellKey(cell);
+      if (occupied.has(key)) return false;
+      occupied.add(key);
+      return true;
+    }).slice(0, want - placed.length);
+    if (!unique.length) return;
+    pieces.push({ shape, length, variant, anchor, cells: unique.map((cell) => ({ col: cell.col, row: cell.row })) });
+    placed.push(...unique);
+  };
+
+  if (want === 1) {
+    const pick = orderPool(firstPool)[0];
+    if (pick) commit("line", 1, 0, { col: pick.col, row: pick.row }, [{ col: pick.col, row: pick.row }]);
+  } else {
+    let salt = 50;
+    let first = true;
+    while (placed.length < want) {
+      const room = want - placed.length;
+      const fillPool = first ? firstPool : legal;
+      const open = remainingLegal(fillPool);
+      if (!open.length) {
+        // 第一段若落在投篮路上且路不够，改用全部合法格把数量补满。
+        if (first && fillPool !== legal && remainingLegal(legal).length) {
+          first = false;
+          continue;
+        }
+        break;
+      }
+      if (room === 1 || open.length === 1) {
+        const pick = orderPool(open)[0]!;
+        commit("line", 1, 0, { col: pick.col, row: pick.row }, [{ col: pick.col, row: pick.row }]);
+        first = false;
+        continue;
+      }
+      const shape = BLUEPRINT_SHAPES[Math.min(BLUEPRINT_SHAPES.length - 1, Math.floor(unitAt(layoutSeed, batchSerial, salt++) * BLUEPRINT_SHAPES.length))]!;
+      const length = shapeLength(shape, room);
+      const variant = Math.min(7, Math.floor(unitAt(layoutSeed, batchSerial, salt++) * 8));
+      const hit = placeBest(shape, length, variant, fillPool, room);
+      if (hit.cells.length && hit.anchor) {
+        commit(shape, length, variant, hit.anchor, hit.cells);
+      } else {
+        const pick = orderPool(open)[0]!;
+        commit("line", 1, 0, { col: pick.col, row: pick.row }, [{ col: pick.col, row: pick.row }]);
+      }
+      first = false;
     }
   }
+
+  const head = pieces[0];
+  const weights = blueprintKindWeights(made);
   const capped = placed.slice(0, Math.min(want, cap)).map((cell, index) => {
     const roll = unitAt(layoutSeed, batchSerial, 20 + index);
-    const ramp = blueprintEarlyRamp(made);
-    const green = BLUEPRINT_KIND_WEIGHTS.green * ramp;
-    const red = BLUEPRINT_KIND_WEIGHTS.red * ramp;
-    const white = 1 - green - red;
-    const kind: BlueprintBlockKind = roll < white ? "white" : roll < white + green ? "green" : "red";
+    const kind = blueprintPickKind(weights, roll);
     return { ...cell, kind };
   });
-  return { cells: capped, duration, shape, length, variant, mode, anchor: capped.length ? anchor : null };
+  return {
+    cells: capped,
+    duration,
+    shape: head?.shape ?? "line",
+    length: head?.length ?? 1,
+    variant: head?.variant ?? 0,
+    mode,
+    anchor: capped.length ? head?.anchor ?? null : null,
+    target: want,
+    pieces,
+  };
 }
 
 /** 0 贴平，1 完全凸出。升满后保持为 1，直到换批把 age 清零。 */
@@ -1035,12 +1297,13 @@ function pushBlock(
   const base = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
   occupied.add(key);
   blocks.push({
-    id: `${isDynamic ? "d" : "s"}:${key}`,
+    id: ref.layerId ?? `${isDynamic ? "d" : "s"}:${key}`,
     kind: ref.kind ?? "white",
     index: blocks.length,
     col: ref.col,
     row: ref.row,
     dynamic: isDynamic,
+    ...(force ? { retracting: true } : {}),
     lit: isLit,
     extend,
     cell: base,
@@ -1090,15 +1353,14 @@ export function blueprintBlocks(world: View, clock = getBlueprintClock()): Bluep
   const litKeys = new Set(clock.lit ?? []);
   const staticSeen = new Set<string>();
   for (const ref of staticList) {
-    pushBlock(blocks, world, grid, ref, staticExtend, false, staticSeen, litKeys.has(cellKey(ref)));
+    pushBlock(blocks, world, grid, ref, staticExtend, false, staticSeen, blueprintBlockKind(ref) !== "black" && (ref.lit ?? (clock.layerStateVersion !== 1 && litKeys.has(cellKey(ref)))));
   }
-  const dyn = clock.dynamic;
-  if (dyn?.cells?.length) {
+  for (const dyn of blueprintDynamicGroups(clock.dynamic)) {
     const dynamicSeen = new Set<string>();
     for (const ref of blueprintDynamicDrawCells(dyn)) {
       const extend = blueprintDynamicCellExtend(dyn, ref, staticKeys);
       if (extend <= 0) continue;
-      pushBlock(blocks, world, grid, ref, extend, true, dynamicSeen, litKeys.has(cellKey(ref)));
+      pushBlock(blocks, world, grid, ref, extend, true, dynamicSeen, blueprintBlockKind(ref) !== "black" && (ref.lit ?? (clock.layerStateVersion !== 1 && litKeys.has(cellKey(ref)))));
     }
   }
   for (const cell of clock.clearing ?? []) {
@@ -1107,6 +1369,19 @@ export function blueprintBlocks(world: View, clock = getBlueprintClock()): Bluep
     pushBlock(blocks, world, grid, cell, extend, false, new Set(), true, true);
   }
   return blocks;
+}
+
+export function blueprintVisibleBlocks(world: View, clock = getBlueprintClock()) {
+  const byKey = new Map<string, BlueprintBlock[]>();
+  for (const block of blueprintBlocks(world, clock)) {
+    if (block.extend <= 0) continue;
+    const key = cellKey(block);
+    byKey.set(key, [...(byKey.get(key) ?? []), block]);
+  }
+  return [...byKey.values()].map((layers) => {
+    const live = layers.filter((layer) => !layer.retracting);
+    return blueprintTopLayer(live.length ? live : layers)!;
+  });
 }
 
 /** 清排 / 清列缩回：从开始时的高度线性收到 0，时长与动态组缩回相同。 */
@@ -1118,7 +1393,11 @@ export function blueprintClearExtend(age: number, span = BLUEPRINT_CROSS_RAISE, 
   return start * (1 - age / dur);
 }
 
-/** 仍占着这一排的格。动态缩平过程中高度接近 0 也算在场，避免误清。 */
+function allLiveLayers(clock: Pick<BlueprintClock, "staticCells" | "cells" | "dynamic">) {
+  return [...(clock.staticCells ?? clock.cells ?? []), ...blueprintDynamicGroups(clock.dynamic).flatMap((g) => g.cells)];
+}
+
+/** 仍占着这一格的所有层，含黑块。动态缩平过程中高度接近 0 也算在场。 */
 export function blueprintFieldCells(clock: Pick<BlueprintClock, "staticCells" | "cells" | "dynamic">) {
   const seen = new Set<string>();
   const cells: BlueprintCellRef[] = [];
@@ -1128,9 +1407,44 @@ export function blueprintFieldCells(clock: Pick<BlueprintClock, "staticCells" | 
     seen.add(key);
     cells.push({ col: cell.col, row: cell.row });
   };
-  for (const cell of clock.staticCells ?? clock.cells ?? []) add(cell);
-  for (const cell of clock.dynamic?.cells ?? []) add(cell);
+  for (const cell of allLiveLayers(clock)) add(cell);
   return cells;
+}
+
+/** 参与横竖连续段的格：有可清除层才算，纯黑格像空挡一样拆开两边。 */
+export function blueprintClearableFieldCells(clock: Pick<BlueprintClock, "staticCells" | "cells" | "dynamic">) {
+  const seen = new Set<string>();
+  const cells: BlueprintCellRef[] = [];
+  for (const cell of allLiveLayers(clock)) {
+    if (!blueprintKindClearable(cell.kind)) continue;
+    const key = cellKey(cell);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cells.push({ col: cell.col, row: cell.row });
+  }
+  return cells;
+}
+
+/** 仍有至少一块黑的行、列。锁定取并集，呈每块黑所在行 + 所在列的十字锁。 */
+export function blueprintLockedLines(clock: Pick<BlueprintClock, "staticCells" | "cells" | "dynamic"> = getBlueprintClock()) {
+  const rows = new Set<number>();
+  const cols = new Set<number>();
+  for (const cell of allLiveLayers(clock)) {
+    if (blueprintBlockKind(cell) !== "black") continue;
+    rows.add(cell.row);
+    cols.add(cell.col);
+  }
+  return { rows, cols };
+}
+
+export function blueprintCellLocked(col: number, row: number, clock?: Pick<BlueprintClock, "staticCells" | "cells" | "dynamic">) {
+  const { rows, cols } = blueprintLockedLines(clock ?? getBlueprintClock());
+  return rows.has(row) || cols.has(col);
+}
+
+/** 清段用的格：排除黑块，也排除被行列锁住的格（锁定格像空挡一样截断）。 */
+export function blueprintSegmentFieldCells(clock: Pick<BlueprintClock, "staticCells" | "cells" | "dynamic">) {
+  return blueprintClearableFieldCells(clock).filter((cell) => !blueprintCellLocked(cell.col, cell.row, clock));
 }
 
 /** 仍凸出到撞得到的格。只用于能不能踩亮，不用于清排或清列。 */
@@ -1220,65 +1534,233 @@ function extendAt(ref: BlueprintCellRef) {
   if (staticCells.some((cell) => cell.col === ref.col && cell.row === ref.row)) {
     heights.push(blueprintExtend(staticAge, staticRaise));
   }
-  if (dynamic?.cells.some((cell) => cell.col === ref.col && cell.row === ref.row)) {
-    heights.push(blueprintDynamicCellExtend(dynamic, ref, staticKeySet()));
+  for (const group of blueprintDynamicGroups(dynamic)) {
+    if (group.cells.some((cell) => cell.col === ref.col && cell.row === ref.row)) {
+      heights.push(blueprintDynamicCellExtend(group, ref, staticKeySet()));
+    }
   }
   if (!heights.length) return 0;
   return Math.max(0, ...heights);
 }
 
-/** 清掉的格离开静态/动态名单，改由缩回动画接管。高度接近 0 的格也算被清走。 */
-function dropClearedCells(keys: Set<string>) {
-  staticCells = staticCells.filter((cell) => !keys.has(cellKey(cell)));
-  if (dynamic) {
-    const cells = dynamic.cells.filter((cell) => !keys.has(cellKey(cell)));
-    if (!cells.length) {
-      dynamic = null;
-    } else if (cells.length !== dynamic.cells.length) {
-      const pending = dynamic.phase === "cross_out"
-        ? blueprintTranslateCells(cells, dynamic.dir)
-        : dynamic.pending.filter((cell) => !keys.has(cellKey(cell)));
-      dynamic = { ...dynamic, cells, pending };
-    }
-  }
-  for (const key of keys) lit.delete(key);
+/** 按层丢掉可清除的层；黑块留下。高度接近 0 的可清除层也算被清走。 */
+function dropLayers(keys: Set<string>, keepBlack: boolean) {
+  const keep = (cell: BlueprintCellRef) => !keys.has(cellKey(cell)) || (keepBlack && !blueprintKindClearable(cell.kind));
+  staticCells = staticCells.filter(keep);
+  dynamic = packDynamic(blueprintDynamicGroups(dynamic).flatMap((group) => {
+    const cells = group.cells.filter(keep);
+    if (!cells.length) return [];
+    const pending = group.phase === "cross_out" ? blueprintTranslateCells(cells, group.dir) : [];
+    return [{ ...group, cells, pending }];
+  }));
+  pruneLit();
 }
+function dropClearableLayers(keys: Set<string>) { dropLayers(keys, true); }
+/** 反物质开洞：连黑块与所有动态组一并收走。 */
+function dropAllLayers(keys: Set<string>) { dropLayers(keys, false); }
 
-function layersAt(ref: BlueprintCellRef) {
-  const key = cellKey(ref);
+function layersAtKey(key: string) {
   return [...staticCells, ...(dynamic?.cells ?? [])].filter((cell) => cellKey(cell) === key);
 }
 
-/** 每个被移除坐标奖励一次，即使静态/动态同格均为 green；无需先点亮。 */
-function rewardClearedGreens(cells: readonly BlueprintCellRef[]) {
-  for (const cell of uniqueCells(cells)) {
-    if (!layersAt(cell).some((layer) => layer.kind === "green")) continue;
-    // 一分钟模式直接从池里去掉 seconds，二项等概率；不要先三选一再丢掉。
-    const choices: BlueprintRewardEvent[] = allowSeconds
-      ? ["base", "combo", "seconds"]
-      : ["base", "combo"];
-    const event = choices[Math.min(choices.length - 1, Math.floor(unitAt(seed, rewardSerial++, 41) * choices.length))]!;
-    rewards[event] += event === "base" ? 2 : event === "combo" ? 1 : BLUEPRINT_CLOCK_SECONDS;
-    rewardEvents.push(event);
-  }
+function layersAt(ref: BlueprintCellRef) {
+  return layersAtKey(cellKey(ref));
 }
 
-function beginLineClear(cells: readonly BlueprintCellRef[], payPending = true) {
-  const fresh = uniqueCells(cells).filter((cell) => layersAt(cell).length > 0 && !clearing.some((item) => item.col === cell.col && item.row === cell.row));
+function clearableLayersAt(ref: BlueprintCellRef) {
+  return layersAt(ref).filter((layer) => blueprintKindClearable(layer.kind));
+}
+
+function hasClearableLayer(ref: BlueprintCellRef) {
+  return clearableLayersAt(ref).length > 0;
+}
+
+function hasBlackLayer(ref: BlueprintCellRef) {
+  return layersAt(ref).some((layer) => blueprintBlockKind(layer) === "black");
+}
+
+function alreadyRetracting(ref: BlueprintCellRef) {
+  // 消除层早已从 live 层表移出；新移动到同格的层不继承旧动画的“正在缩回”。
+  return !layersAt(ref).length && clearing.some((item) => item.col === ref.col && item.row === ref.row);
+}
+
+function displayKindAt(ref: BlueprintCellRef): BlueprintBlockKind {
+  const layers = liveLayerEntries().filter((layer) => (
+    cellKey(layer.cell) === cellKey(ref) && blueprintKindClearable(layer.kind)
+  ));
+  return blueprintBlockKind(blueprintTopLayer(layers)?.cell);
+}
+
+/** 红十字豁免行列锁。各方向独立延伸，遇空格或实际黑层停止；叠层只清非黑层。 */
+export function blueprintRedCrossCells(col: number, row: number) {
+  const cross: BlueprintCellRef[] = [{ col, row }];
+  // 触发格自身叠黑时只清它的非黑层，不穿过同格黑层向外传播。
+  if (hasBlackLayer({ col, row })) return cross;
+  for (const { dc, dr } of BLUEPRINT_DIR_DELTA) {
+    for (let c = col + dc, r = row + dr; ; c += dc, r += dr) {
+      const ref = { col: c, row: r };
+      const layers = layersAt(ref);
+      if (!layers.length) break;
+      if (hasBlackLayer(ref)) {
+        if (hasClearableLayer(ref)) cross.push(ref);
+        break;
+      }
+      cross.push(ref);
+    }
+  }
+  return uniqueCells(cross);
+}
+
+/**
+ * 下一次实体进球的得分 ×2。分身不兑现、不消耗。每次只消耗 1 次、只乘一次，两次双倍是两球各 ×2。
+ */
+export function applyBlueprintScoreDouble(settled: number, real: boolean) {
+  const score = Number.isFinite(settled) ? settled : 0;
+  if (!real || scoreDoubleCharges <= 0) return { score, doubled: false, multiplier: 1, charges: scoreDoubleCharges };
+  scoreDoubleCharges -= 1;
+  return { score: score * 2, doubled: true, multiplier: 2, charges: scoreDoubleCharges };
+}
+
+function grantRewardEvent(event: BlueprintRewardEvent) {
+  if (event === "base") rewards.base += 2;
+  else if (event === "combo") rewards.combo += 1;
+  else if (event === "seconds") rewards.seconds += BLUEPRINT_CLOCK_SECONDS;
+  else if (event === "scoreDouble") scoreDoubleCharges += 1;
+  else if (event === "comboProtection") comboProtectionCharges = Math.min(BLUEPRINT_COMBO_PROTECTION_CAP, comboProtectionCharges + 1);
+  rewardEvents.push(event);
+}
+
+function pickGreenReward(): BlueprintRewardEvent | null {
+  const choices = blueprintRewardPool(allowSeconds, goals);
+  if (!choices.length) return null;
+  return choices[Math.min(choices.length - 1, Math.floor(unitAt(seed, rewardSerial++, 41) * choices.length))]!;
+}
+
+/** 每个被移除坐标奖励一次，即使静态/动态同格均为 green；无需先点亮。 */
+function rewardClearedGreens(cells: readonly BlueprintCellRef[], applyFieldEffects: boolean) {
+  const areaCenters: BlueprintCellRef[] = [];
+  const turnRedCenters: BlueprintCellRef[] = [];
+  for (const cell of uniqueCells(cells)) {
+    if (!layersAt(cell).some((layer) => layer.kind === "green")) continue;
+    const event = pickGreenReward();
+    if (!event) continue;
+    grantRewardEvent(event);
+    if (!applyFieldEffects) continue;
+    if (event === "areaClear") areaCenters.push({ col: cell.col, row: cell.row });
+    if (event === "turnRed") turnRedCenters.push({ col: cell.col, row: cell.row });
+  }
+  return { areaCenters, turnRedCenters };
+}
+
+function applyAreaClear(center: BlueprintCellRef) {
+  const clock = getBlueprintClock();
+  const toClear: BlueprintCellRef[] = [];
+  const reds: BlueprintCellRef[] = [];
+  for (const neighbor of blueprintAreaNeighbors(center.col, center.row)) {
+    if (alreadyRetracting(neighbor) || !layersAt(neighbor).length) continue;
+    const locked = blueprintCellLocked(neighbor.col, neighbor.row, clock);
+    if (locked) {
+      // 锁定白块只点亮、不缩回；锁定绿/红不清除、不领奖、不引爆；黑块本来就不清。
+      if (clearableLayersAt(neighbor).some((layer) => blueprintBlockKind(layer) === "white")) {
+        lightLayersAt(neighbor, true);
+      }
+      continue;
+    }
+    if (!hasClearableLayer(neighbor)) continue;
+    lightLayersAt(neighbor);
+    if (clearableLayersAt(neighbor).some((layer) => layer.kind === "red")) reds.push(neighbor);
+    else toClear.push(neighbor);
+  }
+  // 先固定这一波的十字路径。只有红爆目标豁免锁，普通范围目标仍走默认锁过滤。
+  const redTargets = uniqueCells(reds.flatMap((red) => blueprintRedCrossCells(red.col, red.row)));
+  const redCleared = beginLineClear(redTargets, true, false, "redCross");
+  for (const cell of toClear) {
+    if (hasClearableLayer(cell) && !alreadyRetracting(cell)) lightLayersAt(cell);
+  }
+  return redCleared + beginLineClear(toClear, true, false, "area");
+}
+
+/** 把邻格改写成红色。这是改写不是消除，锁定格也转变；新红不立刻引爆。 */
+function paintCellRed(ref: BlueprintCellRef) {
+  if (alreadyRetracting(ref) || !layersAt(ref).length) return false;
+  let keptRed = false;
+  let changed = false;
+  const paint = (list: BlueprintCellRef[]) => {
+    const out: BlueprintCellRef[] = [];
+    for (const cell of list) {
+      if (cellKey(cell) !== cellKey(ref)) {
+        out.push(cell);
+        continue;
+      }
+      if (blueprintBlockKind(cell) !== "red") changed = true;
+      if (keptRed) {
+        changed = true;
+        continue;
+      }
+      keptRed = true;
+      out.push(blueprintBlockKind(cell) === "red" ? cell : {
+        ...cell, kind: "red", overlapGreen: false, overlapSuppressed: true,
+      });
+    }
+    return out;
+  };
+  staticCells = paint(staticCells);
+  dynamic = packDynamic(blueprintDynamicGroups(dynamic).flatMap((group) => {
+    const cells = paint(group.cells);
+    if (!cells.length) return [];
+    return [{ ...group, cells, pending: group.phase === "cross_out" ? blueprintTranslateCells(cells, group.dir) : [] }];
+  }));
+  return changed || keptRed;
+}
+
+function applyTurnRed(center: BlueprintCellRef) {
+  const field = blueprintFieldCells(getBlueprintClock());
+  if (!field.length) return 0;
+  for (const neighbor of blueprintTurnRedNeighbors(center.col, center.row)) {
+    paintCellRed(neighbor);
+  }
+  // 不从转红调用叠亮激活；重算锁并补判普通亮段。
+  pruneLit();
+  return recheckFieldLines();
+}
+
+/** 测试/结算入口：以该格为中心执行转红奖励。空场不再扫。 */
+export function applyBlueprintTurnRed(col: number, row: number) {
+  return applyTurnRed({ col, row });
+}
+
+function beginLineClear(
+  cells: readonly BlueprintCellRef[],
+  payPending = true,
+  applyFieldEffects = true,
+  cause: "normal" | "redCross" | "area" | "overlap" = "normal",
+) {
+  const fresh = uniqueCells(cells).filter((cell) => (
+    hasClearableLayer(cell)
+    && !alreadyRetracting(cell)
+    && (cause === "redCross" || !blueprintCellLocked(cell.col, cell.row))
+    && (cause !== "normal" || !layersAt(cell).some((layer) => (
+      layer.kind === "green" && layer.overlapGreen && !greenOverlapReady(layer)
+    )))
+    && (cause !== "normal" || !layersAt(cell).some((layer) => layer.kind === "red" && layer.overlapSuppressed))
+  ));
   if (!fresh.length) return 0;
-  rewardClearedGreens(fresh);
+  const { areaCenters, turnRedCenters } = rewardClearedGreens(fresh, applyFieldEffects);
   const started = fresh.map((cell) => ({
     col: cell.col,
     row: cell.row,
-    kind: layersAt(cell).at(-1)?.kind ?? "white",
+    kind: displayKindAt(cell),
     age: 0,
     span: BLUEPRINT_CROSS_RAISE,
     from: extendAt(cell),
   }));
-  dropClearedCells(new Set(started.map(cellKey)));
+  dropClearableLayers(new Set(started.map(cellKey)));
   clearing = clearing.concat(started);
   if (payPending) pendingBonus += started.length;
-  return started.length;
+  let extra = 0;
+  for (const center of areaCenters) extra += applyAreaClear(center);
+  for (const center of turnRedCenters) extra += applyTurnRed(center);
+  return started.length + extra;
 }
 
 /**
@@ -1290,15 +1772,65 @@ export function consumeBlueprintLitForHole() {
   const field = blueprintFieldCells(getBlueprintClock());
   const litCount = field.filter((cell) => lit.has(cellKey(cell))).length;
   // 黑洞清除的未亮 green 同样领奖；正在清除的动画早已领奖，不再计算。
-  rewardClearedGreens(field);
-  dropClearedCells(new Set(field.map(cellKey)));
+  // 抽到周围消除只记事件，不再对已被清空的场地扫一遍。
+  rewardClearedGreens(field, false);
+  dropAllLayers(new Set(field.map(cellKey)));
   clearing = [];
   return litCount;
 }
 
-/** 落地或点亮之后，把当前在场的每一行、每一列再判一次。未亮的静态格也算在场。 */
-function recheckFieldLines() {
+/** 绿叠亮要求当前横连续段 AND 竖连续段都亮；单格轴也包含本格。 */
+function greenOverlapReady(center: BlueprintCellRef) {
   const field = blueprintFieldCells(getBlueprintClock());
+  const occupied = new Set(field.map(cellKey));
+  const bright = (ref: BlueprintCellRef) => !hasBlackLayer(ref) && lit.has(cellKey(ref));
+  if (!bright(center)) return false;
+  for (const { dc, dr } of BLUEPRINT_DIR_DELTA) {
+    for (let col = center.col + dc, row = center.row + dr; occupied.has(`${col}:${row}`); col += dc, row += dr) {
+      if (!bright({ col, row })) return false;
+    }
+  }
+  return true;
+}
+let checkingOverlaps = false;
+function recheckOverlapActivations() {
+  if (checkingOverlaps) return 0;
+  checkingOverlaps = true;
+  let count = 0;
+  try {
+    let progressed: boolean;
+    do {
+      progressed = false;
+      for (const ref of blueprintFieldCells(getBlueprintClock())) {
+        if (alreadyRetracting(ref)) continue;
+        const top = topLayerAtKey(cellKey(ref));
+        if (!top) continue;
+        const cell = top.cell;
+        const otherBright = layersAt(ref).some((other) => other !== cell && other.lit && blueprintBlockKind(other) !== "black");
+        if (!otherBright) delete cell.overlapSuppressed;
+        if (cell.overlapSuppressed || blueprintBlockKind(cell) === "black") continue;
+        let activated = 0;
+        if (otherBright && cell.kind === "red") {
+          activated = beginLineClear(blueprintRedCrossCells(cell.col, cell.row), true, true, "redCross");
+        } else if (cell.kind === "green") {
+          if (otherBright) { cell.lit = true; cell.overlapGreen = true; pruneLit(); }
+          if (cell.overlapGreen && !blueprintCellLocked(cell.col, cell.row) && greenOverlapReady(cell)) {
+            activated = beginLineClear([cell], true, true, "overlap");
+          }
+        }
+        count += activated;
+        progressed ||= activated > 0;
+      }
+      // 每次成功只会减少 live 层，无生成；让连带清除/解锁后的待激活绿同次补判至稳定。
+    } while (progressed);
+  } finally { checkingOverlaps = false; }
+  return count;
+}
+
+/** 落地、点亮或锁解除之后，把当前在场的每一行、每一列再判一次。锁定格不参与清段。 */
+function recheckFieldLines() {
+  const clock = getBlueprintClock();
+  const field = blueprintSegmentFieldCells(clock);
   const cleared: BlueprintCellRef[] = [];
   for (const row of new Set(field.map((cell) => cell.row))) cleared.push(...blueprintRowClears(row, field, lit));
   for (const col of new Set(field.map((cell) => cell.col))) cleared.push(...blueprintColClears(col, field, lit));
@@ -1311,31 +1843,38 @@ function recheckFieldLines() {
  * 篮球踩到已凸出的格就点亮。已亮再踩无事。
  * 四向都没有邻块时，点亮就缩回这一格。有邻块则要所在横段或竖段全部点亮，才整段缩回。
  * 同一格同时属于刚触发的行和列时只缩一次、只计一次。
+ * 锁定行/列普通清段、踩绿仍受锁；实体碰撞红块先触发十字，红爆豁免行列锁。
  * 返回本次开始缩回的格数。
  */
 export function touchBlueprintCell(world: View, col: number, row: number) {
-  const field = blueprintFieldCells(getBlueprintClock());
+  const clock = getBlueprintClock();
+  const live = blueprintFieldCells(clock);
   const key = `${col}:${row}`;
-  if (!field.some((cell) => cellKey(cell) === key)) return 0;
+  if (!live.some((cell) => cellKey(cell) === key)) return 0;
   const solid = blueprintBlocks(world).some((block) => block.col === col && block.row === row && block.solid);
   if (!solid) return 0;
-  lit.add(key);
-  if (layersAt({ col, row }).some((cell) => cell.kind === "red")) {
-    const keys = new Set(field.map(cellKey));
-    const cross: BlueprintCellRef[] = [{ col, row }];
-    for (const { dc, dr } of BLUEPRINT_DIR_DELTA) {
-      for (let c = col + dc, r = row + dr; keys.has(`${c}:${r}`); c += dc, r += dr) {
-        cross.push({ col: c, row: r });
-      }
-    }
-    return beginLineClear(cross);
+  const ref = { col, row };
+  // 纯黑格只做普通碰撞：不点亮，不进入清段。
+  if (!hasClearableLayer(ref)) return 0;
+  const shown = blueprintVisibleBlocks(world).find((block) => cellKey(block) === key);
+  const top = shown && liveLayerEntries().find((layer) => layer.id === shown.id);
+  if (!top || shown?.retracting || blueprintBlockKind(top.cell) === "black") return 0;
+  top.cell.lit = true;
+  pruneLit();
+  if (top.cell.kind === "red") {
+    const count = beginLineClear(blueprintRedCrossCells(col, row), true, true, "redCross");
+    return count + recheckOverlapActivations();
   }
+  const overlapped = recheckOverlapActivations();
+  if (!layersAt(ref).length || blueprintCellLocked(col, row)) return overlapped;
+  const field = blueprintSegmentFieldCells(getBlueprintClock());
   const cleared = uniqueCells([
     ...blueprintRowClears(row, field, lit),
     ...blueprintColClears(col, field, lit),
   ]);
-  if (!cleared.length) return 0;
-  return beginLineClear(cleared);
+  if (!cleared.length) return overlapped;
+  const count = beginLineClear(cleared);
+  return overlapped + count + recheckOverlapActivations();
 }
 
 /** 领走待领分并清零。没有挂分时返回 0。 */
@@ -1361,7 +1900,9 @@ export function claimBlueprintBonusForBasket(real: boolean) {
 export function settleBlueprintBasket(gain: number, real: boolean) {
   const bonus = claimBlueprintBonusForBasket(real);
   const base = Number.isFinite(gain) ? gain : 0;
-  return { bonus, shown: base + bonus };
+  if (!real) return { bonus: 0, shown: base, doubled: false };
+  const applied = applyBlueprintScoreDouble(base + bonus, true);
+  return { bonus, shown: applied.score, doubled: applied.doubled };
 }
 
 type Sweep = { t: number; nx: number; ny: number; depth: number };
@@ -1473,6 +2014,8 @@ export function collideBlueprint(
   prevY: number,
   blockImpact?: (nx: number, ny: number) => boolean,
   clock?: BlueprintClock,
+  /** 玻璃球复用地面有效法向反弹（含静止阈值）；其它球缺省走原凸块响应。 */
+  normalRebound?: (incomingNormalSpeed: number) => number,
 ) {
   const dx = ball.x - prevX;
   const dy = ball.y - prevY;
@@ -1513,14 +2056,16 @@ export function collideBlueprint(
   ball.y = y;
   const vn = ball.vx * hit.nx + ball.vy * hit.ny;
   if (vn < 0) {
-    ball.vx -= BLUEPRINT_BOUNCE * vn * hit.nx;
-    ball.vy -= BLUEPRINT_BOUNCE * vn * hit.ny;
+    const impulse = normalRebound ? -vn + normalRebound(-vn) : -BLUEPRINT_BOUNCE * vn;
+    ball.vx += impulse * hit.nx;
+    ball.vy += impulse * hit.ny;
   }
   const vnOut = ball.vx * hit.nx + ball.vy * hit.ny;
   const embedded = hit.t === 0 && hit.depth > 0.5;
   const landedOnTop = hit.ny < -0.5;
   const escape = topEscapeSpeed(world);
-  if ((vn < 0 && landedOnTop) || embedded) {
+  // 地面响应不能再被普通凸块的最小弹起/侧滑助推覆盖（玻璃默认地面恢复系数为 0）。
+  if (!normalRebound && ((vn < 0 && landedOnTop) || embedded)) {
     if (vnOut < escape) {
       const add = escape - vnOut;
       ball.vx += add * hit.nx;
@@ -1784,7 +2329,10 @@ function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock, others:
     if (!clipped) continue;
     paintShadow(ctx, shadow, clipped, extend);
   }
-  if (block.lit || block.kind !== "white") {
+  if (block.kind === "black") {
+    ctx.fillStyle = BLUEPRINT_BLACK;
+    ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
+  } else if (block.lit || block.kind !== "white") {
     const rgb = block.kind === "green" ? "76, 230, 133" : block.kind === "red" ? BLUEPRINT_RED_RGB : BLUEPRINT_LIT_RGB;
     ctx.fillStyle = `rgba(${rgb}, ${(block.lit ? 0.55 : 0.35) + 0.4 * Math.min(1, extend)})`;
     ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
@@ -1807,21 +2355,34 @@ export function drawBlueprintCodeBlocks(ctx: CanvasRenderingContext2D, world: Vi
   ctx.restore();
 }
 
+export function drawBlueprintRewardHints(ctx: CanvasRenderingContext2D, world: View, hudBottom: number) {
+  const hints: string[] = [];
+  if (scoreDoubleCharges > 0) hints.push(scoreDoubleCharges > 1 ? `进球得分 ×2 ×${scoreDoubleCharges}` : "下一次进球 ×2");
+  if (comboProtectionCharges > 0) hints.push(`连击保护×${comboProtectionCharges}`);
+  if (!hints.length) return;
+  ctx.save();
+  ctx.globalAlpha = 1;
+  const size = Math.max(12, Math.round(world.w * 0.035));
+  ctx.font = `${size}px system-ui, sans-serif`;
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  const y = Math.max(hudBottom + 6, world.h * 0.08);
+  hints.forEach((text, i) => ctx.fillText(text, world.w / 2, y + i * (size + 4)));
+  ctx.restore();
+}
+
 export function drawBlueprint(ctx: CanvasRenderingContext2D, world: View, hudBottom = 0) {
   ctx.fillStyle = BLUEPRINT_BLUE;
   ctx.fillRect(0, 0, world.w, world.h);
   strokeGrid(ctx, world);
   drawPerspectiveFloor(ctx, world);
   drawBlueprintBlocks(ctx, world, hudBottom);
+  drawBlueprintRewardHints(ctx, world, hudBottom);
 }
 
 function drawBlueprintBlocks(ctx: CanvasRenderingContext2D, world: View, hudBottom: number) {
-  const clock = getBlueprintClock();
-  const blocks = blueprintBlocks(world, clock);
-  const covered = new Set((clock.dynamic?.cells ?? []).map((cell) => `${cell.col}:${cell.row}`));
-  // 重叠格只按动态组的高度画。静态那一层仍参与碰撞（取较高的），但不把组内几格衬得高低不齐。
-  const visible = blocks
-    .filter((block) => block.dynamic || !covered.has(`${block.col}:${block.row}`))
-    .sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x || Number(a.dynamic) - Number(b.dynamic));
+  const visible = blueprintVisibleBlocks(world)
+    .sort((a, b) => a.cell.y - b.cell.y || a.cell.x - b.cell.x);
   for (const block of visible) drawBlock(ctx, block, visible, hudBottom);
 }

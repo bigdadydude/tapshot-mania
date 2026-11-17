@@ -10,6 +10,22 @@ import {
   BLUEPRINT_RED_RGB,
   BLUEPRINT_CLOCK_SECONDS,
   BLUEPRINT_KIND_WEIGHTS,
+  BLUEPRINT_KIND_UNLOCK,
+  BLUEPRINT_REWARD_UNLOCK,
+  BLUEPRINT_BLACK,
+  BLUEPRINT_TURN_RED_DELTAS,
+  blueprintRewardPool,
+  blueprintRewardToast,
+  blueprintCountSoftMax,
+  blueprintKindWeights,
+  blueprintTurnRedNeighbors,
+  blueprintAreaNeighbors,
+  blueprintRedCrossCells,
+  blueprintCellLocked,
+  blueprintLockedLines,
+  applyBlueprintTurnRed,
+  applyBlueprintScoreDouble,
+  getBlueprintScoreDoubleCharges,
   getBlueprintRewards,
   drainBlueprintRewardEvents,
   getBlueprintAllowSeconds,
@@ -26,7 +42,6 @@ import {
   BLUEPRINT_HIT_EXTEND,
   BLUEPRINT_MAX_COUNT,
   BLUEPRINT_MAX_LIGHTNESS,
-  BLUEPRINT_MULTI_PER_GOAL,
   BLUEPRINT_CROSS_RAISE,
   BLUEPRINT_RAISE,
   BLUEPRINT_SHAPES,
@@ -84,6 +99,12 @@ import {
   type BlueprintClock,
   type BlueprintDynamic,
 } from "./blueprint.ts";
+
+/** 旧几何/亮态用例只比较块值；稳定 ID 与快照逐值保留由 groups 专项测试覆盖。 */
+function assertLayerCellValues(actual: readonly BlueprintCellRef[] | undefined, expected: readonly BlueprintCellRef[] | undefined, message?: string) {
+  const values = (cells: readonly BlueprintCellRef[] | undefined) => cells?.map(({ layerId: _id, ...cell }) => cell);
+  assert.deepEqual(values(actual), values(expected), message);
+}
 
 function makeWorld(w = 390, h = 844) {
   const ballR = Math.max(17, Math.min(w, h) * 0.05);
@@ -164,7 +185,7 @@ function aimAt(goals: number, sample = world) {
 
 function raisedCell() {
   for (let serial = 0; serial < 20; serial++) {
-    const batch = rollBlueprintBatch(world, { seed: 1, serial, goals: 1, ball: null, hoop: null });
+    const batch = rollBlueprintBatch(world, { seed: 1, serial, goals: 4, ball: null, hoop: null });
     if (batch.cells[0]) return batch.cells[0];
   }
   throw new Error("no legal blueprint cell");
@@ -194,16 +215,15 @@ test("同时凸出不超过 10 格", () => {
   }
 });
 
-test("首球前不凸出；第 1 球 1 格；进球越多越容易复数", () => {
+test("前三次进球完成仍无方块；第 4 球起 1 格；上限扩大后可抽到更多格", () => {
   assert.equal(BLUEPRINT_RAISE, 0.35);
-  assert.equal(BLUEPRINT_MULTI_PER_GOAL, 0.12);
-  assert.equal(blueprintSampleCount(0, 0), 0);
-  assert.equal(blueprintSampleCount(0, 1), 0);
-  assert.equal(blueprintSampleCount(1, 0), 1);
-  assert.equal(blueprintSampleCount(1, 1), 1);
-  assert.equal(rollBlueprintBatch(world, { seed: 2, serial: 0, goals: 0, ball: null, hoop: null }).cells.length, 0);
+  for (const goals of [0, 1, 2, 3]) {
+    assert.equal(blueprintSampleCount(goals, 0), 0);
+    assert.equal(blueprintSampleCount(goals, 1), 0);
+    assert.equal(rollBlueprintBatch(world, { seed: 2, serial: 0, goals, ball: null, hoop: null }).cells.length, 0);
+  }
   for (let serial = 0; serial < 24; serial++) {
-    const batch = rollBlueprintBatch(world, { seed: 7, serial, goals: 1, ball: null, hoop: null });
+    const batch = rollBlueprintBatch(world, { seed: 7, serial, goals: 4, ball: null, hoop: null });
     assert.equal(batch.cells.length, 1);
     assert.equal(batch.duration, BLUEPRINT_RAISE);
   }
@@ -211,11 +231,11 @@ test("首球前不凸出；第 1 球 1 格；进球越多越容易复数", () =>
   let multiAtHigh = 0;
   const samples = 80;
   for (let serial = 0; serial < samples; serial++) {
-    if (blueprintSampleCount(2, serial / samples) > 1) multiAtLow += 1;
-    if (blueprintSampleCount(12, serial / samples) > 1) multiAtHigh += 1;
+    if (blueprintSampleCount(6, serial / samples) > 1) multiAtLow += 1;
+    if (blueprintSampleCount(16, serial / samples) > 1) multiAtHigh += 1;
   }
   assert.ok(multiAtHigh > multiAtLow, `high=${multiAtHigh} low=${multiAtLow}`);
-  assert.ok(multiAtHigh > samples * 0.45);
+  assert.ok(multiAtHigh > samples * 0.3);
   assert.equal(blueprintExtend(0, BLUEPRINT_RAISE), 0);
   assert.ok(blueprintExtend(BLUEPRINT_RAISE / 2, BLUEPRINT_RAISE) > 0.4);
   assert.equal(blueprintExtend(BLUEPRINT_RAISE, BLUEPRINT_RAISE), 1);
@@ -236,21 +256,35 @@ test("进球前空场；每次进球换批并保持到下一次进球", () => {
   assert.equal(getBlueprintClock().cells.length, 0);
 
   stepBlueprint(0.016, true, { ...aim, goals: 1 }, world);
+  assert.equal(getBlueprintClock().goals, 1);
+  assert.equal(getBlueprintClock().staticCells.length, 0);
+  stepBlueprint(0.016, true, { ...aim, goals: 2 }, world);
+  assert.equal(getBlueprintClock().goals, 2);
+  assert.equal(getBlueprintClock().staticCells.length, 0);
+  assert.equal(getBlueprintClock().dynamic, null);
+
+  stepBlueprint(0.016, true, { ...aim, goals: 3 }, world);
+  assert.equal(getBlueprintClock().goals, 3);
+  assert.equal(getBlueprintClock().staticCells.length, 0);
+  assert.equal(getBlueprintClock().dynamic, null);
+  assert.equal(blueprintBlocks(world).length, 0);
+
+  stepBlueprint(0.016, true, { ...aim, goals: 4 }, world);
   const first = getBlueprintClock();
-  assert.equal(first.goals, 1);
+  assert.equal(first.goals, 4);
   assert.equal(first.staticCells.length, 1);
   assert.equal(first.cells.length, 1);
   assert.equal(first.staticRaise, BLUEPRINT_RAISE);
-  stepBlueprint(2, true, { ...aim, goals: 1 }, world);
+  stepBlueprint(2, true, { ...aim, goals: 4 }, world);
   const held = getBlueprintClock();
-  assert.deepEqual(held.staticCells, first.staticCells);
+  assertLayerCellValues(held.staticCells, first.staticCells);
   assert.equal(held.serial, first.serial);
   assert.ok(held.staticAge > BLUEPRINT_RAISE);
   assert.equal(blueprintExtend(held.staticAge, held.staticRaise), 1);
 
-  stepBlueprint(0.016, true, { ...aim, goals: 2 }, world);
+  stepBlueprint(0.016, true, { ...aim, goals: 5 }, world);
   const next = getBlueprintClock();
-  assert.equal(next.goals, 2);
+  assert.equal(next.goals, 5);
   assert.equal(next.serial, first.serial + 1);
   assert.ok(next.staticAge < 0.05);
   assert.ok(next.staticCells.length >= 1);
@@ -325,11 +359,11 @@ test("动态可以踩在静态上，重叠格仍跟整组一起伸缩", () => {
   assert.equal(moving.dynamic!.phase, "cross_out");
   assert.equal(moving.dynamic!.dir, 0);
   assert.equal(moving.dynamic!.cells.length, 2);
-  assert.deepEqual(moving.dynamic!.pending, [mid!, landed!]);
+  assertLayerCellValues(moving.dynamic!.pending, [mid!, landed!]);
   stepBlueprint(BLUEPRINT_CROSS_RAISE, true, aim, world);
   const arrived = getBlueprintClock();
   assert.equal(arrived.dynamic?.phase, "cross_in");
-  assert.deepEqual(arrived.dynamic?.cells, [mid!, landed!]);
+  assertLayerCellValues(arrived.dynamic?.cells, [mid!, landed!]);
   stepBlueprint(BLUEPRINT_CROSS_RAISE / 2, true, aim, world);
   const rising = blueprintBlocks(world).filter((block) => block.dynamic);
   assert.equal(rising.length, 2);
@@ -338,19 +372,23 @@ test("动态可以踩在静态上，重叠格仍跟整组一起伸缩", () => {
 });
 
 test("进球换静态不裁掉踩在上面的动态格", () => {
-  const aim = aimAt(1);
+  const aim = aimAt(11);
   let saw = false;
-  for (let s = 1; s < 40 && !saw; s++) {
+  for (let s = 1; s < 80 && !saw; s++) {
     resetBlueprint(s);
     stepBlueprint(0, true, aim, world);
     const before = getBlueprintClock();
-    const next = rollBlueprintBatch(world, {
+    const opts = {
       seed: before.seed,
       serial: before.serial + 1,
-      goals: 2,
+      goals: 12,
       ball: { x: aim.ballX, y: aim.ballY },
       hoop: { x: aim.hoopX, y: aim.hoopY },
-    });
+    };
+    const target = rollBlueprintBatch(world, opts).target;
+    // 预测静态选位也必须先扣掉两格动态占用，不能拿整批目标来猜静态形状。
+    if (target <= 2) continue;
+    const next = rollBlueprintBatch(world, { ...opts, maxCount: target - 2, want: target - 2 });
     const hit = next.cells[0];
     if (!hit) continue;
     const group = [hit, { col: hit.col + 1, row: hit.row }];
@@ -358,12 +396,12 @@ test("进球换静态不裁掉踩在上面的动态格", () => {
       ...before,
       dynamic: dyn({ cells: group, phase: "hold", age: 0.2 }),
     });
-    stepBlueprint(0, true, aimAt(2), world);
+    stepBlueprint(0, true, aimAt(12), world);
     const after = getBlueprintClock();
     if (!after.dynamic) continue;
     const staticKeys = new Set(after.staticCells.map((cell) => `${cell.col}:${cell.row}`));
     if (!staticKeys.has(`${hit.col}:${hit.row}`)) continue;
-    assert.deepEqual(after.dynamic.cells, group);
+    assertLayerCellValues(after.dynamic.cells, group);
     saw = true;
   }
   assert.equal(saw, true);
@@ -486,9 +524,9 @@ test("进球换静态时可不杀动态", () => {
   });
   const after = getBlueprintClock();
   assert.equal(after.goals, 3);
-  assert.deepEqual(after.staticCells, [{ col: 3, row: 5 }]);
+  assertLayerCellValues(after.staticCells, [{ col: 3, row: 5 }]);
   assert.ok(after.dynamic);
-  assert.deepEqual(after.dynamic!.cells, dynCells);
+  assertLayerCellValues(after.dynamic!.cells, dynCells);
 });
 
 test("形状是直线、斜线、Z、L、S、U、V、C，裁剪后仍不超过 10", () => {
@@ -523,7 +561,7 @@ test("形状是直线、斜线、Z、L、S、U、V、C，裁剪后仍不超过 1
   let single = false;
   let row = false;
   for (let serial = 0; serial < 80; serial++) {
-    const goals = serial % 5 === 0 ? 1 : 16;
+    const goals = serial % 5 === 0 ? 3 : 16;
     const batch = rollBlueprintBatch(world, { seed: 11, serial, goals, ball: null, hoop: null });
     seen.add(batch.shape);
     assert.ok(batch.cells.length <= 10);
@@ -532,10 +570,18 @@ test("形状是直线、斜线、Z、L、S、U、V、C，裁剪后仍不超过 1
       single = true;
       continue;
     }
-    const full = blueprintStamp(batch.shape, batch.length, batch.variant, batch.anchor);
-    assert.ok(full.length <= BLUEPRINT_MAX_COUNT);
-    const keys = new Set(full.map((cell) => `${cell.col}:${cell.row}`));
-    for (const cell of batch.cells) assert.ok(keys.has(`${cell.col}:${cell.row}`));
+    const pieceKeys = new Set<string>();
+    for (const piece of batch.pieces) {
+      const full = blueprintStamp(piece.shape, piece.length, piece.variant, piece.anchor);
+      assert.ok(full.length <= BLUEPRINT_MAX_COUNT);
+      const keys = new Set(full.map((cell) => `${cell.col}:${cell.row}`));
+      for (const cell of piece.cells) {
+        const key = `${cell.col}:${cell.row}`;
+        assert.ok(keys.has(key));
+        pieceKeys.add(key);
+      }
+    }
+    for (const cell of batch.cells) assert.ok(pieceKeys.has(`${cell.col}:${cell.row}`));
     const sameRow = batch.cells.every((cell) => cell.row === batch.cells[0]!.row);
     const sameCol = batch.cells.every((cell) => cell.col === batch.cells[0]!.col);
     if (batch.cells.length >= 2 && (sameRow || sameCol)) row = true;
@@ -559,7 +605,7 @@ test("选位避开篮筐走廊，也不落在篮球两格内", () => {
   let sawPath = false;
   let sawIdle = false;
   for (let serial = 0; serial < 36; serial++) {
-    const batch = rollBlueprintBatch(world, { seed: 5, serial, goals: 4, ball, hoop });
+    const batch = rollBlueprintBatch(world, { seed: 5, serial, goals: 16, ball, hoop });
     if (batch.mode === "path") sawPath = true;
     if (batch.mode === "idle") sawIdle = true;
     if (batch.mode === "path" && batch.anchor) {
@@ -582,7 +628,7 @@ test("选位避开篮筐走廊，也不落在篮球两格内", () => {
   assert.equal(sawPath, true);
   assert.equal(sawIdle, true);
   for (const sample of [makeWorld(320, 700), makeWorld(500, 780), makeWorld(280, 620)]) {
-    const placed = rollBlueprintBatch(sample, { seed: 3, serial: 2, goals: 3, ball: { x: sample.w * 0.5, y: sample.floorY - sample.ballR }, hoop: { x: sample.w * 0.2, y: sample.h * 0.4 } });
+    const placed = rollBlueprintBatch(sample, { seed: 3, serial: 2, goals: 4, ball: { x: sample.w * 0.5, y: sample.floorY - sample.ballR }, hoop: { x: sample.w * 0.2, y: sample.h * 0.4 } });
     for (const ref of placed.cells) {
       const rect = cellRect(ref, sample);
       assert.ok(rect.y + rect.h < sample.floorY - sample.ballR);
@@ -696,8 +742,8 @@ test("地面消失点在交线上方，交线处格子与墙面对齐", () => {
   assert.ok(Math.abs(y1 - (world.floorY + grid.size)) < 1e-4);
   assert.ok(y2 < world.h);
   assert.ok(y2 - y1 > y1 - world.floorY);
-  const batch = rollBlueprintBatch(world, { seed: 1, serial: 0, goals: 3, ball: null, hoop: null });
-  for (const block of blueprintBlocks(world, clock({ cells: batch.cells, goals: 3, cycle: BLUEPRINT_RAISE, duration: BLUEPRINT_RAISE }))) {
+  const batch = rollBlueprintBatch(world, { seed: 1, serial: 0, goals: 4, ball: null, hoop: null });
+  for (const block of blueprintBlocks(world, clock({ cells: batch.cells, goals: 4, cycle: BLUEPRINT_RAISE, duration: BLUEPRINT_RAISE }))) {
     const col = Math.round((block.cell.x - grid.ox) / grid.size);
     const row = Math.round((block.cell.y - grid.oy) / grid.size);
     assert.ok(Math.abs(block.cell.x - (grid.ox + col * grid.size)) < 1e-6);
@@ -814,8 +860,8 @@ test("完全凸出时填色比以前暗，仍比没凸起亮", () => {
 });
 
 test("凸出填色贴住网格线", () => {
-  const batch = rollBlueprintBatch(world, { seed: 8, serial: 1, goals: 3, ball: null, hoop: null });
-  for (const block of blueprintBlocks(world, clock({ cells: batch.cells, goals: 3, cycle: BLUEPRINT_RAISE, duration: BLUEPRINT_RAISE }))) {
+  const batch = rollBlueprintBatch(world, { seed: 8, serial: 1, goals: 4, ball: null, hoop: null });
+  for (const block of blueprintBlocks(world, clock({ cells: batch.cells, goals: 4, cycle: BLUEPRINT_RAISE, duration: BLUEPRINT_RAISE }))) {
     const px = blueprintCellPixels(block.cell);
     assert.equal(px.left, Math.round(block.cell.x));
     assert.equal(px.right, Math.round(block.cell.x + block.cell.w));
@@ -833,8 +879,8 @@ function oldInsetStrokeRect(fill: { x: number; y: number; w: number; h: number }
 }
 
 test("凸块白描边落在网格线上，不是旧的填色内缩矩形", () => {
-  const batch = rollBlueprintBatch(world, { seed: 8, serial: 1, goals: 3, ball: null, hoop: null });
-  for (const block of blueprintBlocks(world, clock({ cells: batch.cells, goals: 3, cycle: BLUEPRINT_RAISE, duration: BLUEPRINT_RAISE }))) {
+  const batch = rollBlueprintBatch(world, { seed: 8, serial: 1, goals: 4, ball: null, hoop: null });
+  for (const block of blueprintBlocks(world, clock({ cells: batch.cells, goals: 4, cycle: BLUEPRINT_RAISE, duration: BLUEPRINT_RAISE }))) {
     const px = blueprintCellPixels(block.cell);
     const stroke = blueprintBlockStrokeRect(block.cell);
     // 与 strokeGrid 相同：线画在 Math.round(p)+0.5，宽高为格子左右/上下边之差。
@@ -867,6 +913,7 @@ function recordingCtx() {
     lineTo() {},
     stroke() {},
     fillRect() {},
+    fillText() {},
     save() {},
     restore() {},
     clip() {},
@@ -881,12 +928,13 @@ function recordingCtx() {
   return { ctx: ctx as unknown as CanvasRenderingContext2D, strokes };
 }
 
-test("已画出的凸块都在网格线上描不透明白边，含未点亮白块、亮白、绿、红", () => {
+test("已画出的凸块都在网格线上描不透明白边，含未点亮白块、亮白、绿、红、黑", () => {
   const cells: BlueprintCellRef[] = [
     { col: 4, row: 8, kind: "white" },
     { col: 5, row: 8, kind: "white" },
     { col: 6, row: 8, kind: "green" },
     { col: 7, row: 8, kind: "red" },
+    { col: 8, row: 8, kind: "black" },
   ];
   resetBlueprint(1);
   restoreBlueprintClock(clock({
@@ -903,7 +951,8 @@ test("已画出的凸块都在网格线上描不透明白边，含未点亮白�
   assert.ok(tags.has("white:true"), "lit white");
   assert.ok(tags.has("green:false"), "green");
   assert.ok(tags.has("red:false"), "red");
-  assert.equal(blocks.length, 4);
+  assert.ok(tags.has("black:false"), "black");
+  assert.equal(blocks.length, 5);
   for (const block of blocks) {
     assert.ok(block.extend >= 0.04);
     const expected = blueprintBlockStrokeRect(block.cell);
@@ -982,7 +1031,7 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   assert.equal(blocked.clearing.length, 0);
   assert.equal(blocked.staticCells.length, 4);
   assert.ok(blocked.staticCells.some((cell) => cell.col === b.col && cell.row === b.row));
-  assert.deepEqual(blocked.dynamic?.cells, [flat]);
+  assertLayerCellValues(blocked.dynamic?.cells, [flat]);
   assert.equal(blueprintBlocks(world).some((block) => block.col === a.col && block.lit), true);
   assert.equal(blueprintBlocks(world).some((block) => block.col === flat.col && !block.lit), true);
 
@@ -997,7 +1046,7 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   const started = getBlueprintClock();
   assert.equal(started.pendingBonus, 2);
   assert.equal(started.clearing.length, 2);
-  assert.deepEqual(started.staticCells, [other]);
+  assertLayerCellValues(started.staticCells, [other]);
   assert.equal(started.lit.includes("4:8"), false);
   const sinking = blueprintBlocks(world).filter((block) => block.row === 8);
   assert.equal(sinking.length, 2);
@@ -1011,7 +1060,7 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   const halfway = getBlueprintClock();
   assert.equal(halfway.pendingBonus, 2);
   assert.equal(halfway.clearing.length, 2);
-  assert.deepEqual(halfway.staticCells, [other]);
+  assertLayerCellValues(halfway.staticCells, [other]);
   const midBlocks = blueprintBlocks(world).filter((block) => block.row === 8);
   assert.equal(midBlocks.length, 2);
   for (const block of midBlocks) {
@@ -1021,7 +1070,7 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   const done = getBlueprintClock();
   assert.equal(done.clearing.length, 0);
   assert.equal(blueprintBlocks(world).some((block) => block.row === 8), false);
-  assert.deepEqual(done.staticCells, [other]);
+  assertLayerCellValues(done.staticCells, [other]);
   assert.equal(done.pendingBonus, 2);
   assert.equal(claimBlueprintBonus(), 2);
   assert.equal(claimBlueprintBonus(), 0);
@@ -1070,7 +1119,7 @@ test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", ()
   assert.equal(blocked.pendingBonus, 0);
   assert.equal(blocked.clearing.length, 0);
   assert.equal(blocked.staticCells.length, 2);
-  assert.deepEqual(blocked.dynamic?.cells, [down]);
+  assertLayerCellValues(blocked.dynamic?.cells, [down]);
   assert.equal(blocked.lit.includes("4:8"), true);
 
   resetBlueprint(5);
@@ -1109,7 +1158,7 @@ test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", ()
   const left = getBlueprintClock();
   assert.equal(left.pendingBonus, 4);
   assert.equal(left.clearing.length, 2);
-  assert.deepEqual(left.staticCells, []);
+  assertLayerCellValues(left.staticCells, []);
   assert.equal(claimBlueprintBonus(), 4);
   assert.equal(claimBlueprintBonus(), 0);
 
@@ -1170,7 +1219,7 @@ test("单格点亮即清，两格必须全亮，动态亮格落地才凑排", ()
   const started = getBlueprintClock();
   assert.equal(started.pendingBonus, 1);
   assert.equal(started.clearing.length, 1);
-  assert.deepEqual(started.staticCells, []);
+  assertLayerCellValues(started.staticCells, []);
   const live = blueprintBlocks(world).find((item) => item.col === only.col && item.row === only.row);
   assert.equal(live?.lit, true);
   assert.ok(live && live.extend > 0.9);
@@ -1203,7 +1252,7 @@ test("单格点亮即清，两格必须全亮，动态亮格落地才凑排", ()
   const separated = getBlueprintClock();
   assert.equal(separated.pendingBonus, 3);
   assert.ok(separated.clearing.some((cell) => cell.col === lone.col && cell.row === lone.row));
-  assert.deepEqual(separated.staticCells, [diagonal]);
+  assertLayerCellValues(separated.staticCells, [diagonal]);
 
   const staticA = { col: 4, row: 8 };
   const anchor = { col: 4, row: 9 };
@@ -1238,7 +1287,7 @@ test("单格点亮即清，两格必须全亮，动态亮格落地才凑排", ()
   const after = getBlueprintClock();
   assert.equal(after.pendingBonus, 2);
   assert.deepEqual(after.clearing.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:8", "5:8"]);
-  assert.deepEqual(after.dynamic?.cells, [blockerNext]);
+  assertLayerCellValues(after.dynamic?.cells, [blockerNext]);
   assert.equal(after.dynamic?.phase, "cross_in");
   assert.deepEqual(after.staticCells.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:9", "7:8"]);
   const sinking = blueprintBlocks(world).find((item) => item.col === staticA.col && item.row === staticA.row);
@@ -1295,7 +1344,7 @@ test("相邻两格只踩一格不会把邻格点亮", () => {
   assert.equal(collideBlueprint(world, onB, onB.x, onB.y - 24), true);
   assert.equal(getBlueprintClock().pendingBonus, 2);
   assert.equal(getBlueprintClock().clearing.length, 2);
-  assert.deepEqual(getBlueprintClock().staticCells, []);
+  assertLayerCellValues(getBlueprintClock().staticCells, []);
 });
 
 test("十字中心有邻块不清，横段或竖段亮齐才消", () => {
@@ -1407,13 +1456,13 @@ test("pending=N 时实体结算返回 N 并归零，分身结算不改待领", (
 });
 
 test("进球换静态后新静态全暗，留下的动态保持点亮", () => {
-  const aim = aimAt(2);
+  const aim = aimAt(10);
   const ball = { x: aim.ballX, y: aim.ballY };
   const hoop = { x: aim.hoopX, y: aim.hoopY };
   let sawReuse = false;
   let sawKeptDynamic = false;
   for (let seed = 1; seed < 240; seed++) {
-    const batch = rollBlueprintBatch(world, { seed, serial: 2, goals: 2, ball, hoop });
+    const batch = rollBlueprintBatch(world, { seed, serial: 2, goals: 10, ball, hoop });
     const next = batch.cells[0];
     if (!next) continue;
     const legal = blueprintLegalCells(world, ball);
@@ -1422,7 +1471,7 @@ test("进球换静态后新静态全暗，留下的动态保持点亮", () => {
     resetBlueprint(seed);
     restoreBlueprintClock(clock({
       seed,
-      goals: 1,
+      goals: 9,
       serial: 1,
       staticCells: [{ col: next.col, row: next.row }],
       staticAge: BLUEPRINT_RAISE,
@@ -1489,7 +1538,7 @@ test("开黑洞清掉全部凸块，基础分只按已亮格数加一次", () =>
   const after = getBlueprintClock();
   assert.equal(after.pendingBonus, 3);
   assert.deepEqual(after.lit, []);
-  assert.deepEqual(after.staticCells, []);
+  assertLayerCellValues(after.staticCells, []);
   assert.equal(after.dynamic, null);
   assert.deepEqual(after.clearing, []);
   assert.equal(blueprintBlocks(world, after).length, 0);
@@ -1531,17 +1580,17 @@ test("时间球快退把凸块、点亮、伸缩和待领退回取样", () => {
   assert.equal(back.serial, live.serial);
   assert.equal(back.elapsed, live.elapsed);
   assert.equal(back.staticAge, live.staticAge);
-  assert.deepEqual(back.staticCells, live.staticCells);
+  assertLayerCellValues(back.staticCells, live.staticCells);
   assert.deepEqual(back.lit, live.lit);
   assert.equal(back.pendingBonus, live.pendingBonus);
   assert.deepEqual(back.clearing, live.clearing);
   assert.equal(back.dynamic?.phase, "cross_out");
   assert.equal(back.dynamic?.age, live.dynamic?.age);
-  assert.deepEqual(back.dynamic?.cells, live.dynamic?.cells);
-  assert.deepEqual(back.dynamic?.pending, live.dynamic?.pending);
+  assertLayerCellValues(back.dynamic?.cells, live.dynamic?.cells);
+  assertLayerCellValues(back.dynamic?.pending, live.dynamic?.pending);
   stepBlueprint(0.02, true, aimAt(live.goals), world);
   const stayed = getBlueprintClock();
-  assert.deepEqual(stayed.staticCells, live.staticCells);
+  assertLayerCellValues(stayed.staticCells, live.staticCells);
   assert.deepEqual(stayed.lit, live.lit);
   assert.equal(stayed.pendingBonus, live.pendingBonus);
   assert.equal(stayed.dynamic?.phase, "cross_out");
@@ -1550,21 +1599,21 @@ test("时间球快退把凸块、点亮、伸缩和待领退回取样", () => {
 
 test("黑洞期间不换批不生成动态，结束后按当前进球数恢复", () => {
   resetBlueprint(8);
-  stepBlueprint(0.02, true, aimAt(1), world);
+  stepBlueprint(0.02, true, aimAt(4), world);
   const before = getBlueprintClock();
-  assert.equal(before.goals, 1);
+  assert.equal(before.goals, 4);
   assert.equal(before.staticCells.length, 1);
   const kept = before.staticCells.map((cell) => `${cell.col}:${cell.row}`);
   const keptDynamic = (before.dynamic?.cells ?? []).map((cell) => `${cell.col}:${cell.row}`);
-  stepBlueprint(0.4, true, aimAt(3), world, { generationHold: true });
+  stepBlueprint(0.4, true, aimAt(6), world, { generationHold: true });
   const held = getBlueprintClock();
-  assert.equal(held.goals, 1);
+  assert.equal(held.goals, 4);
   assert.deepEqual(held.staticCells.map((cell) => `${cell.col}:${cell.row}`), kept);
   assert.deepEqual((held.dynamic?.cells ?? []).map((cell) => `${cell.col}:${cell.row}`), keptDynamic);
   assert.ok(held.staticAge > before.staticAge);
-  stepBlueprint(0.02, true, aimAt(3), world);
+  stepBlueprint(0.02, true, aimAt(6), world);
   const resumed = getBlueprintClock();
-  assert.equal(resumed.goals, 3);
+  assert.equal(resumed.goals, 6);
   assert.ok(resumed.staticCells.length >= 1);
   assert.ok(resumed.staticAge < 0.05);
 });
@@ -1606,48 +1655,54 @@ test("PR31 普通点亮白色；彩块权重与生成确定且三色均可生成
   assert.equal(BLUEPRINT_LIT_RGB, "255, 255, 255");
   assert.equal(BLUEPRINT_RED_RGB, "217, 0, 27");
   assert.equal(BLUEPRINT_CLOCK_SECONDS, 1);
-  assert.deepEqual(BLUEPRINT_KIND_WEIGHTS, { white: 0.8, green: 0.12, red: 0.08 });
+  assert.deepEqual(BLUEPRINT_KIND_WEIGHTS, { white: 0.74, green: 0.12, red: 0.08, black: 0.06 });
+  assert.equal(BLUEPRINT_BLACK, "#1A1A1A");
   const seen = new Set();
-  for (let serial = 0; serial < 100; serial++) {
-    const opts = { seed: 52, serial, goals: 16 };
+  for (let serial = 0; serial < 160; serial++) {
+    const opts = { seed: 52, serial, goals: 21 };
     const batch = rollBlueprintBatch(world, opts);
     assert.deepEqual(batch, rollBlueprintBatch(world, opts));
     for (const cell of batch.cells) seen.add(cell.kind);
   }
-  assert.deepEqual([...seen].sort(), ["green", "red", "white"]);
+  assert.deepEqual([...seen].sort(), ["black", "green", "red", "white"]);
   assert.equal(blueprintBlocks(world, clock({ staticCells: [{ col: 4, row: 8 }], staticAge: 1 }))[0]?.kind, "white");
 });
 
-test("PR31 green 真正消除才三选一，叠层/重触/清动画仅领一次", () => {
+test("PR31 green 真正消除才按已解锁奖池抽一项，叠层/重触/清动画仅领一次", () => {
   const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
   const mate = { col: 5, row: 8 };
   const seen = new Set();
-  for (let seed = 1; seed <= 40; seed++) {
-    restoreBlueprintClock(clock({ seed, staticCells: [green, mate], staticAge: 1, dynamic: dyn({ cells: [green], stepSpan: 10 }) }));
-    assert.equal(touchBlueprintCell(world, 4, 8), 0);
+  for (let seed = 1; seed <= 160; seed++) {
+    restoreBlueprintClock(clock({ seed, goals: 12, staticCells: [green, mate], staticAge: 1, dynamic: dyn({ cells: [green], stepSpan: 10 }) }));
+    const first = touchBlueprintCell(world, 4, 8);
+    assert.equal(first, 0);
     assert.deepEqual(getBlueprintRewards(), { base: 0, combo: 0, seconds: 0 });
-    assert.equal(touchBlueprintCell(world, 5, 8), 2);
+    assert.equal(getBlueprintScoreDoubleCharges(), 0);
+    const cleared = touchBlueprintCell(world, 5, 8);
+    assert.ok(cleared >= 2);
     const events = drainBlueprintRewardEvents();
     assert.equal(events.length, 1);
     const event = events[0]!;
     seen.add(event);
     assert.deepEqual(getBlueprintRewards(), { base: event === "base" ? 2 : 0, combo: event === "combo" ? 1 : 0, seconds: event === "seconds" ? BLUEPRINT_CLOCK_SECONDS : 0 });
+    if (event === "scoreDouble") assert.equal(getBlueprintScoreDoubleCharges(), 1);
+    else assert.equal(getBlueprintScoreDoubleCharges(), 0);
     assert.equal(touchBlueprintCell(world, 4, 8), 0);
     consumeBlueprintLitForHole();
     assert.deepEqual(drainBlueprintRewardEvents(), []);
   }
-  assert.deepEqual([...seen].sort(), ["base", "combo", "seconds"]);
+  assert.deepEqual([...seen].sort(), ["areaClear", "base", "combo", "comboProtection", "scoreDouble", "seconds"]);
 });
 
 test("PR31 红碰撞清横竖连续十字，不越空格、不要求lit，连带green领奖", () => {
   const red: BlueprintCellRef = { col: 5, row: 9, kind: "red" };
   const cross: BlueprintCellRef[] = [red, { col: 4, row: 9 }, { col: 6, row: 9, kind: "green" }, { col: 5, row: 8 }, { col: 5, row: 10 }];
   const beyond = [{ col: 8, row: 9 }, { col: 5, row: 12 }];
-  restoreBlueprintClock(clock({ staticCells: [...cross, ...beyond], staticAge: 1 }));
+  restoreBlueprintClock(clock({ goals: 12, staticCells: [...cross, ...beyond], staticAge: 1 }));
   const block = blueprintBlocks(world).find((item) => item.kind === "red")!;
   const ball = { x: block.cell.x + 6, y: block.cell.y + 14, vx: 500, vy: 0, r: 5 };
   assert.equal(collideBlueprint(world, ball, block.cell.x - 7, ball.y), true);
-  assert.deepEqual(getBlueprintClock().staticCells, beyond);
+  assertLayerCellValues(getBlueprintClock().staticCells, beyond);
   assert.equal(getBlueprintClock().clearing.length, 5);
   assert.equal(getBlueprintClock().pendingBonus, 5);
   assert.equal(drainBlueprintRewardEvents().length, 1);
@@ -1658,7 +1713,7 @@ test("PR31 红碰撞清横竖连续十字，不越空格、不要求lit，连带
 
 test("PR31 快照含类型奖励抽签，新局清零，换批/跨关保留，restore不重放toast", () => {
   const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
-  restoreBlueprintClock(clock({ seed: 71, staticCells: [green], staticAge: 1 }));
+  restoreBlueprintClock(clock({ seed: 71, goals: 12, staticCells: [green], staticAge: 1 }));
   const before = getBlueprintClock();
   touchBlueprintCell(world, 4, 8);
   const event = drainBlueprintRewardEvents();
@@ -1693,7 +1748,7 @@ test("PR31 动态颜色跟块移动；黑洞未亮green与叠层一次领奖", (
   const moved = blueprintBlocks(world).filter((item) => item.dynamic);
   assert.deepEqual(moved.map((item) => [item.col, item.row, item.kind]), [[4, 9, "green"], [5, 9, "red"]]);
   assert.deepEqual(getBlueprintClock().dynamic?.cells.map((cell) => cell.kind), ["green", "red"]);
-  restoreBlueprintClock(clock({ staticCells: [green], dynamic: dyn({ cells: [green] }), staticAge: 1 }));
+  restoreBlueprintClock(clock({ goals: 12, staticCells: [green], dynamic: dyn({ cells: [green] }), staticAge: 1 }));
   assert.equal(consumeBlueprintLitForHole(), 0);
   assert.equal(drainBlueprintRewardEvents().length, 1);
   assert.equal(consumeBlueprintLitForHole(), 0);
@@ -1716,21 +1771,41 @@ test("标题和开发者场景条都有蓝图，其它场景配色不动", () =>
 });
 
 
-test("前五球只有一格白块，前十五球数量和彩块逐步恢复", () => {
-  for (let goals = 1; goals <= 5; goals++) {
+test("前三次进球完成仍无方块，种类解锁表不变并归一化", () => {
+  for (let goals = 0; goals <= 3; goals++) {
+    assert.equal(blueprintSampleCount(goals, 0), 0);
+    assert.equal(rollBlueprintBatch(world, { seed: 52, serial: 0, goals }).cells.length, 0);
+  }
+  for (let goals = 4; goals <= 7; goals++) {
     for (let serial = 0; serial < 80; serial++) {
       assert.equal(blueprintSampleCount(goals, serial / 79), 1);
-      const batch = rollBlueprintBatch(world, {seed: 52, serial, goals});
+      const batch = rollBlueprintBatch(world, { seed: 52, serial, goals });
       assert.ok(batch.cells.length <= 1);
-      assert.ok(batch.cells.every(cell => cell.kind === "white"));
+      assert.ok(batch.cells.every((cell) => (cell.kind ?? "white") === "white"));
     }
   }
-  let early = 0, late = 0;
-  for (let i = 0; i < 100; i++) {
-    early += blueprintSampleCount(8, i / 99);
-    late += blueprintSampleCount(16, i / 99);
+  const whiteOnly = blueprintKindWeights(8);
+  assert.equal(whiteOnly.white, 1);
+  assert.equal(whiteOnly.green, 0);
+  assert.equal(whiteOnly.red, 0);
+  assert.equal(whiteOnly.black, 0);
+  const wg = blueprintKindWeights(9);
+  assert.ok(Math.abs(wg.white - 0.74 / 0.86) < 1e-12);
+  assert.ok(Math.abs(wg.green - 0.12 / 0.86) < 1e-12);
+  assert.equal(wg.red, 0);
+  assert.equal(wg.black, 0);
+  const wgr = blueprintKindWeights(15);
+  assert.ok(Math.abs(wgr.white - 0.74 / 0.94) < 1e-12);
+  assert.ok(Math.abs(wgr.green - 0.12 / 0.94) < 1e-12);
+  assert.ok(Math.abs(wgr.red - 0.08 / 0.94) < 1e-12);
+  assert.equal(wgr.black, 0);
+  assert.deepEqual(blueprintKindWeights(21), { ...BLUEPRINT_KIND_WEIGHTS });
+  for (let serial = 0; serial < 80; serial++) {
+    const mid = rollBlueprintBatch(world, { seed: 53, serial, goals: 14 });
+    assert.ok(mid.cells.every((cell) => cell.kind !== "red" && cell.kind !== "black"));
+    const preBlack = rollBlueprintBatch(world, { seed: 54, serial, goals: 20 });
+    assert.ok(preBlack.cells.every((cell) => cell.kind !== "black"));
   }
-  assert.ok(early < late / 2);
 });
 
 test("粗竖线右移一格，地面横线密度可调且默认可还原", () => {
@@ -1760,9 +1835,9 @@ test("正式默认固定横线140%纵线180%，无效输入恢复所选默认", 
 });
 
 
-function clearIsolatedGreen(seed: number) {
+function clearIsolatedGreen(seed: number, goals = 12) {
   const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
-  restoreBlueprintClock(clock({ seed, staticCells: [green], staticAge: 1 }));
+  restoreBlueprintClock(clock({ seed, goals, staticCells: [green], staticAge: 1 }));
   assert.equal(touchBlueprintCell(world, 4, 8), 1);
   return drainBlueprintRewardEvents();
 }
@@ -1774,16 +1849,17 @@ test("一分钟 + 蓝图：多次绿消除只有 base/combo，seconds 为 0，ti
     const seen = new Set<string>();
     let eventCount = 0;
     let grantedSeconds = 0;
-    for (let seed = 1; seed <= 80; seed++) {
+    for (let seed = 1; seed <= 160; seed++) {
       const events = clearIsolatedGreen(seed);
-      assert.equal(events.length, 1, "每个绿块都要发出一项奖励，不能先三选一再丢掉 seconds");
-      assert.ok(events[0] === "base" || events[0] === "combo");
+      assert.equal(events.length, 1, "每个绿块都要发出一项奖励，不能先抽秒再丢掉");
+      assert.ok(events[0] === "comboProtection" || events[0] === "base" || events[0] === "combo" || events[0] === "scoreDouble" || events[0] === "areaClear");
+      assert.notEqual(events[0], "seconds");
       seen.add(events[0]!);
       eventCount += events.length;
       grantedSeconds += getBlueprintRewards().seconds;
     }
-    assert.deepEqual([...seen].sort(), ["base", "combo"]);
-    assert.equal(eventCount, 80);
+    assert.deepEqual([...seen].sort(), ["areaClear", "base", "combo", "comboProtection", "scoreDouble"]);
+    assert.equal(eventCount, 160);
     assert.equal(grantedSeconds, 0);
     assert.equal(getBlueprintRewards().seconds, 0);
 
@@ -1810,19 +1886,21 @@ test("一分钟模式红叉连带与黑洞清绿块同样不加时", () => {
   try {
     const red: BlueprintCellRef = { col: 5, row: 9, kind: "red" };
     const cross: BlueprintCellRef[] = [red, { col: 4, row: 9 }, { col: 6, row: 9, kind: "green" }, { col: 5, row: 8 }, { col: 5, row: 10 }];
-    restoreBlueprintClock(clock({ seed: 11, staticCells: cross, staticAge: 1 }));
+    restoreBlueprintClock(clock({ seed: 11, goals: 12, staticCells: cross, staticAge: 1 }));
     assert.equal(touchBlueprintCell(world, red.col, red.row), 5);
     const fromRed = drainBlueprintRewardEvents();
     assert.equal(fromRed.length, 1);
-    assert.ok(fromRed[0] === "base" || fromRed[0] === "combo");
+    assert.ok(fromRed[0] === "comboProtection" || fromRed[0] === "base" || fromRed[0] === "combo" || fromRed[0] === "scoreDouble" || fromRed[0] === "areaClear");
+    assert.notEqual(fromRed[0], "seconds");
     assert.equal(getBlueprintRewards().seconds, 0);
 
     const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
-    restoreBlueprintClock(clock({ seed: 21, staticCells: [green], staticAge: 1 }));
+    restoreBlueprintClock(clock({ seed: 21, goals: 12, staticCells: [green], staticAge: 1 }));
     assert.equal(consumeBlueprintLitForHole(), 0);
     const fromHole = drainBlueprintRewardEvents();
     assert.equal(fromHole.length, 1);
-    assert.ok(fromHole[0] === "base" || fromHole[0] === "combo");
+    assert.ok(fromHole[0] === "comboProtection" || fromHole[0] === "base" || fromHole[0] === "combo" || fromHole[0] === "scoreDouble" || fromHole[0] === "areaClear");
+    assert.notEqual(fromHole[0], "seconds");
     assert.equal(getBlueprintRewards().seconds, 0);
   } finally {
     setBlueprintAllowSeconds(previous);
@@ -1877,4 +1955,1014 @@ test("一分钟兜底：即使收到 seconds 也不加时、不弹时钟文案",
   assert.equal(getBlueprintAllowSeconds(), true);
   resetBlueprint(1);
   assert.equal(getBlueprintAllowSeconds(), true, "resetBlueprint 不改模式标志");
+});
+
+test("奖励池按进球数解锁；一分钟永不写 seconds", () => {
+  assert.deepEqual(blueprintRewardPool(true, 8), []);
+  assert.deepEqual(blueprintRewardPool(true, 9), ["base", "combo", "seconds", "scoreDouble", "comboProtection"]);
+  assert.deepEqual(blueprintRewardPool(false, 9), ["base", "combo", "scoreDouble", "comboProtection"]);
+  assert.deepEqual(blueprintRewardPool(true, 12), ["base", "combo", "seconds", "scoreDouble", "comboProtection", "areaClear"]);
+  assert.deepEqual(blueprintRewardPool(false, 12), ["base", "combo", "scoreDouble", "comboProtection", "areaClear"]);
+  assert.deepEqual(blueprintRewardPool(true, 26), ["base", "combo", "seconds", "scoreDouble", "comboProtection", "areaClear"]);
+  assert.deepEqual(blueprintRewardPool(true, 27), ["base", "combo", "seconds", "scoreDouble", "comboProtection", "areaClear", "turnRed"]);
+  assert.deepEqual(blueprintRewardPool(false, 27), ["base", "combo", "scoreDouble", "comboProtection", "areaClear", "turnRed"]);
+  assert.equal(blueprintRewardToast("base"), "永久基础 +2");
+  assert.equal(blueprintRewardToast("combo"), "每球连击 +1");
+  assert.equal(blueprintRewardToast("seconds"), "永久时钟 +1秒");
+  assert.equal(blueprintRewardToast("scoreDouble"), "下一次进球得分 ×2");
+  assert.equal(blueprintRewardToast("areaClear"), "点亮并消除周围方块");
+  assert.equal(blueprintRewardToast("turnRed"), "相邻方块变为红色");
+  assert.equal(BLUEPRINT_REWARD_UNLOCK.turnRed, 27);
+  assert.equal(BLUEPRINT_KIND_UNLOCK.black, 21);
+  const previous = getBlueprintAllowSeconds();
+  setBlueprintAllowSeconds(false);
+  try {
+    for (let seed = 1; seed <= 80; seed++) {
+      const events = clearIsolatedGreen(seed);
+      assert.notEqual(events[0], "seconds");
+      assert.equal(getBlueprintRewards().seconds, 0);
+    }
+  } finally {
+    setBlueprintAllowSeconds(previous);
+  }
+});
+
+test("下一次实体进球得分 ×2，连击数不加倍；两次是两球各 ×2；分身不兑现", () => {
+  resetBlueprint(9);
+  restoreBlueprintClock(clock({ scoreDoubleCharges: 2, pendingBonus: 3 }));
+  assert.equal(getBlueprintScoreDoubleCharges(), 2);
+  const ghost = applyBlueprintScoreDouble(10, false);
+  assert.equal(ghost.score, 10);
+  assert.equal(ghost.doubled, false);
+  assert.equal(getBlueprintScoreDoubleCharges(), 2);
+  const first = applyBlueprintScoreDouble(10, true);
+  assert.equal(first.score, 20);
+  assert.equal(first.doubled, true);
+  assert.equal(first.multiplier, 2);
+  assert.equal(getBlueprintScoreDoubleCharges(), 1);
+  const second = applyBlueprintScoreDouble(7, true);
+  assert.equal(second.score, 14);
+  assert.equal(getBlueprintScoreDoubleCharges(), 0);
+  const third = applyBlueprintScoreDouble(7, true);
+  assert.equal(third.score, 7);
+  assert.equal(third.doubled, false);
+
+  resetBlueprint(10);
+  restoreBlueprintClock(clock({ scoreDoubleCharges: 2, pendingBonus: 3 }));
+  const settledGhost = settleBlueprintBasket(5, false);
+  assert.equal(settledGhost.shown, 5);
+  assert.equal(settledGhost.doubled, false);
+  assert.equal(getBlueprintScoreDoubleCharges(), 2);
+  assert.equal(getBlueprintClock().pendingBonus, 3);
+  const settled = settleBlueprintBasket(5, true);
+  assert.equal(settled.bonus, 3);
+  assert.equal(settled.shown, 16);
+  assert.equal(settled.doubled, true);
+  assert.equal(getBlueprintScoreDoubleCharges(), 1);
+});
+
+test("时间球回溯还原双倍次数与黑块种类", () => {
+  resetBlueprint(12);
+  restoreBlueprintClock(clock({
+    goals: 8,
+    staticCells: [{ col: 4, row: 8, kind: "black" }, { col: 5, row: 8, kind: "green" }],
+    dynamic: dyn({ cells: [{ col: 6, row: 9, kind: "black" }], stepSpan: 10 }),
+    staticAge: 1,
+    scoreDoubleCharges: 2,
+    pendingBonus: 1,
+  }));
+  const shot = getBlueprintClock();
+  assert.equal(shot.scoreDoubleCharges, 2);
+  applyBlueprintScoreDouble(4, true);
+  consumeBlueprintLitForHole();
+  assert.equal(getBlueprintScoreDoubleCharges(), 1);
+  assertLayerCellValues(getBlueprintClock().staticCells, []);
+  restoreBlueprintClock(shot);
+  const back = getBlueprintClock();
+  assert.equal(back.scoreDoubleCharges, 2);
+  assert.deepEqual(back.staticCells.map((cell) => cell.kind), ["black", "green"]);
+  assert.equal(back.dynamic?.cells[0]?.kind, "black");
+  assert.equal(back.pendingBonus, 1);
+});
+
+test("周围 8 格含斜线；邻绿领奖但不二次范围消除；红引爆且不递归", () => {
+  assert.equal(blueprintAreaNeighbors(5, 9).length, 8);
+  assert.ok(blueprintAreaNeighbors(5, 9).some((cell) => cell.col === 6 && cell.row === 10));
+  // 斜线邻块不挡住中心绿的单格消除，这样才能在点亮时触发周围消除。
+  const center: BlueprintCellRef = { col: 5, row: 9, kind: "green" };
+  const diagWhite: BlueprintCellRef = { col: 6, row: 10, kind: "white" };
+  const neighborGreen: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
+  const red: BlueprintCellRef = { col: 6, row: 8, kind: "red" };
+  const redArm: BlueprintCellRef = { col: 6, row: 7 };
+  const redBeyondGap: BlueprintCellRef = { col: 6, row: 5 };
+  const collateralRed: BlueprintCellRef = { col: 7, row: 8, kind: "red" };
+  const collateralArm: BlueprintCellRef = { col: 7, row: 7 };
+  let found = false;
+  for (let seed = 1; seed <= 200; seed++) {
+    resetBlueprint(seed);
+    restoreBlueprintClock(clock({
+      seed,
+      goals: 12,
+      staticCells: [center, diagWhite, neighborGreen, red, redArm, redBeyondGap, collateralRed, collateralArm],
+      staticAge: 1,
+    }));
+    const cleared = touchBlueprintCell(world, 5, 9);
+    const events = drainBlueprintRewardEvents();
+    if (events[0] !== "areaClear") continue;
+    found = true;
+    assert.ok(cleared >= 1);
+    const after = getBlueprintClock();
+    const live = (cell: { col: number; row: number }) =>
+      after.staticCells.some((item) => item.col === cell.col && item.row === cell.row)
+      || after.clearing.some((item) => item.col === cell.col && item.row === cell.row);
+    assert.equal(live(diagWhite), true, "diagonal white entered clear (still retracting or gone from static)");
+    assert.ok(!after.staticCells.some((item) => item.col === 6 && item.row === 10), "diagonal white left the field");
+    assert.ok(!after.staticCells.some((item) => item.col === 6 && item.row === 8 && item.kind === "red"), "diagonal red cleared");
+    assert.ok(!after.staticCells.some((item) => item.col === 6 && item.row === 7), "red cross extends up");
+    assert.ok(after.staticCells.some((item) => item.col === 6 && item.row === 5), "gap stops red cross");
+    assert.ok(!after.staticCells.some((item) => item.col === 7 && item.row === 8 && item.kind === "red"), "collateral red cleared");
+    assert.ok(after.staticCells.some((item) => item.col === 7 && item.row === 7), "collateral red does not recurse");
+    const areaEvents = events.filter((event) => event === "areaClear");
+    assert.ok(areaEvents.length <= 1, "neighbor green must not chain a second area clear");
+    assert.ok(events.length >= 1);
+    break;
+  }
+  assert.equal(found, true, "should draw areaClear within 200 seeds");
+});
+
+test("邻绿抽到周围消除不再连锁", () => {
+  const center: BlueprintCellRef = { col: 5, row: 9, kind: "green" };
+  const neighbor: BlueprintCellRef = { col: 6, row: 10, kind: "green" };
+  const far: BlueprintCellRef = { col: 7, row: 11 };
+  let sawNeighborReward = false;
+  let chainedFar = false;
+  for (let seed = 1; seed <= 240; seed++) {
+    resetBlueprint(seed);
+    restoreBlueprintClock(clock({ seed, goals: 12, staticCells: [center, neighbor, far], staticAge: 1 }));
+    touchBlueprintCell(world, 5, 9);
+    const events = drainBlueprintRewardEvents();
+    if (events[0] !== "areaClear") continue;
+    if (events.length >= 2) sawNeighborReward = true;
+    if (events.length >= 2 && events[1] === "areaClear") {
+      const after = getBlueprintClock();
+      const farGone = !after.staticCells.some((cell) => cell.col === 7 && cell.row === 11)
+        && after.clearing.some((cell) => cell.col === 7 && cell.row === 11);
+      const farCleared = !after.staticCells.some((cell) => cell.col === 7 && cell.row === 11);
+      if (farCleared) chainedFar = true;
+    }
+    if (sawNeighborReward && events.includes("areaClear") && events.length >= 2) {
+      if (events[1] === "areaClear") break;
+    }
+  }
+  assert.equal(sawNeighborReward, true);
+  assert.equal(chainedFar, false);
+});
+
+test("黑块：踩亮/清段/8格/红十字都清不掉，并截断连续段", () => {
+  const black: BlueprintCellRef = { col: 5, row: 9, kind: "black" };
+  const left: BlueprintCellRef = { col: 4, row: 9 };
+  const right: BlueprintCellRef = { col: 6, row: 9 };
+  resetBlueprint(6);
+  restoreBlueprintClock(clock({ staticCells: [black, left, right], staticAge: 1 }));
+  assert.equal(blueprintCellLocked(4, 9), true);
+  assert.equal(touchBlueprintCell(world, 5, 9), 0);
+  assert.ok(getBlueprintClock().staticCells.some((cell) => cell.kind === "black"));
+  assert.equal(getBlueprintClock().lit.includes("5:9"), false);
+  // 同一行被锁：白块可点亮但不能清段。
+  assert.equal(touchBlueprintCell(world, 4, 9), 0);
+  const mid = getBlueprintClock();
+  assert.ok(mid.staticCells.some((cell) => cell.col === 5 && cell.row === 9 && cell.kind === "black"));
+  assert.ok(mid.staticCells.some((cell) => cell.col === 4 && cell.row === 9));
+  assert.ok(mid.staticCells.some((cell) => cell.col === 6 && cell.row === 9));
+  assert.equal(mid.lit.includes("4:9"), true);
+  assert.equal(mid.pendingBonus, 0);
+  assert.equal(touchBlueprintCell(world, 6, 9), 0);
+  assert.equal(getBlueprintClock().pendingBonus, 0, "both lit whites remain row-locked");
+
+  const red: BlueprintCellRef = { col: 5, row: 8, kind: "red" };
+  const beyond: BlueprintCellRef = { col: 5, row: 10 };
+  restoreBlueprintClock(clock({ staticCells: [red, black, beyond], staticAge: 1 }));
+  // 触发红在锁定列上仍引爆，但实际黑块阻挡延伸。
+  assert.equal(blueprintCellLocked(5, 8), true);
+  const cross = blueprintRedCrossCells(5, 8);
+  assert.ok(!cross.some((cell) => cell.col === 5 && cell.row === 9));
+  assert.ok(!cross.some((cell) => cell.col === 5 && cell.row === 10));
+  assert.equal(touchBlueprintCell(world, 5, 8), 1);
+  const afterRed = getBlueprintClock();
+  assert.ok(!afterRed.staticCells.some((cell) => cell.col === 5 && cell.row === 8 && cell.kind === "red"));
+  assert.ok(afterRed.staticCells.some((cell) => cell.col === 5 && cell.row === 9 && cell.kind === "black"));
+  assert.ok(afterRed.staticCells.some((cell) => cell.col === 5 && cell.row === 10));
+});
+
+test("叠层只走可清除的那一层，黑洞可以收走黑块", () => {
+  const black: BlueprintCellRef = { col: 4, row: 8, kind: "black" };
+  const white: BlueprintCellRef = { col: 4, row: 8, kind: "white" };
+  restoreBlueprintClock(clock({
+    staticCells: [black],
+    dynamic: dyn({ cells: [white], stepSpan: 10 }),
+    staticAge: 1,
+  }));
+  // 固定彩黑优先于移动白；直接碰撞不能穿透黑把底层白点亮。
+  assert.equal(touchBlueprintCell(world, 4, 8), 0);
+  const after = getBlueprintClock();
+  assert.ok(after.staticCells.some((cell) => cell.kind === "black" && cell.col === 4 && cell.row === 8));
+  assert.equal((after.dynamic?.cells ?? []).some((cell) => cell.col === 4 && cell.row === 8 && cell.kind === "white"), true);
+  assert.equal(after.lit.includes("4:8"), false);
+  assert.equal(after.pendingBonus, 0);
+  assert.equal(consumeBlueprintLitForHole(), 0);
+  assertLayerCellValues(getBlueprintClock().staticCells, []);
+  assert.equal(getBlueprintClock().dynamic, null);
+});
+
+test("黑块可出现在动态组；未解锁种类不会生成", () => {
+  let dynamicBlack = false;
+  for (let serial = 0; serial < 200 && !dynamicBlack; serial++) {
+    const batch = rollBlueprintBatch(world, { seed: 90, serial, goals: 21, maxCount: 6 });
+    if (batch.cells.some((cell) => cell.kind === "black")) dynamicBlack = true;
+  }
+  assert.equal(dynamicBlack, true);
+  for (let goals = 3; goals < 9; goals++) {
+    for (let serial = 0; serial < 40; serial++) {
+      const batch = rollBlueprintBatch(world, { seed: 91, serial, goals });
+      assert.ok(batch.cells.every((cell) => (cell.kind ?? "white") === "white"));
+    }
+  }
+  for (let goals = 9; goals < 15; goals++) {
+    for (let serial = 0; serial < 40; serial++) {
+      const batch = rollBlueprintBatch(world, { seed: 92, serial, goals });
+      assert.ok(batch.cells.every((cell) => cell.kind !== "red" && cell.kind !== "black"));
+    }
+  }
+  for (let goals = 15; goals < 21; goals++) {
+    for (let serial = 0; serial < 40; serial++) {
+      const batch = rollBlueprintBatch(world, { seed: 93, serial, goals });
+      assert.ok(batch.cells.every((cell) => cell.kind !== "black"));
+    }
+  }
+});
+
+test("数量曲线：actual0–3为0，第4球起每4球softMax+1，第40球封顶10", () => {
+  assert.equal(blueprintCountSoftMax(0), 0);
+  for (const goals of [0, 1, 2, 3]) {
+    assert.equal(blueprintCountSoftMax(goals), 0);
+    for (let i = 0; i <= 20; i++) assert.equal(blueprintSampleCount(goals, i / 20), 0);
+  }
+  const table: [number, number][] = [
+    [4, 1], [7, 1], [8, 2], [11, 2], [12, 3], [15, 3], [16, 4], [19, 4],
+    [20, 5], [23, 5], [24, 6], [27, 6], [28, 7], [31, 7], [32, 8], [35, 8],
+    [36, 9], [39, 9], [40, 10], [43, 10], [100, 10],
+  ];
+  for (const [goals, soft] of table) {
+    assert.equal(blueprintCountSoftMax(goals), soft, `softMax(${goals})`);
+    if (soft === 1) {
+      for (let i = 0; i <= 20; i++) assert.equal(blueprintSampleCount(goals, i / 20), 1);
+    } else {
+      assert.equal(blueprintSampleCount(goals, 1), soft);
+      let maxSeen = 0;
+      for (let i = 0; i <= 40; i++) maxSeen = Math.max(maxSeen, blueprintSampleCount(goals, i / 40));
+      assert.ok(maxSeen <= soft);
+    }
+  }
+  // 不再使用旧的前 5 球固定 1、每 2 球一跳，或第 16 球从 7 跳到 10。
+  assert.equal(blueprintCountSoftMax(1), 0);
+  assert.equal(blueprintCountSoftMax(16), 4);
+  assert.notEqual(blueprintCountSoftMax(16), 10);
+  const sums = { early: 0, late: 0 };
+  for (let i = 0; i < 100; i++) {
+    sums.early += blueprintSampleCount(8, i / 99);
+    sums.late += blueprintSampleCount(30, i / 99);
+  }
+  assert.ok(sums.late > sums.early);
+});
+
+test("形状拼接：格数贴近目标、只落合法格，固定 seed 下比单形状更不单一", () => {
+  const legal = new Set(blueprintLegalCells(world, null).map((cell) => `${cell.col}:${cell.row}`));
+  let exact = 0;
+  const combos = new Set<string>();
+  let multiPiece = 0;
+  for (let serial = 0; serial < 80; serial++) {
+    const batch = rollBlueprintBatch(world, { seed: 21, serial, goals: 20, ball: null, hoop: null });
+    for (const cell of batch.cells) assert.ok(legal.has(`${cell.col}:${cell.row}`));
+    assert.ok(batch.cells.length <= batch.target);
+    assert.ok(batch.target <= BLUEPRINT_MAX_COUNT);
+    if (batch.cells.length === batch.target) exact += 1;
+    if (batch.pieces.length > 1) multiPiece += 1;
+    combos.add(batch.pieces.map((piece) => piece.shape).join("+") || "empty");
+  }
+  assert.ok(exact >= 70, `exact=${exact}`);
+  assert.ok(multiPiece > 0, "some batches should stitch more than one shape");
+  assert.ok(combos.size >= 4, `combos=${[...combos].join(",")}`);
+});
+
+
+test("转红奖励：只改上下左右 4 格，白/绿/黑变红，已红保持，新红不引爆", () => {
+  assert.equal(BLUEPRINT_TURN_RED_DELTAS.length, 4);
+  assert.deepEqual(blueprintTurnRedNeighbors(5, 9), [
+    { col: 5, row: 8 }, { col: 4, row: 9 }, { col: 6, row: 9 }, { col: 5, row: 10 },
+  ]);
+  assert.ok(!blueprintTurnRedNeighbors(5, 9).some((cell) => cell.col === 6 && cell.row === 10));
+  const center: BlueprintCellRef = { col: 5, row: 9, kind: "green" };
+  const upWhite: BlueprintCellRef = { col: 5, row: 8, kind: "white" };
+  const upBlack: BlueprintCellRef = { col: 5, row: 8, kind: "black" };
+  const leftGreen: BlueprintCellRef = { col: 4, row: 9, kind: "green" };
+  const rightBlack: BlueprintCellRef = { col: 6, row: 9, kind: "black" };
+  const downRed: BlueprintCellRef = { col: 5, row: 10, kind: "red" };
+  const diag: BlueprintCellRef = { col: 6, row: 10, kind: "white" };
+  restoreBlueprintClock(clock({
+    goals: 27,
+    staticCells: [center, upWhite, leftGreen, rightBlack, downRed, diag],
+    dynamic: dyn({ cells: [upBlack], stepSpan: 10 }),
+    staticAge: 1,
+    lit: ["5:8"],
+  }));
+  drainBlueprintRewardEvents();
+  const cleared = applyBlueprintTurnRed(5, 9);
+  const after = getBlueprintClock();
+  const kindAt = (col: number, row: number) => (
+    [...after.staticCells, ...(after.dynamic?.cells ?? [])]
+      .filter((cell) => cell.col === col && cell.row === row)
+      .map((cell) => cell.kind)
+  );
+  assert.deepEqual(kindAt(5, 8), ["red"]);
+  assert.deepEqual(kindAt(4, 9), ["red"]);
+  assert.deepEqual(kindAt(6, 9), ["red"]);
+  assert.deepEqual(kindAt(5, 10), ["red"]);
+  assert.deepEqual(kindAt(6, 10), ["white"], "diagonal stays white");
+  assert.deepEqual(kindAt(5, 9), ["green"], "self stays until it is actually cleared");
+  // 被转变的绿不领奖；新红不立刻引爆，下行的原红也不另清。
+  assert.deepEqual(drainBlueprintRewardEvents(), []);
+  assert.ok(after.staticCells.some((cell) => cell.col === 5 && cell.row === 10 && cell.kind === "red"));
+  assert.ok(after.clearing.every((cell) => !(cell.col === 5 && cell.row === 10)));
+  // 同格多层红只留一层。
+  assert.deepEqual(kindAt(5, 8), ["red"]);
+  assert.equal(after.pendingBonus, cleared);
+});
+
+test("转红可改黑：锁解除后已点亮白块会补判清段", () => {
+  const a: BlueprintCellRef = { col: 7, row: 9 };
+  const b: BlueprintCellRef = { col: 8, row: 9 };
+  const lockBlack: BlueprintCellRef = { col: 5, row: 9, kind: "black" };
+  restoreBlueprintClock(clock({
+    goals: 27,
+    staticCells: [lockBlack, a, b],
+    staticAge: 1,
+  }));
+  assert.equal(blueprintCellLocked(7, 9), true);
+  assert.equal(blueprintCellLocked(8, 9), true);
+  assert.equal(touchBlueprintCell(world, 7, 9), 0);
+  assert.equal(touchBlueprintCell(world, 8, 9), 0);
+  assert.equal(getBlueprintClock().pendingBonus, 0);
+  assert.equal(getBlueprintClock().lit.includes("7:9"), true);
+  assert.equal(getBlueprintClock().lit.includes("8:9"), true);
+  applyBlueprintTurnRed(5, 10); // 上邻是黑，把 (5,9) 黑改红
+  const after = getBlueprintClock();
+  assert.ok(!after.staticCells.some((cell) => cell.kind === "black"));
+  assert.equal(blueprintCellLocked(7, 9, after), false);
+  // 锁解除后，已点亮且中间有空挡与新红隔开的 (7,9)-(8,9) 成段，立刻缩回。
+  assert.ok(!after.staticCells.some((cell) => cell.col === 7 && cell.row === 9));
+  assert.ok(!after.staticCells.some((cell) => cell.col === 8 && cell.row === 9));
+  assert.ok(after.pendingBonus >= 2);
+});
+
+test("行列锁：有黑的行和列可点亮不可清除，未锁定两侧可独立成段", () => {
+  const black: BlueprintCellRef = { col: 5, row: 9, kind: "black" };
+  // 黑锁 row 9 与 col 5。(4,8) 与 (6,8) 未被锁，中间 (5,8) 被列锁截断。
+  const left: BlueprintCellRef = { col: 4, row: 8 };
+  const mid: BlueprintCellRef = { col: 5, row: 8 };
+  const right: BlueprintCellRef = { col: 6, row: 8 };
+  const lockedGreen: BlueprintCellRef = { col: 6, row: 9, kind: "green" };
+  const lockedRed: BlueprintCellRef = { col: 5, row: 7, kind: "red" };
+  restoreBlueprintClock(clock({
+    goals: 12,
+    staticCells: [black, left, mid, right, lockedGreen, lockedRed],
+    staticAge: 1,
+  }));
+  const lines = blueprintLockedLines();
+  assert.equal(lines.rows.has(9), true);
+  assert.equal(lines.cols.has(5), true);
+  assert.equal(blueprintCellLocked(5, 8), true);
+  assert.equal(blueprintCellLocked(4, 8), false);
+  assert.equal(blueprintCellLocked(6, 8), false);
+  assert.equal(touchBlueprintCell(world, 5, 8), 0);
+  assert.equal(getBlueprintClock().lit.includes("5:8"), true);
+  assert.ok(getBlueprintClock().staticCells.some((cell) => cell.col === 5 && cell.row === 8));
+  // 未锁定两侧可独立成段（此处各是孤立格）。
+  assert.equal(touchBlueprintCell(world, 4, 8), 1);
+  assert.ok(!getBlueprintClock().staticCells.some((cell) => cell.col === 4 && cell.row === 8));
+  assert.equal(touchBlueprintCell(world, 6, 8), 1);
+  assert.ok(!getBlueprintClock().staticCells.some((cell) => cell.col === 6 && cell.row === 8));
+  // 踩锁定绿仍无效；红块豁免锁。
+  const pending = getBlueprintClock().pendingBonus;
+  assert.equal(touchBlueprintCell(world, 6, 9), 0);
+  assert.ok(getBlueprintClock().staticCells.some((cell) => cell.col === 6 && cell.row === 9 && cell.kind === "green"));
+  assert.deepEqual(drainBlueprintRewardEvents(), []);
+  assert.equal(touchBlueprintCell(world, 5, 7), 2);
+  assert.ok(!getBlueprintClock().staticCells.some((cell) => cell.col === 5 && cell.row === 7 && cell.kind === "red"));
+  assert.equal(getBlueprintClock().pendingBonus, pending + 2);
+});
+
+test("范围消除仍受锁；红十字穿过仅被远处黑锁住的目标", () => {
+  const black: BlueprintCellRef = { col: 3, row: 9, kind: "black" };
+  const center: BlueprintCellRef = { col: 5, row: 8, kind: "green" };
+  const lockedWhite: BlueprintCellRef = { col: 4, row: 9 };
+  const freeWhite: BlueprintCellRef = { col: 6, row: 7 };
+  restoreBlueprintClock(clock({
+    goals: 12,
+    seed: 1,
+    staticCells: [black, center, lockedWhite, freeWhite],
+    staticAge: 1,
+  }));
+  // 中心绿在 (5,8)，对角/斜邻 (4,9) 被 row9 锁，(6,7) 未锁。中心正交无邻，可单格消除。
+  let found = false;
+  for (let seed = 1; seed <= 200; seed++) {
+    restoreBlueprintClock(clock({
+      seed,
+      goals: 12,
+      staticCells: [black, center, lockedWhite, freeWhite],
+      staticAge: 1,
+    }));
+    touchBlueprintCell(world, 5, 8);
+    const events = drainBlueprintRewardEvents();
+    if (events[0] !== "areaClear") continue;
+    found = true;
+    const after = getBlueprintClock();
+    assert.ok(after.staticCells.some((cell) => cell.col === 3 && cell.row === 9 && cell.kind === "black"));
+    assert.ok(after.staticCells.some((cell) => cell.col === 4 && cell.row === 9), "locked white stays");
+    assert.equal(after.lit.includes("4:9"), true, "locked white only lights");
+    assert.ok(!after.staticCells.some((cell) => cell.col === 6 && cell.row === 7), "unlocked neighbor clears");
+    break;
+  }
+  assert.equal(found, true);
+
+  const red: BlueprintCellRef = { col: 7, row: 8, kind: "red" };
+  const arm: BlueprintCellRef = { col: 6, row: 8 };
+  const lockedArm: BlueprintCellRef = { col: 5, row: 8 };
+  const beyond: BlueprintCellRef = { col: 4, row: 8 };
+  restoreBlueprintClock(clock({
+    goals: 12,
+    staticCells: [black, red, arm, lockedArm, beyond],
+    staticAge: 1,
+  }));
+  // black at (3,9) locks row 9 and col 3, not this row. Need a black that locks a cell on the cross.
+  const colBlack: BlueprintCellRef = { col: 5, row: 11, kind: "black" };
+  restoreBlueprintClock(clock({
+    goals: 12,
+    staticCells: [colBlack, red, arm, lockedArm, beyond],
+    staticAge: 1,
+  }));
+  const cross = blueprintRedCrossCells(7, 8);
+  assert.ok(cross.some((cell) => cell.col === 6 && cell.row === 8));
+  assert.ok(cross.some((cell) => cell.col === 5 && cell.row === 8), "row/col lock is not a physical black");
+  assert.ok(cross.some((cell) => cell.col === 4 && cell.row === 8));
+  touchBlueprintCell(world, 7, 8);
+  const after = getBlueprintClock();
+  assert.ok(!after.staticCells.some((cell) => cell.col === 7 && cell.row === 8 && cell.kind === "red"));
+  assert.ok(!after.staticCells.some((cell) => cell.col === 6 && cell.row === 8));
+  assert.ok(!after.staticCells.some((cell) => cell.col === 5 && cell.row === 8), "locked arm clears in red cross");
+  assert.ok(!after.staticCells.some((cell) => cell.col === 4 && cell.row === 8), "path extends beyond lock");
+});
+
+test("动态黑搬走后锁跟随；开洞仍能收黑", () => {
+  const black: BlueprintCellRef = { col: 5, row: 9, kind: "black" };
+  const stay: BlueprintCellRef = { col: 4, row: 9 };
+  restoreBlueprintClock(clock({
+    goals: 21,
+    staticCells: [stay],
+    dynamic: dyn({
+      cells: [black],
+      pending: [{ col: 5, row: 10, kind: "black" }],
+      dir: 2,
+      phase: "cross_out",
+      age: BLUEPRINT_CROSS_RAISE - 0.01,
+      raise: BLUEPRINT_CROSS_RAISE,
+    }),
+    staticAge: 1,
+  }));
+  assert.equal(blueprintCellLocked(4, 9), true);
+  stepBlueprint(0.02, true, { ...aimAt(21), ballX: -400, ballY: -400 }, world);
+  const moved = getBlueprintClock();
+  assert.deepEqual(moved.dynamic?.cells.map((cell) => `${cell.col}:${cell.row}:${cell.kind}`), ["5:10:black"]);
+  assert.equal(blueprintCellLocked(4, 9, moved), false, "old row unlocks");
+  assert.equal(blueprintCellLocked(5, 10, moved), true, "new row locks");
+  assert.equal(consumeBlueprintLitForHole(), moved.lit.includes("4:9") ? 1 : 0);
+  assertLayerCellValues(getBlueprintClock().staticCells, []);
+  assert.equal(getBlueprintClock().dynamic, null);
+});
+
+test("开洞抽到转红只记事件，不再扫空场", () => {
+  const green: BlueprintCellRef = { col: 5, row: 9, kind: "green" };
+  const neighbor: BlueprintCellRef = { col: 5, row: 8 };
+  let found = false;
+  for (let seed = 1; seed <= 240; seed++) {
+    restoreBlueprintClock(clock({ seed, goals: 27, staticCells: [green, neighbor], staticAge: 1 }));
+    assert.equal(consumeBlueprintLitForHole(), 0);
+    const events = drainBlueprintRewardEvents();
+    if (events[0] !== "turnRed") continue;
+    found = true;
+    assertLayerCellValues(getBlueprintClock().staticCells, []);
+    assert.equal(getBlueprintClock().clearing.length, 0);
+    assert.equal(getBlueprintClock().pendingBonus, 0);
+    break;
+  }
+  assert.equal(found, true, "should draw turnRed from a hole within 240 seeds");
+});
+
+test("actual < 9 清绿不抽奖；一分钟任何时期都不抽 seconds；27 才进转红", () => {
+  const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
+  restoreBlueprintClock(clock({ seed: 3, goals: 8, staticCells: [green], staticAge: 1 }));
+  assert.equal(touchBlueprintCell(world, 4, 8), 1);
+  assert.deepEqual(drainBlueprintRewardEvents(), []);
+  assert.deepEqual(getBlueprintRewards(), { base: 0, combo: 0, seconds: 0 });
+
+  const previous = getBlueprintAllowSeconds();
+  setBlueprintAllowSeconds(false);
+  try {
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 120; seed++) {
+      const events = clearIsolatedGreen(seed, 27);
+      assert.equal(events.length, 1);
+      assert.notEqual(events[0], "seconds");
+      seen.add(events[0]!);
+    }
+    assert.ok(seen.has("turnRed"));
+    assert.ok(seen.has("areaClear"));
+    assert.ok(!seen.has("seconds"));
+  } finally {
+    setBlueprintAllowSeconds(previous);
+  }
+  for (let seed = 1; seed <= 80; seed++) {
+    const events = clearIsolatedGreen(seed, 11);
+    assert.notEqual(events[0], "areaClear");
+    assert.notEqual(events[0], "turnRed");
+  }
+});
+
+
+/** 从上方实体撞击指定凸块，覆盖 collideBlueprint → touch → beginLineClear → dropClearableLayers。 */
+function collideRedCell(col: number, row: number) {
+  const block = blueprintBlocks(world).find((cell) => cell.col === col && cell.row === row && cell.solid)!;
+  assert.ok(block);
+  const x = block.cell.x + block.cell.w / 2;
+  const y = block.cell.y + 2;
+  const ball = { x, y, vx: 0, vy: 500, r: 3 };
+  assert.equal(collideBlueprint(world, ball, x, block.cell.y - 5), true);
+}
+
+test("红实体碰撞豁免行/列黑锁：红—白—黑—白只清黑前目标", () => {
+  for (const vertical of [false, true]) {
+    const ref = (i: number, kind: BlueprintCellRef["kind"] = "white"): BlueprintCellRef => ({
+      col: 5 + (vertical ? 0 : i), row: 9 + (vertical ? i : 0), kind,
+    });
+    const cells = [ref(0, "red"), ref(1), ref(2, "black"), ref(3)];
+    restoreBlueprintClock(clock({ goals: 21, staticCells: cells, staticAge: 1 }));
+    assert.equal(blueprintCellLocked(5, 9), true);
+    collideRedCell(5, 9);
+    const after = getBlueprintClock();
+    assertLayerCellValues(after.staticCells, cells.slice(2), "black and everything behind it stay");
+    assert.equal(after.pendingBonus, 2);
+    assert.equal(after.clearing.length, 2);
+  }
+});
+
+test("红十字四向独立，目标被远处黑锁住也清除，连带红不递归", () => {
+  const red: BlueprintCellRef = { col: 5, row: 9, kind: "red" };
+  const left: BlueprintCellRef = { col: 4, row: 9 };
+  const leftBlack: BlueprintCellRef = { col: 3, row: 9, kind: "black" };
+  const leftBeyond: BlueprintCellRef = { col: 2, row: 9 };
+  const up: BlueprintCellRef = { col: 5, row: 8 };
+  const upBeyondGap: BlueprintCellRef = { col: 5, row: 6 };
+  const down: BlueprintCellRef = { col: 5, row: 10 };
+  const rightRed: BlueprintCellRef = { col: 6, row: 9, kind: "red" };
+  const right: BlueprintCellRef = { col: 7, row: 9 };
+  const sideArm: BlueprintCellRef = { col: 6, row: 8 };
+  const remoteBlack: BlueprintCellRef = { col: 5, row: 13, kind: "black" };
+  const survivors = [leftBlack, leftBeyond, upBeyondGap, sideArm, remoteBlack];
+  restoreBlueprintClock(clock({ goals: 21, staticCells: [red, left, up, down, rightRed, right, ...survivors], staticAge: 1 }));
+  assert.equal(blueprintCellLocked(5, 8), true, "up target locked by distant black");
+  assert.equal(blueprintCellLocked(7, 9), true, "right target locked by perpendicular black");
+  collideRedCell(5, 9);
+  const after = getBlueprintClock();
+  assertLayerCellValues(after.staticCells, survivors);
+  assert.equal(after.pendingBonus, 6);
+  assert.equal(after.clearing.length, 6);
+});
+
+test("红十字叠层按层清除：静态或动态黑层留下并挡住后方", () => {
+  for (const blackInDynamic of [false, true]) {
+    const red: BlueprintCellRef = { col: 5, row: 9, kind: "red" };
+    const black: BlueprintCellRef = { col: 7, row: 9, kind: "black" };
+    const overlay: BlueprintCellRef = { col: 7, row: 9, kind: "white" };
+    const arm: BlueprintCellRef = { col: 6, row: 9 };
+    const beyond: BlueprintCellRef = { col: 8, row: 9 };
+    restoreBlueprintClock(clock({
+      goals: 21, staticAge: 1,
+      staticCells: [red, arm, beyond, blackInDynamic ? overlay : black],
+      dynamic: dyn({ cells: [blackInDynamic ? black : overlay], stepSpan: 10 }),
+    }));
+    collideRedCell(5, 9);
+    const after = getBlueprintClock();
+    const layers = [...after.staticCells, ...(after.dynamic?.cells ?? [])];
+    assert.ok(layers.some((cell) => cell.col === 7 && cell.row === 9 && cell.kind === "black"));
+    assert.ok(!layers.some((cell) => cell.col === 7 && cell.row === 9 && cell.kind === "white"));
+    assert.ok(layers.some((cell) => cell.col === 8 && cell.row === 9));
+    assert.equal(after.pendingBonus, 3, "black itself never grants clear points");
+  }
+});
+
+test("绿范围锁保留：锁定绿红不清不触发，只有已激活红十字可豁免目标锁", () => {
+  const center: BlueprintCellRef = { col: 5, row: 9, kind: "green" };
+  const black: BlueprintCellRef = { col: 3, row: 8, kind: "black" };
+  const lockedWhite: BlueprintCellRef = { col: 4, row: 8 };
+  const lockedGreen: BlueprintCellRef = { col: 5, row: 8, kind: "green" };
+  const lockedRed: BlueprintCellRef = { col: 6, row: 8, kind: "red" };
+  let found = false;
+  for (let seed = 1; seed <= 200; seed++) {
+    restoreBlueprintClock(clock({ seed, goals: 12, staticCells: [center, black, lockedWhite, lockedGreen, lockedRed], staticAge: 1, lit: ["5:8"] }));
+    // 锁定邻格不参与清段，中心绿可作为孤立格触发范围奖励。
+    touchBlueprintCell(world, 5, 9);
+    const events = drainBlueprintRewardEvents();
+    if (events[0] !== "areaClear") continue;
+    found = true;
+    assert.deepEqual(events, ["areaClear"]);
+    const after = getBlueprintClock();
+    assertLayerCellValues(after.staticCells, [black, { ...lockedWhite, lit: true }, { ...lockedGreen, lit: true }, lockedRed]);
+    assert.equal(after.pendingBonus, 1);
+    assert.ok(after.lit.includes("4:8"));
+    break;
+  }
+  assert.equal(found, true);
+});
+
+
+test("绿范围激活未锁红后，十字目标豁免锁，但同波普通范围目标不豁免", () => {
+  const center: BlueprintCellRef = { col: 5, row: 9, kind: "green" };
+  const red: BlueprintCellRef = { col: 6, row: 8, kind: "red" };
+  const lockedTarget: BlueprintCellRef = { col: 7, row: 8 };
+  const beyond: BlueprintCellRef = { col: 8, row: 8 };
+  const lockedArea: BlueprintCellRef = { col: 4, row: 8 };
+  const blacks: BlueprintCellRef[] = [
+    { col: 7, row: 6, kind: "black" }, { col: 4, row: 11, kind: "black" },
+  ];
+  let found = false;
+  for (let seed = 1; seed <= 200; seed++) {
+    restoreBlueprintClock(clock({ seed, goals: 12, staticCells: [center, red, lockedTarget, beyond, lockedArea, ...blacks], staticAge: 1 }));
+    assert.equal(blueprintCellLocked(6, 8), false);
+    assert.equal(blueprintCellLocked(7, 8), true);
+    assert.equal(blueprintCellLocked(4, 8), true);
+    touchBlueprintCell(world, 5, 9);
+    if (drainBlueprintRewardEvents()[0] !== "areaClear") continue;
+    found = true;
+    const after = getBlueprintClock();
+    assertLayerCellValues(after.staticCells, [{ ...lockedArea, lit: true }, ...blacks]);
+    assert.ok(after.lit.includes("4:8"));
+    assert.equal(after.pendingBonus, 4);
+    break;
+  }
+  assert.equal(found, true);
+});
+
+
+test("触发红自身叠黑：只清红层，黑层保留且不向外穿透", () => {
+  const red: BlueprintCellRef = { col: 5, row: 9, kind: "red" };
+  const black: BlueprintCellRef = { col: 5, row: 9, kind: "black" };
+  const arm: BlueprintCellRef = { col: 6, row: 9 };
+  restoreBlueprintClock(clock({ goals: 21, staticAge: 1, staticCells: [black, arm], dynamic: dyn({ cells: [red], stepSpan: 10 }) }));
+  collideRedCell(5, 9);
+  const after = getBlueprintClock();
+  assertLayerCellValues(after.staticCells, [black, arm]);
+  assert.equal(after.dynamic, null);
+  assert.equal(after.pendingBonus, 1);
+});
+
+
+test("数量均匀抽样：安全边界映射到 1/softMax，所有合法整数都有等宽区间", () => {
+  for (let soft = 1; soft <= 10; soft++) {
+    const actual = 4 + 4 * (soft - 1);
+    assert.equal(blueprintCountSoftMax(actual), soft);
+    for (const roll of [-1, 0, NaN, Infinity, -Infinity]) {
+      assert.equal(blueprintSampleCount(actual, roll), 1, `safe low: soft=${soft}, roll=${roll}`);
+    }
+    for (const roll of [1 - Number.EPSILON, 1, 2]) {
+      assert.equal(blueprintSampleCount(actual, roll), soft);
+    }
+    const seen = new Set<number>();
+    for (let count = 1; count <= soft; count++) {
+      // 每一等宽区间的内部多点都必须落在同一个整数，不采用幂偏置。
+      for (const fraction of [0.01, 0.25, 0.5, 0.75, 0.99]) {
+        const got = blueprintSampleCount(actual, (count - 1 + fraction) / soft);
+        assert.equal(got, count);
+        seen.add(got);
+      }
+    }
+    assert.deepEqual([...seen], Array.from({ length: soft }, (_, i) => i + 1));
+  }
+  for (const actual of [0, 1, 2, 3]) {
+    for (const roll of [-1, 0, 0.5, 1, 2, NaN]) assert.equal(blueprintSampleCount(actual, roll), 0);
+  }
+});
+
+test("固定种子大样本：高进球数抽样均匀分散，不随 actual 越来越接近 10", (t) => {
+  // 测试用 LCG；只验证抽样函数，不改游戏 RNG，不实现轮换或保底。
+  let state = 0x39c0ffee;
+  const bins = Array<number>(10).fill(0);
+  const samples = 20000;
+  let total = 0;
+  for (let i = 0; i < samples; i++) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    const roll = state / 0x100000000;
+    const count = blueprintSampleCount(40, roll);
+    assert.equal(blueprintSampleCount(300, roll), count);
+    assert.equal(blueprintSampleCount(30000, roll), count);
+    bins[count - 1]! += 1;
+    total += count;
+  }
+  // 留足余量的确定性断言；每桶约 10%，不是游戏里的硬性配额。
+  for (const bin of bins) assert.ok(bin > 1700 && bin < 2300, `bins=${bins}`);
+  const mean = total / samples;
+  assert.ok(mean > 5.35 && mean < 5.65);
+  t.diagnostic(JSON.stringify({ seed: "0x39c0ffee", samples, actual: [40, 300, 30000], bins, mean }));
+});
+
+test("实际换批：静态与形状只填均匀抽到的目标，不强行补到 softMax", (t) => {
+  const bins = Array<number>(10).fill(0);
+  for (let serial = 0; serial < 800; serial++) {
+    const actual = serial % 2 === 0 ? 40 : 300;
+    const aim = { ...aimAt(actual), ballX: -400, ballY: -400 };
+    const opts = { seed: 39, serial: serial + 1, goals: actual, ball: { x: -400, y: -400 }, hoop: { x: aim.hoopX, y: aim.hoopY } };
+    const batch = rollBlueprintBatch(world, opts);
+    assert.ok(batch.target >= 1 && batch.target <= 10);
+    assert.equal(batch.cells.length, batch.target, "ample legal space fills sampled target only");
+    restoreBlueprintClock(clock({ seed: 39, goals: actual - 1, serial, staticCells: [], dynamic: null }));
+    stepBlueprint(0, true, aim, world);
+    const after = getBlueprintClock();
+    const total = after.staticCells.length + (after.dynamic?.cells.length ?? 0);
+    assert.equal(total, batch.target);
+    assert.ok(total <= blueprintCountSoftMax(actual));
+    bins[total - 1]! += 1;
+  }
+  assert.ok(bins.every((n) => n > 40 && n < 120), `real batch bins=${bins}`);
+  const mean = bins.reduce((sum, n, i) => sum + n * (i + 1), 0) / 800;
+  t.diagnostic(JSON.stringify({ layoutSeed: 39, samples: 800, actual: [40, 300], bins, mean }));
+  // 含开启与各级上限的实际路径，而不只测试满上限时的抽样函数。
+  for (let actual = 0; actual <= 43; actual++) {
+    resetBlueprint(39);
+    stepBlueprint(0, true, { ...aimAt(actual), ballX: -400, ballY: -400 }, world);
+    const after = getBlueprintClock();
+    const total = after.staticCells.length + (after.dynamic?.cells.length ?? 0);
+    assert.ok(total <= blueprintCountSoftMax(actual), `actual=${actual}, total=${total}`);
+    if (actual <= 3) assert.equal(total, 0);
+    if (actual >= 4 && actual <= 7) assert.equal(total, 1);
+  }
+});
+
+test("实际换批：保留动态扣除占用，小抽样静态为 0，不补满或强摘动态", (t) => {
+  const legal = blueprintLegalCells(world, null);
+  let retainedSmallSample = 0;
+  let retainedWithStatic = 0;
+  let despawned = 0;
+  for (const size of [1, 4, 8, 10]) {
+    const cells = legal.slice(0, size).map(({ col, row }) => ({ col, row, kind: "white" as const }));
+    for (let seed = 1; seed <= 240; seed++) {
+      const aim = { ...aimAt(41), ballX: -400, ballY: -400 };
+      const target = rollBlueprintBatch(world, { seed, serial: 6, goals: 41, ball: { x: -400, y: -400 }, hoop: { x: aim.hoopX, y: aim.hoopY } }).target;
+      restoreBlueprintClock(clock({ seed, goals: 40, serial: 5, staticCells: [], dynamic: dyn({ cells, stepSpan: 10 }) }));
+      stepBlueprint(0, true, aim, world);
+      const after = getBlueprintClock();
+      const kept = after.dynamic?.cells.length ?? 0;
+      const total = after.staticCells.length + kept;
+      assert.ok(total <= blueprintCountSoftMax(41));
+      if (kept && after.dynamic!.phase === "hold") {
+        assertLayerCellValues(after.dynamic!.cells, cells, "smaller sample must not trim/despawn kept group");
+        assert.equal(after.staticCells.length, Math.max(0, target - size));
+        assert.equal(total, Math.max(target, size));
+        if (target < size) {
+          retainedSmallSample++;
+          assert.equal(after.staticCells.length, 0);
+        }
+        if (target > size) retainedWithStatic++;
+      } else {
+        despawned++;
+        assert.equal(total, target, "despawn frees occupancy, but does not refill to cap");
+      }
+    }
+  }
+  assert.ok(retainedSmallSample > 0);
+  assert.ok(retainedWithStatic > 0);
+  assert.ok(despawned > 0);
+  t.diagnostic(JSON.stringify({ samples: 960, retainedSmallSample, retainedWithStatic, despawned }));
+});
+
+test("保留大动态密度调查：不改消失式，记录固定种子 10 格组的续存换批数", (t) => {
+  const cells = blueprintLegalCells(world, null).slice(0, 10).map(({ col, row }) => ({ col, row, kind: "white" as const }));
+  const histogram: Record<number, number> = {};
+  for (let seed = 1; seed <= 500; seed++) {
+    restoreBlueprintClock(clock({ seed, goals: 40, serial: 5, staticCells: [], dynamic: dyn({ cells, stepSpan: 10 }) }));
+    let survived = 0;
+    for (let actual = 41; actual <= 60; actual++) {
+      stepBlueprint(0, true, { ...aimAt(actual), ballX: -400, ballY: -400 }, world);
+      const after = getBlueprintClock();
+      if (!after.dynamic || after.dynamic.phase === "raise") break;
+      assert.equal(after.dynamic.cells.length, 10);
+      assert.equal(after.staticCells.length, 0, "retained full group leaves no static budget");
+      survived++;
+    }
+    histogram[survived] = (histogram[survived] ?? 0) + 1;
+  }
+  // 统计仅用于验证/调查，不给游戏增加硬性轮换；不对最长续存次数作概率断言。
+  assert.equal(Object.values(histogram).reduce((sum, n) => sum + n, 0), 500);
+  assert.equal(blueprintDespawnChance(41), 0.85);
+  t.diagnostic(JSON.stringify({ samples: 500, groupSize: 10, continuedRefreshes: histogram }));
+});
+
+
+/** 独立复算现有确定性掷签，只用于核对实际 stepBlueprint 的 .45/.85 概率门。 */
+function dynamicTestUnit(seed: number, serial: number, channel: number) {
+  const n = Math.sin(seed * 12.9898 + (serial + 1) * 78.233 + (channel + 1) * 39.425) * 43758.5453;
+  return n - Math.floor(n);
+}
+
+function stepFromNoDynamic(seed: number, actual: number) {
+  resetBlueprint(seed);
+  restoreBlueprintClock(clock({ seed, goals: actual - 1, serial: 5, staticCells: [], dynamic: null }));
+  assert.equal(getBlueprintClock().dynamic, null, "start from a genuinely empty dynamic slot");
+  const aim = aimAt(actual);
+  const target = rollBlueprintBatch(world, {
+    seed, serial: 6, goals: actual,
+    ball: { x: aim.ballX, y: aim.ballY }, hoop: { x: aim.hoopX, y: aim.hoopY },
+  }).target;
+  stepBlueprint(0, true, aim, world);
+  return { after: getBlueprintClock(), target };
+}
+
+test("实际空动态槽换批：原概率成功会新生，概率失败不生，合计不越均匀样本", (t) => {
+  for (const actual of [8, 9, 15, 30, 40, 100]) {
+    let spawned = 0, eligible = 0, failedChance = 0;
+    let firstSpawnSeed = 0, firstFailedChanceSeed = 0;
+    for (let seed = 1; seed <= 300; seed++) {
+      const { after, target } = stepFromNoDynamic(seed, actual);
+      const chance = dynamicTestUnit(seed, 6, 10);
+      const shouldSpawn = target > 1 && chance < 0.45;
+      assert.equal(Boolean(after.dynamic), shouldSpawn, `actual=${actual}, seed=${seed}, want=${target}, roll=${chance}`);
+      const count = after.staticCells.length + (after.dynamic?.cells.length ?? 0);
+      assert.equal(count, target, "ample legal positions fill only sampled combined target");
+      assert.ok(count <= blueprintCountSoftMax(actual));
+      if (target > 1) eligible++;
+      if (after.dynamic) {
+        spawned++;
+        firstSpawnSeed ||= seed;
+        assert.ok(after.staticCells.length >= 1);
+        const keys = new Set(after.dynamic.cells.map((cell) => `${cell.col}:${cell.row}`));
+        assert.ok(after.staticCells.every((cell) => !keys.has(`${cell.col}:${cell.row}`)), "new dynamic positions reserved before static fill");
+        const legal = new Set(blueprintLegalCells(world, { x: aimAt(actual).ballX, y: aimAt(actual).ballY }).map((cell) => `${cell.col}:${cell.row}`));
+        for (const key of keys) assert.ok(legal.has(key));
+      } else if (target > 1 && chance >= 0.45) {
+        failedChance++;
+        firstFailedChanceSeed ||= seed;
+      }
+    }
+    assert.ok(spawned > 0 && failedChance > 0);
+    t.diagnostic(JSON.stringify({ actual, trials: 300, eligible, spawned, failedChance, firstSpawnSeed, firstFailedChanceSeed }));
+  }
+});
+
+test("实际空动态槽：softMax 0 没块、softMax 1 只一静态，want=1 也不额外生动态", () => {
+  for (const actual of [0, 1, 2, 3, 4, 5, 6, 7]) {
+    for (let seed = 1; seed <= 60; seed++) {
+      const { after, target } = stepFromNoDynamic(seed, actual);
+      assert.equal(after.dynamic, null);
+      assert.equal(after.staticCells.length, target);
+      assert.equal(target, actual <= 3 ? 0 : 1);
+    }
+  }
+  let checked = 0;
+  for (let seed = 1; seed <= 100; seed++) {
+    const { after, target } = stepFromNoDynamic(seed, 30);
+    if (target !== 1 || dynamicTestUnit(seed, 6, 10) >= 0.45) continue;
+    checked++;
+    assert.equal(after.dynamic, null, "even a successful chance roll cannot exceed want=1");
+    assert.equal(after.staticCells.length, 1);
+  }
+  assert.ok(checked > 0);
+});
+
+test("从空槽真实新生的动态组会升起可见并继续挪移，不只是预载快照", (t) => {
+  let found = false;
+  for (let seed = 1; seed <= 100 && !found; seed++) {
+    const { after } = stepFromNoDynamic(seed, 9);
+    if (!after.dynamic) continue;
+    const aim = aimAt(9);
+    assert.equal(after.dynamic.phase, "raise");
+    stepBlueprint(BLUEPRINT_RAISE, true, aim, world);
+    const raised = getBlueprintClock();
+    assert.equal(raised.dynamic?.phase, "hold");
+    const visible = blueprintBlocks(world).filter((block) => block.dynamic);
+    assert.equal(visible.length, raised.dynamic!.cells.length);
+    assert.ok(visible.every((block) => block.extend > 0.99 && block.solid));
+    const before = raised.dynamic!.cells.map((cell) => `${cell.col}:${cell.row}`);
+    stepBlueprint(raised.dynamic!.stepSpan + 0.01, true, aim, world);
+    const moving = getBlueprintClock();
+    if (moving.dynamic?.phase !== "cross_out") continue;
+    assert.ok(moving.dynamic.pending.length > 0);
+    stepBlueprint(moving.dynamic.raise, true, aim, world);
+    const landed = getBlueprintClock();
+    assert.equal(landed.dynamic?.phase, "cross_in");
+    const to = landed.dynamic!.cells.map((cell) => `${cell.col}:${cell.row}`);
+    assert.notDeepEqual(to, before);
+    stepBlueprint(landed.dynamic!.raise, true, aim, world);
+    assert.ok(blueprintBlocks(world).some((block) => block.dynamic && block.extend > 0.99));
+    found = true;
+    t.diagnostic(JSON.stringify({ movingNewbornSeed: seed, actual: 9, from: before, to }));
+  }
+  assert.equal(found, true);
+});
+
+test("真实新生组按原消失式离开后，同次换批可按原概率重新生成", (t) => {
+  let found = false;
+  for (let seed = 1; seed <= 300 && !found; seed++) {
+    const { after } = stepFromNoDynamic(seed, 30);
+    if (!after.dynamic) continue;
+    const aim = aimAt(31);
+    const target = rollBlueprintBatch(world, {
+      seed, serial: 7, goals: 31,
+      ball: { x: aim.ballX, y: aim.ballY }, hoop: { x: aim.hoopX, y: aim.hoopY },
+    }).target;
+    const despawn = dynamicTestUnit(seed, 7, 9);
+    const spawn = dynamicTestUnit(seed, 7, 10);
+    if (!(target > 1 && despawn < blueprintDespawnChance(31) && spawn < 0.45)) continue;
+    stepBlueprint(BLUEPRINT_RAISE, true, aimAt(30), world);
+    assert.equal(getBlueprintClock().dynamic?.phase, "hold");
+    const old = getBlueprintClock();
+    restoreBlueprintClock({ ...old, dynamic: { ...old.dynamic!, cells: old.dynamic!.cells.map((cell) => ({ ...cell, lit: true })),
+      ...(old.dynamic!.groups ? { groups: old.dynamic!.groups.map((g) => ({ ...g, cells: g.cells.map((cell) => ({ ...cell, lit: true })) })) } : {}) } });
+    assert.equal(getBlueprintClock().lit.length, old.dynamic!.cells.length);
+    stepBlueprint(0, true, aim, world);
+    const next = getBlueprintClock();
+    assert.equal(next.dynamic?.phase, "raise", "a new group, not retained old hold phase");
+    assert.equal(next.dynamic?.age, 0);
+    assert.equal(next.serial, 7);
+    assert.equal(next.staticCells.length + next.dynamic!.cells.length, target);
+    assert.ok(next.staticCells.length + next.dynamic!.cells.length <= blueprintCountSoftMax(31));
+    assert.deepEqual(next.lit, [], "new group starts unlit");
+    found = true;
+    t.diagnostic(JSON.stringify({ regeneratedSeed: seed, actual: 31, despawnRoll: despawn, spawnRoll: spawn, target, dynamicCount: next.dynamic!.cells.length }));
+  }
+  assert.equal(found, true);
+});
+
+
+test("四球只改上限：真实step每球换批重抽，同球不刷，保留多组按样本扣占用", (t) => {
+  let refreshes = 0, retainedSmaller = 0, retainedMultiSmaller = 0, multiBorn = 0, sameCapNewSamples = 0;
+  for (let seed = 1; seed <= 32; seed++) {
+    resetBlueprint(seed);
+    let previous = getBlueprintClock();
+    let previousTarget = 0;
+    for (let actual = 0; actual <= 50; actual++) {
+      const aim = { ...aimAt(actual), ballX: -400, ballY: -400 };
+      const target = blueprintSampleCount(actual, dynamicTestUnit(seed, actual, 0));
+      stepBlueprint(0, true, aim, world);
+      const after = getBlueprintClock();
+      assert.equal(after.goals, actual);
+      assert.equal(after.serial, actual, "every goal, including inside a four-goal cap interval, refreshes the batch");
+      assert.equal(after.staticAge, 0);
+      const oldDynamic = previous.dynamic?.cells.length ?? 0;
+      const retained = oldDynamic > 0 && dynamicTestUnit(seed, actual, 9) >= blueprintDespawnChance(actual);
+      const dynamicCount = after.dynamic?.cells.length ?? 0;
+      const total = after.staticCells.length + dynamicCount;
+      assert.ok(total <= blueprintCountSoftMax(actual));
+      if (actual <= 3) {
+        assert.equal(total, 0, "opening and each of the first three made baskets remain empty");
+        assert.equal(after.dynamic, null);
+      } else if (actual === 4) {
+        assert.equal(after.staticCells.length, 1, "fourth made basket is the first generated block");
+        assert.equal(after.dynamic, null);
+      }
+      if (retained) {
+        assert.equal(dynamicCount, oldDynamic);
+        const beforeGroups = previous.dynamic!.groups ?? [previous.dynamic!];
+        const afterGroups = after.dynamic!.groups ?? [after.dynamic!];
+        assert.deepEqual(afterGroups.map((g) => g.groupId), beforeGroups.map((g) => g.groupId));
+        assert.equal(after.staticCells.length, Math.max(0, target - oldDynamic));
+        assert.equal(total, Math.max(target, oldDynamic));
+        if (oldDynamic > target) {
+          retainedSmaller++;
+          if (beforeGroups.length > 1) retainedMultiSmaller++;
+          assert.equal(after.staticCells.length, 0);
+        }
+      } else {
+        assert.equal(total, target, "new batch fills sampled target, not the interval cap");
+        assert.equal(Boolean(after.dynamic), target > 1 && dynamicTestUnit(seed, actual, 10) < 0.45);
+        if ((after.dynamic?.groups?.length ?? 0) > 1) multiBorn++;
+      }
+      const oldStaticIds = new Set(previous.staticCells.map((c) => c.layerId));
+      assert.ok(after.staticCells.every((c) => !oldStaticIds.has(c.layerId)), "even cap=1 refreshes the actual static layer each goal");
+      if (actual > 4 && blueprintCountSoftMax(actual) === blueprintCountSoftMax(actual - 1) && previousTarget !== target) sameCapNewSamples++;
+      stepBlueprint(0, true, aim, world);
+      assert.deepEqual(getBlueprintClock(), after, "same goal does not refresh or re-sample");
+      previous = after;
+      previousTarget = target;
+      refreshes++;
+    }
+  }
+  assert.ok(retainedSmaller > 0 && retainedMultiSmaller > 0 && multiBorn > 0 && sameCapNewSamples > 0);
+  t.diagnostic(JSON.stringify({ seeds: 32, actual: [0, 50], refreshes, retainedSmaller, retainedMultiSmaller, multiBorn, sameCapNewSamples }));
 });
