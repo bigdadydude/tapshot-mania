@@ -963,13 +963,13 @@ export function blueprintQuota(requested: number) {
 
 /**
  * 本批可能生成的格数上限（静态 + 动态合计）。
- * 前 3 个实体进球（actual 0–2，含开局）为 0；之后每 3 球 +1，第 30 球起封顶 10。
+ * 前 3 个实体进球（actual 0–2，含开局）为 0；之后每 4 球 +1，第 39 球起封顶 10。
  * 上限只决定抽样范围，不是后期密度目标；范围内各整数等概率。
  */
 export function blueprintCountSoftMax(made: number) {
   const actual = finiteGoals(made);
   if (actual < 3) return 0;
-  return Math.min(BLUEPRINT_MAX_COUNT, 1 + Math.floor((actual - 3) / 3));
+  return Math.min(BLUEPRINT_MAX_COUNT, 1 + Math.floor((actual - 3) / 4));
 }
 
 export function blueprintSampleCount(made: number, roll: number) {
