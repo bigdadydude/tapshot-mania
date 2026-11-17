@@ -100,6 +100,12 @@ import {
   type BlueprintDynamic,
 } from "./blueprint.ts";
 
+/** 旧几何/亮态用例只比较块值；稳定 ID 与快照逐值保留由 groups 专项测试覆盖。 */
+function assertLayerCellValues(actual: readonly BlueprintCellRef[] | undefined, expected: readonly BlueprintCellRef[] | undefined, message?: string) {
+  const values = (cells: readonly BlueprintCellRef[] | undefined) => cells?.map(({ layerId: _id, ...cell }) => cell);
+  assert.deepEqual(values(actual), values(expected), message);
+}
+
 function makeWorld(w = 390, h = 844) {
   const ballR = Math.max(17, Math.min(w, h) * 0.05);
   return { w, h, floorY: h * 0.765, ballR, hoopInner: Math.max(22, ballR * 1.42) };
@@ -265,7 +271,7 @@ test("进球前空场；每次进球换批并保持到下一次进球", () => {
   assert.equal(first.staticRaise, BLUEPRINT_RAISE);
   stepBlueprint(2, true, { ...aim, goals: 3 }, world);
   const held = getBlueprintClock();
-  assert.deepEqual(held.staticCells, first.staticCells);
+  assertLayerCellValues(held.staticCells, first.staticCells);
   assert.equal(held.serial, first.serial);
   assert.ok(held.staticAge > BLUEPRINT_RAISE);
   assert.equal(blueprintExtend(held.staticAge, held.staticRaise), 1);
@@ -347,11 +353,11 @@ test("动态可以踩在静态上，重叠格仍跟整组一起伸缩", () => {
   assert.equal(moving.dynamic!.phase, "cross_out");
   assert.equal(moving.dynamic!.dir, 0);
   assert.equal(moving.dynamic!.cells.length, 2);
-  assert.deepEqual(moving.dynamic!.pending, [mid!, landed!]);
+  assertLayerCellValues(moving.dynamic!.pending, [mid!, landed!]);
   stepBlueprint(BLUEPRINT_CROSS_RAISE, true, aim, world);
   const arrived = getBlueprintClock();
   assert.equal(arrived.dynamic?.phase, "cross_in");
-  assert.deepEqual(arrived.dynamic?.cells, [mid!, landed!]);
+  assertLayerCellValues(arrived.dynamic?.cells, [mid!, landed!]);
   stepBlueprint(BLUEPRINT_CROSS_RAISE / 2, true, aim, world);
   const rising = blueprintBlocks(world).filter((block) => block.dynamic);
   assert.equal(rising.length, 2);
@@ -389,7 +395,7 @@ test("进球换静态不裁掉踩在上面的动态格", () => {
     if (!after.dynamic) continue;
     const staticKeys = new Set(after.staticCells.map((cell) => `${cell.col}:${cell.row}`));
     if (!staticKeys.has(`${hit.col}:${hit.row}`)) continue;
-    assert.deepEqual(after.dynamic.cells, group);
+    assertLayerCellValues(after.dynamic.cells, group);
     saw = true;
   }
   assert.equal(saw, true);
@@ -512,9 +518,9 @@ test("进球换静态时可不杀动态", () => {
   });
   const after = getBlueprintClock();
   assert.equal(after.goals, 3);
-  assert.deepEqual(after.staticCells, [{ col: 3, row: 5 }]);
+  assertLayerCellValues(after.staticCells, [{ col: 3, row: 5 }]);
   assert.ok(after.dynamic);
-  assert.deepEqual(after.dynamic!.cells, dynCells);
+  assertLayerCellValues(after.dynamic!.cells, dynCells);
 });
 
 test("形状是直线、斜线、Z、L、S、U、V、C，裁剪后仍不超过 10", () => {
@@ -1019,7 +1025,7 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   assert.equal(blocked.clearing.length, 0);
   assert.equal(blocked.staticCells.length, 4);
   assert.ok(blocked.staticCells.some((cell) => cell.col === b.col && cell.row === b.row));
-  assert.deepEqual(blocked.dynamic?.cells, [flat]);
+  assertLayerCellValues(blocked.dynamic?.cells, [flat]);
   assert.equal(blueprintBlocks(world).some((block) => block.col === a.col && block.lit), true);
   assert.equal(blueprintBlocks(world).some((block) => block.col === flat.col && !block.lit), true);
 
@@ -1034,7 +1040,7 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   const started = getBlueprintClock();
   assert.equal(started.pendingBonus, 2);
   assert.equal(started.clearing.length, 2);
-  assert.deepEqual(started.staticCells, [other]);
+  assertLayerCellValues(started.staticCells, [other]);
   assert.equal(started.lit.includes("4:8"), false);
   const sinking = blueprintBlocks(world).filter((block) => block.row === 8);
   assert.equal(sinking.length, 2);
@@ -1048,7 +1054,7 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   const halfway = getBlueprintClock();
   assert.equal(halfway.pendingBonus, 2);
   assert.equal(halfway.clearing.length, 2);
-  assert.deepEqual(halfway.staticCells, [other]);
+  assertLayerCellValues(halfway.staticCells, [other]);
   const midBlocks = blueprintBlocks(world).filter((block) => block.row === 8);
   assert.equal(midBlocks.length, 2);
   for (const block of midBlocks) {
@@ -1058,7 +1064,7 @@ test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除",
   const done = getBlueprintClock();
   assert.equal(done.clearing.length, 0);
   assert.equal(blueprintBlocks(world).some((block) => block.row === 8), false);
-  assert.deepEqual(done.staticCells, [other]);
+  assertLayerCellValues(done.staticCells, [other]);
   assert.equal(done.pendingBonus, 2);
   assert.equal(claimBlueprintBonus(), 2);
   assert.equal(claimBlueprintBonus(), 0);
@@ -1107,7 +1113,7 @@ test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", ()
   assert.equal(blocked.pendingBonus, 0);
   assert.equal(blocked.clearing.length, 0);
   assert.equal(blocked.staticCells.length, 2);
-  assert.deepEqual(blocked.dynamic?.cells, [down]);
+  assertLayerCellValues(blocked.dynamic?.cells, [down]);
   assert.equal(blocked.lit.includes("4:8"), true);
 
   resetBlueprint(5);
@@ -1146,7 +1152,7 @@ test("同列有未亮格不清列，全亮才缩回，交叉格只计一次", ()
   const left = getBlueprintClock();
   assert.equal(left.pendingBonus, 4);
   assert.equal(left.clearing.length, 2);
-  assert.deepEqual(left.staticCells, []);
+  assertLayerCellValues(left.staticCells, []);
   assert.equal(claimBlueprintBonus(), 4);
   assert.equal(claimBlueprintBonus(), 0);
 
@@ -1207,7 +1213,7 @@ test("单格点亮即清，两格必须全亮，动态亮格落地才凑排", ()
   const started = getBlueprintClock();
   assert.equal(started.pendingBonus, 1);
   assert.equal(started.clearing.length, 1);
-  assert.deepEqual(started.staticCells, []);
+  assertLayerCellValues(started.staticCells, []);
   const live = blueprintBlocks(world).find((item) => item.col === only.col && item.row === only.row);
   assert.equal(live?.lit, true);
   assert.ok(live && live.extend > 0.9);
@@ -1240,7 +1246,7 @@ test("单格点亮即清，两格必须全亮，动态亮格落地才凑排", ()
   const separated = getBlueprintClock();
   assert.equal(separated.pendingBonus, 3);
   assert.ok(separated.clearing.some((cell) => cell.col === lone.col && cell.row === lone.row));
-  assert.deepEqual(separated.staticCells, [diagonal]);
+  assertLayerCellValues(separated.staticCells, [diagonal]);
 
   const staticA = { col: 4, row: 8 };
   const anchor = { col: 4, row: 9 };
@@ -1275,7 +1281,7 @@ test("单格点亮即清，两格必须全亮，动态亮格落地才凑排", ()
   const after = getBlueprintClock();
   assert.equal(after.pendingBonus, 2);
   assert.deepEqual(after.clearing.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:8", "5:8"]);
-  assert.deepEqual(after.dynamic?.cells, [blockerNext]);
+  assertLayerCellValues(after.dynamic?.cells, [blockerNext]);
   assert.equal(after.dynamic?.phase, "cross_in");
   assert.deepEqual(after.staticCells.map((cell) => `${cell.col}:${cell.row}`).sort(), ["4:9", "7:8"]);
   const sinking = blueprintBlocks(world).find((item) => item.col === staticA.col && item.row === staticA.row);
@@ -1332,7 +1338,7 @@ test("相邻两格只踩一格不会把邻格点亮", () => {
   assert.equal(collideBlueprint(world, onB, onB.x, onB.y - 24), true);
   assert.equal(getBlueprintClock().pendingBonus, 2);
   assert.equal(getBlueprintClock().clearing.length, 2);
-  assert.deepEqual(getBlueprintClock().staticCells, []);
+  assertLayerCellValues(getBlueprintClock().staticCells, []);
 });
 
 test("十字中心有邻块不清，横段或竖段亮齐才消", () => {
@@ -1526,7 +1532,7 @@ test("开黑洞清掉全部凸块，基础分只按已亮格数加一次", () =>
   const after = getBlueprintClock();
   assert.equal(after.pendingBonus, 3);
   assert.deepEqual(after.lit, []);
-  assert.deepEqual(after.staticCells, []);
+  assertLayerCellValues(after.staticCells, []);
   assert.equal(after.dynamic, null);
   assert.deepEqual(after.clearing, []);
   assert.equal(blueprintBlocks(world, after).length, 0);
@@ -1568,17 +1574,17 @@ test("时间球快退把凸块、点亮、伸缩和待领退回取样", () => {
   assert.equal(back.serial, live.serial);
   assert.equal(back.elapsed, live.elapsed);
   assert.equal(back.staticAge, live.staticAge);
-  assert.deepEqual(back.staticCells, live.staticCells);
+  assertLayerCellValues(back.staticCells, live.staticCells);
   assert.deepEqual(back.lit, live.lit);
   assert.equal(back.pendingBonus, live.pendingBonus);
   assert.deepEqual(back.clearing, live.clearing);
   assert.equal(back.dynamic?.phase, "cross_out");
   assert.equal(back.dynamic?.age, live.dynamic?.age);
-  assert.deepEqual(back.dynamic?.cells, live.dynamic?.cells);
-  assert.deepEqual(back.dynamic?.pending, live.dynamic?.pending);
+  assertLayerCellValues(back.dynamic?.cells, live.dynamic?.cells);
+  assertLayerCellValues(back.dynamic?.pending, live.dynamic?.pending);
   stepBlueprint(0.02, true, aimAt(live.goals), world);
   const stayed = getBlueprintClock();
-  assert.deepEqual(stayed.staticCells, live.staticCells);
+  assertLayerCellValues(stayed.staticCells, live.staticCells);
   assert.deepEqual(stayed.lit, live.lit);
   assert.equal(stayed.pendingBonus, live.pendingBonus);
   assert.equal(stayed.dynamic?.phase, "cross_out");
@@ -1690,7 +1696,7 @@ test("PR31 红碰撞清横竖连续十字，不越空格、不要求lit，连带
   const block = blueprintBlocks(world).find((item) => item.kind === "red")!;
   const ball = { x: block.cell.x + 6, y: block.cell.y + 14, vx: 500, vy: 0, r: 5 };
   assert.equal(collideBlueprint(world, ball, block.cell.x - 7, ball.y), true);
-  assert.deepEqual(getBlueprintClock().staticCells, beyond);
+  assertLayerCellValues(getBlueprintClock().staticCells, beyond);
   assert.equal(getBlueprintClock().clearing.length, 5);
   assert.equal(getBlueprintClock().pendingBonus, 5);
   assert.equal(drainBlueprintRewardEvents().length, 1);
@@ -2024,7 +2030,7 @@ test("时间球回溯还原双倍次数与黑块种类", () => {
   applyBlueprintScoreDouble(4, true);
   consumeBlueprintLitForHole();
   assert.equal(getBlueprintScoreDoubleCharges(), 1);
-  assert.deepEqual(getBlueprintClock().staticCells, []);
+  assertLayerCellValues(getBlueprintClock().staticCells, []);
   restoreBlueprintClock(shot);
   const back = getBlueprintClock();
   assert.equal(back.scoreDoubleCharges, 2);
@@ -2158,7 +2164,7 @@ test("叠层只走可清除的那一层，黑洞可以收走黑块", () => {
   assert.equal(after.lit.includes("4:8"), false);
   assert.equal(after.pendingBonus, 0);
   assert.equal(consumeBlueprintLitForHole(), 0);
-  assert.deepEqual(getBlueprintClock().staticCells, []);
+  assertLayerCellValues(getBlueprintClock().staticCells, []);
   assert.equal(getBlueprintClock().dynamic, null);
 });
 
@@ -2433,7 +2439,7 @@ test("动态黑搬走后锁跟随；开洞仍能收黑", () => {
   assert.equal(blueprintCellLocked(4, 9, moved), false, "old row unlocks");
   assert.equal(blueprintCellLocked(5, 10, moved), true, "new row locks");
   assert.equal(consumeBlueprintLitForHole(), moved.lit.includes("4:9") ? 1 : 0);
-  assert.deepEqual(getBlueprintClock().staticCells, []);
+  assertLayerCellValues(getBlueprintClock().staticCells, []);
   assert.equal(getBlueprintClock().dynamic, null);
 });
 
@@ -2447,7 +2453,7 @@ test("开洞抽到转红只记事件，不再扫空场", () => {
     const events = drainBlueprintRewardEvents();
     if (events[0] !== "turnRed") continue;
     found = true;
-    assert.deepEqual(getBlueprintClock().staticCells, []);
+    assertLayerCellValues(getBlueprintClock().staticCells, []);
     assert.equal(getBlueprintClock().clearing.length, 0);
     assert.equal(getBlueprintClock().pendingBonus, 0);
     break;
@@ -2506,7 +2512,7 @@ test("红实体碰撞豁免行/列黑锁：红—白—黑—白只清黑前目�
     assert.equal(blueprintCellLocked(5, 9), true);
     collideRedCell(5, 9);
     const after = getBlueprintClock();
-    assert.deepEqual(after.staticCells, cells.slice(2), "black and everything behind it stay");
+    assertLayerCellValues(after.staticCells, cells.slice(2), "black and everything behind it stay");
     assert.equal(after.pendingBonus, 2);
     assert.equal(after.clearing.length, 2);
   }
@@ -2530,7 +2536,7 @@ test("红十字四向独立，目标被远处黑锁住也清除，连带红不�
   assert.equal(blueprintCellLocked(7, 9), true, "right target locked by perpendicular black");
   collideRedCell(5, 9);
   const after = getBlueprintClock();
-  assert.deepEqual(after.staticCells, survivors);
+  assertLayerCellValues(after.staticCells, survivors);
   assert.equal(after.pendingBonus, 6);
   assert.equal(after.clearing.length, 6);
 });
@@ -2573,7 +2579,7 @@ test("绿范围锁保留：锁定绿红不清不触发，只有已激活红十�
     found = true;
     assert.deepEqual(events, ["areaClear"]);
     const after = getBlueprintClock();
-    assert.deepEqual(after.staticCells, [black, { ...lockedWhite, lit: true }, { ...lockedGreen, lit: true }, lockedRed]);
+    assertLayerCellValues(after.staticCells, [black, { ...lockedWhite, lit: true }, { ...lockedGreen, lit: true }, lockedRed]);
     assert.equal(after.pendingBonus, 1);
     assert.ok(after.lit.includes("4:8"));
     break;
@@ -2601,7 +2607,7 @@ test("绿范围激活未锁红后，十字目标豁免锁，但同波普通范�
     if (drainBlueprintRewardEvents()[0] !== "areaClear") continue;
     found = true;
     const after = getBlueprintClock();
-    assert.deepEqual(after.staticCells, [{ ...lockedArea, lit: true }, ...blacks]);
+    assertLayerCellValues(after.staticCells, [{ ...lockedArea, lit: true }, ...blacks]);
     assert.ok(after.lit.includes("4:8"));
     assert.equal(after.pendingBonus, 4);
     break;
@@ -2617,7 +2623,7 @@ test("触发红自身叠黑：只清红层，黑层保留且不向外穿透", ()
   restoreBlueprintClock(clock({ goals: 21, staticAge: 1, staticCells: [black, arm], dynamic: dyn({ cells: [red], stepSpan: 10 }) }));
   collideRedCell(5, 9);
   const after = getBlueprintClock();
-  assert.deepEqual(after.staticCells, [black, arm]);
+  assertLayerCellValues(after.staticCells, [black, arm]);
   assert.equal(after.dynamic, null);
   assert.equal(after.pendingBonus, 1);
 });
@@ -2720,7 +2726,7 @@ test("实际换批：保留动态扣除占用，小抽样静态为 0，不补满
       const total = after.staticCells.length + kept;
       assert.ok(total <= blueprintCountSoftMax(31));
       if (kept && after.dynamic!.phase === "hold") {
-        assert.deepEqual(after.dynamic!.cells, cells, "smaller sample must not trim/despawn kept group");
+        assertLayerCellValues(after.dynamic!.cells, cells, "smaller sample must not trim/despawn kept group");
         assert.equal(after.staticCells.length, Math.max(0, target - size));
         assert.equal(total, Math.max(target, size));
         if (target < size) {
@@ -2880,7 +2886,8 @@ test("真实新生组按原消失式离开后，同次换批可按原概率重�
     stepBlueprint(BLUEPRINT_RAISE, true, aimAt(30), world);
     assert.equal(getBlueprintClock().dynamic?.phase, "hold");
     const old = getBlueprintClock();
-    restoreBlueprintClock({ ...old, dynamic: { ...old.dynamic!, cells: old.dynamic!.cells.map((cell) => ({ ...cell, lit: true })) } });
+    restoreBlueprintClock({ ...old, dynamic: { ...old.dynamic!, cells: old.dynamic!.cells.map((cell) => ({ ...cell, lit: true })),
+      ...(old.dynamic!.groups ? { groups: old.dynamic!.groups.map((g) => ({ ...g, cells: g.cells.map((cell) => ({ ...cell, lit: true })) })) } : {}) } });
     assert.equal(getBlueprintClock().lit.length, old.dynamic!.cells.length);
     stepBlueprint(0, true, aim, world);
     const next = getBlueprintClock();

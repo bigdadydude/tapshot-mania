@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   BLUEPRINT_RAISE, BLUEPRINT_CROSS_RAISE, blueprintBlocks, blueprintVisibleBlocks,
   drawBlueprintCodeBlocks, blueprintCellPixels,
-  blueprintLayerPriority, blueprintTopLayer, getBlueprintClock, restoreBlueprintClock,
+  blueprintLayerPriority, blueprintTopLayer, blueprintDynamicGroups, getBlueprintClock, restoreBlueprintClock,
   resetBlueprint, stepBlueprint, touchBlueprintCell, collideBlueprint, applyBlueprintTurnRed,
   blueprintCellLocked, drainBlueprintRewardEvents, consumeBlueprintLitForHole,
   type BlueprintCellRef, type BlueprintDynamic, type BlueprintClock,
@@ -217,20 +217,20 @@ test("真实dynamic=null新生后实际移动到固定亮块触发，不提前�
     const raised = getBlueprintClock();
     stepBlueprint(raised.dynamic!.stepSpan + 0.01, true, { ...aim, goals: 30 }, world);
     const moving = getBlueprintClock();
-    if (moving.dynamic?.phase !== "cross_out") continue;
-    const index = moving.dynamic.cells.findIndex((c) => c.kind === "red");
-    if (index < 0) continue;
-    const dest = moving.dynamic.pending[index]!;
-    if (moving.dynamic.cells.some((c) => key(c) === key(dest))) continue;
+    const group = blueprintDynamicGroups(moving.dynamic).find((g) => g.phase === "cross_out" && g.cells.some((c) => c.kind === "red"));
+    if (!group) continue;
+    const index = group.cells.findIndex((c) => c.kind === "red");
+    const dest = group.pending[index]!;
+    if (moving.dynamic!.cells.some((c) => key(c) === key(dest))) continue;
     // Keep the actual newborn group/geometry/motion; prepare a single controlled white target at its pending destination.
     restoreBlueprintClock({ ...moving, staticCells: [at(dest.col, dest.row, "white", true)], clearing: [], pendingBonus: 0 });
     stepBlueprint(0, true, { ...aim, goals: 30 }, world);
     assert.equal(getBlueprintClock().pendingBonus, 0);
-    assert.ok(getBlueprintClock().dynamic!.cells.some((c) => c.kind === "red" && key(c) === key(moving.dynamic!.cells[index]!)));
-    stepBlueprint(moving.dynamic.raise, true, { ...aim, goals: 30 }, world);
+    assert.ok(getBlueprintClock().dynamic!.cells.some((c) => c.kind === "red" && key(c) === key(group.cells[index]!)));
+    stepBlueprint(group.raise, true, { ...aim, goals: 30 }, world);
     assert.ok(getBlueprintClock().pendingBonus > 0);
     assert.ok(!(getBlueprintClock().dynamic?.cells ?? []).some((c) => c.kind === "red" && key(c) === key(dest)));
-    t.diagnostic(JSON.stringify({ actual: 30, newbornSeed: seed, from: key(moving.dynamic.cells[index]!), to: key(dest) }));
+    t.diagnostic(JSON.stringify({ actual: 30, newbornSeed: seed, from: key(group.cells[index]!), to: key(dest) }));
     found = true;
   }
   assert.equal(found, true);

@@ -192,6 +192,7 @@ type Cell = Rect & { col: number; row: number };
 export const BLUEPRINT_SHAPES = ["line", "diag", "z", "l", "s", "u", "v", "c"] as const;
 export type BlueprintShape = (typeof BLUEPRINT_SHAPES)[number];
 export type BlueprintCellRef = {
+  /** 稳定层身份，移动/变色不变，快照保留。 */ layerId?: string;
   col: number; row: number; /** 旧快照缺省为 white。 */ kind?: BlueprintBlockKind;
   /** 逐层亮态，随本块移动；缺省未亮。 */ lit?: boolean;
   /** 叠亮绿已进入双轴判定，不能从普通 OR 清段旁路领奖。 */ overlapGreen?: boolean;
@@ -227,6 +228,9 @@ export type BlueprintBatch = {
 
 export type BlueprintDynamicPhase = "raise" | "hold" | "cross_out" | "cross_in";
 export type BlueprintDynamic = {
+  groupId?: string;
+  /** 多组时此对象为批兼容视图，cells/pending 为展平投影；groups 为真实组状态。 */
+  groups?: BlueprintDynamic[];
   cells: BlueprintCellRef[];
   /** cross_out 时已选定、尚未落到的下一格；否则为空。 */
   pending: BlueprintCellRef[];
@@ -247,6 +251,7 @@ export type BlueprintClock = {
   staticAge: number;
   staticRaise: number;
   dynamic: BlueprintDynamic | null;
+  identitySerial?: number;
   /** @deprecated 等同 staticCells，留给旧测试 / rewind。 */
   cells: BlueprintCellRef[];
   /** @deprecated 等同 staticAge。 */
@@ -311,6 +316,7 @@ let staticCells: BlueprintCellRef[] = [];
 let staticAge = 0;
 let staticRaise = BLUEPRINT_RAISE;
 let dynamic: BlueprintDynamic | null = null;
+let identitySerial = 0;
 /** 已点亮的 `col:row`。 */
 let lit = new Set<string>();
 /** 清排 / 清列累计、尚未进球结算的加分。 */
@@ -386,7 +392,17 @@ function normalizeDynamicPhase(phase: string | undefined): BlueprintDynamicPhase
   return "hold";
 }
 
+/** 单组旧快照无需改相位；多组批使用 groups，兼容 cells 只做展平投影。 */
+export function blueprintDynamicGroups(batch: BlueprintDynamic | null | undefined): BlueprintDynamic[] {
+  return batch ? (batch.groups?.length ? batch.groups : [batch]) : [];
+}
+function packDynamic(groups: BlueprintDynamic[]): BlueprintDynamic | null {
+  if (!groups.length) return null;
+  if (groups.length === 1) return groups[0]!;
+  return { ...groups[0]!, cells: groups.flatMap((g) => g.cells), pending: groups.flatMap((g) => g.pending), groups };
+}
 function copyDynamic(next: BlueprintDynamic & { prev?: BlueprintCellRef[] }): BlueprintDynamic {
+  if (next.groups?.length) return packDynamic(next.groups.map((group) => copyDynamic(group)))!;
   const pending = next.pending?.length
     ? copyCells(next.pending)
     : next.prev?.length && normalizeDynamicPhase(next.phase) === "cross_out"
@@ -396,6 +412,7 @@ function copyDynamic(next: BlueprintDynamic & { prev?: BlueprintCellRef[] }): Bl
     ? copyCells(next.prev)
     : copyCells(next.cells);
   return {
+    ...(next.groupId ? { groupId: next.groupId } : {}),
     cells,
     pending,
     dir: clampDir(next.dir),
@@ -404,6 +421,28 @@ function copyDynamic(next: BlueprintDynamic & { prev?: BlueprintCellRef[] }): Bl
     stepSpan: next.stepSpan > 0 ? next.stepSpan : BLUEPRINT_STEP_MIN,
     raise: next.raise > 0 ? next.raise : BLUEPRINT_RAISE,
   };
+}
+
+function ensureLayerIdentities() {
+  const groups = blueprintDynamicGroups(dynamic);
+  const cells = [...staticCells, ...groups.flatMap((g) => g.cells)];
+  // 先保留全部旧 ID，避免缺失计数器的混合快照中新分配 ID 撞到后续旧层/组。
+  const reserved = new Set([...cells.map((c) => c.layerId), ...groups.map((g) => g.groupId)].filter(Boolean));
+  const used = new Set<string>();
+  const identity = (current: string | undefined, prefix: string) => {
+    if (current && !used.has(current)) { used.add(current); return current; }
+    let id: string;
+    do { id = `${prefix}:${++identitySerial}`; } while (used.has(id) || reserved.has(id));
+    used.add(id);
+    return id;
+  };
+  for (const cell of staticCells) cell.layerId = identity(cell.layerId, "layer");
+  for (const group of groups) {
+    group.groupId = identity(group.groupId, "group");
+    for (const cell of group.cells) cell.layerId = identity(cell.layerId, "layer");
+    group.pending = group.pending.map((cell, i) => ({ ...cell, layerId: group.cells[i]?.layerId ?? cell.layerId }));
+  }
+  dynamic = packDynamic(groups);
 }
 
 function clampDir(value: number): BlueprintDir {
@@ -430,6 +469,7 @@ export function getBlueprintClock(): BlueprintClock {
     staticAge,
     staticRaise,
     dynamic: dynamic ? copyDynamic(dynamic) : null,
+    identitySerial,
     cells,
     cycle: staticAge,
     duration: staticRaise,
@@ -455,6 +495,8 @@ export function restoreBlueprintClock(next: BlueprintClock) {
   staticAge = Number.isFinite(next.staticAge) ? next.staticAge : Number.isFinite(next.cycle) ? next.cycle : 0;
   staticRaise = next.staticRaise > 0 ? next.staticRaise : next.duration > 0 ? next.duration : BLUEPRINT_RAISE;
   dynamic = next.dynamic ? copyDynamic(next.dynamic) : null;
+  identitySerial = finiteBonus(next.identitySerial);
+  ensureLayerIdentities();
   lit = new Set((next.lit ?? []).filter((key) => typeof key === "string" && key.includes(":")));
   if (next.layerStateVersion !== 1) {
     // 旧坐标快照无法恢复所属层：只迁移给该格最高的非黑层，不复制给两层。
@@ -494,6 +536,7 @@ export function resetBlueprint(nextSeed = Math.random() * 1e6) {
   staticAge = 0;
   staticRaise = BLUEPRINT_RAISE;
   dynamic = null;
+  identitySerial = 0;
   lit = new Set();
   pendingBonus = 0;
   rewards = { base: 0, combo: 0, seconds: 0 };
@@ -519,6 +562,7 @@ export function resetBlueprintProgress(preserveRewards = false) {
   staticAge = 0;
   staticRaise = BLUEPRINT_RAISE;
   dynamic = null;
+  identitySerial = 0;
   lit = new Set();
   pendingBonus = 0;
   rewards = { base: 0, combo: 0, seconds: 0 };
@@ -560,12 +604,16 @@ function pruneLit() {
 export function blueprintLayerPriority(layer: { kind?: BlueprintBlockKind; dynamic: boolean }) {
   return (blueprintBlockKind(layer) !== "white" ? 2 : 0) + (layer.dynamic ? 1 : 0);
 }
-export function blueprintTopLayer<T extends { kind?: BlueprintBlockKind; dynamic: boolean }>(layers: readonly T[]): T | undefined {
-  return layers.reduce<T | undefined>((top, layer) => !top || blueprintLayerPriority(layer) > blueprintLayerPriority(top) ? layer : top, undefined);
+export function blueprintTopLayer<T extends { kind?: BlueprintBlockKind; dynamic: boolean; id?: string }>(layers: readonly T[]): T | undefined {
+  return layers.reduce<T | undefined>((top, layer) => {
+    if (!top) return layer;
+    const difference = blueprintLayerPriority(layer) - blueprintLayerPriority(top);
+    return difference > 0 || (difference === 0 && layer.id && top.id && layer.id < top.id) ? layer : top;
+  }, undefined);
 }
 function liveLayerEntries() {
-  return [...staticCells.map((cell) => ({ cell, dynamic: false, kind: cell.kind })),
-    ...(dynamic?.cells ?? []).map((cell) => ({ cell, dynamic: true, kind: cell.kind }))];
+  return [...staticCells.map((cell) => ({ cell, dynamic: false, kind: cell.kind, id: cell.layerId })),
+    ...(dynamic?.cells ?? []).map((cell) => ({ cell, dynamic: true, kind: cell.kind, id: cell.layerId }))];
 }
 function topLayerAtKey(key: string) {
   return blueprintTopLayer(liveLayerEntries().filter((layer) => cellKey(layer.cell) === key));
@@ -626,32 +674,28 @@ function sampleStepSpan(layoutSeed: number, batchSerial: number) {
   return BLUEPRINT_STEP_MIN + (BLUEPRINT_STEP_MAX - BLUEPRINT_STEP_MIN) * t;
 }
 
+/** 动态预算>=4才拆为2..3个每组至少2格的小组，不增加采样预算或掷签次数。 */
+export function blueprintDynamicGroupBudgets(room: number) {
+  room = Math.min(BLUEPRINT_MAX_COUNT - 1, finiteBonus(room));
+  const count = room >= 4 ? Math.min(3, Math.floor(room / 2)) : room > 0 ? 1 : 0;
+  return Array.from({ length: count }, (_, i) => Math.floor(room / count) + (i < room % count ? 1 : 0));
+}
 function trySpawnDynamic(goalsNow: number, room: number) {
   if (!view || dynamic || room <= 0 || goalsNow < 3) return;
-  const ball = aimBall();
-  const hoop = aimHoop();
-  const batch = rollBlueprintBatch(view, {
-    seed,
-    serial: serial + 17,
-    goals: goalsNow,
-    ball,
-    hoop,
-    maxCount: room,
-    want: room,
-    exclude: staticCells,
-  });
-  if (!batch.cells.length) return;
-  const cells = batch.cells.slice(0, room);
-  if (!cells.length) return;
-  dynamic = {
-    cells,
-    pending: [],
-    dir: clampDir(Math.floor(unitAt(seed, serial + 17, 8) * 4)),
-    phase: "raise",
-    age: 0,
-    stepSpan: sampleStepSpan(seed, serial + 17),
-    raise: BLUEPRINT_RAISE,
-  };
+  const groups: BlueprintDynamic[] = [];
+  const baseDir = Math.floor(unitAt(seed, serial + 17, 8) * 4);
+  for (const [index, budget] of blueprintDynamicGroupBudgets(room).entries()) {
+    const batch = rollBlueprintBatch(view, {
+      seed, serial: serial + 17 + index, goals: goalsNow, ball: aimBall(), hoop: aimHoop(),
+      maxCount: budget, want: budget, exclude: [...staticCells, ...groups.flatMap((g) => g.cells)],
+    });
+    if (!batch.cells.length) continue;
+    groups.push({
+      cells: batch.cells.slice(0, budget), pending: [], dir: clampDir(baseDir + index),
+      phase: "raise", age: 0, stepSpan: sampleStepSpan(seed, serial + 17 + index), raise: BLUEPRINT_RAISE,
+    });
+  }
+  dynamic = packDynamic(groups);
 }
 
 function applyGoalChange(goalsNow: number) {
@@ -697,6 +741,7 @@ function applyGoalChange(goalsNow: number) {
     exclude: !retainedDynamic ? dynamic?.cells : undefined,
   });
   staticCells = batch.cells.slice(0, staticWant);
+  ensureLayerIdentities();
   hasBatch = true;
   // 只有原组保留才继承其点亮，新生组不能继承刚消失原组的同坐标点亮。
   pruneLit();
@@ -710,57 +755,42 @@ function applyGoalChange(goalsNow: number) {
   }
 }
 
-function beginDynamicCross() {
-  if (!dynamic || !view) return;
+function beginDynamicCross(group: BlueprintDynamic): BlueprintDynamic {
+  if (!view) return { ...group, phase: "hold", age: 0, pending: [] };
   const ball = aimBall();
-  const order: BlueprintDir[] = [0, 1, 2, 3].map((i) => clampDir(dynamic!.dir + i));
+  const order: BlueprintDir[] = [0, 1, 2, 3].map((i) => clampDir(group.dir + i));
   for (const dir of order) {
-    const next = blueprintTranslateCells(dynamic.cells, dir);
+    const next = blueprintTranslateCells(group.cells, dir);
     if (groupHardBlocked(view, next, ball)) continue;
-    // 先整组同步缩回，再落到新格同步升起；全程同一线性进度。
-    dynamic = {
-      ...dynamic,
-      dir,
-      pending: next,
-      phase: "cross_out",
-      age: 0,
-      raise: BLUEPRINT_CROSS_RAISE,
-    };
-    return;
+    return { ...group, dir, pending: next, phase: "cross_out", age: 0, raise: BLUEPRINT_CROSS_RAISE };
   }
-  // 四面都不通：跳过这一步，继续 hold。
-  dynamic = { ...dynamic, phase: "hold", age: 0, pending: [] };
+  return { ...group, phase: "hold", age: 0, pending: [] };
 }
-
 function stepDynamic(dt: number) {
   if (!dynamic || !(dt > 0)) return;
-  let d = dynamic;
-  d = { ...d, age: d.age + dt };
-  if (d.phase === "raise" || d.phase === "cross_in") {
-    if (d.age >= d.raise) d = { ...d, phase: "hold", age: 0, pending: [] };
-  } else if (d.phase === "hold") {
-    if (d.age >= d.stepSpan) {
-      dynamic = d;
-      beginDynamicCross();
-      return;
+  let committed = false;
+  const groups: BlueprintDynamic[] = [];
+  for (const group of blueprintDynamicGroups(dynamic)) {
+    let d = { ...group, age: group.age + dt };
+    if (d.phase === "raise" || d.phase === "cross_in") {
+      if (d.age >= d.raise) d = { ...d, phase: "hold", age: 0, pending: [] };
+    } else if (d.phase === "hold") {
+      if (d.age >= d.stepSpan) d = beginDynamicCross(d);
+    } else if (d.phase === "cross_out" && d.age >= d.raise) {
+      committed = true;
+      const cells = d.pending.map((target, i) => ({ ...d.cells[i]!, col: target.col, row: target.row }));
+      if (!cells.length) continue;
+      d = { ...d, cells, pending: [], phase: "cross_in", age: 0 };
     }
-  } else if (d.phase === "cross_out") {
-    if (d.age >= d.raise) {
-      const to = d.pending.map((target, i) => ({
-        ...d.cells[i]!, col: target.col, row: target.row,
-      }));
-      if (!to.length) {
-        dynamic = null;
-        return;
-      }
-      dynamic = { ...d, cells: to, pending: [], phase: "cross_in", age: 0 };
-      pruneLit();
-      recheckOverlapActivations();
-      recheckFieldLines();
-      return;
-    }
+    groups.push(d);
   }
-  dynamic = d;
+  // 事务提交：先完成所有组的位置，再以最终在场布局统一判叠亮、黑锁和清段。
+  dynamic = packDynamic(groups);
+  if (committed) {
+    pruneLit();
+    recheckOverlapActivations();
+    recheckFieldLines();
+  }
 }
 
 function stepClearing(dt: number) {
@@ -1267,7 +1297,7 @@ function pushBlock(
   const base = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
   occupied.add(key);
   blocks.push({
-    id: `${isDynamic ? "d" : "s"}:${key}`,
+    id: ref.layerId ?? `${isDynamic ? "d" : "s"}:${key}`,
     kind: ref.kind ?? "white",
     index: blocks.length,
     col: ref.col,
@@ -1325,8 +1355,7 @@ export function blueprintBlocks(world: View, clock = getBlueprintClock()): Bluep
   for (const ref of staticList) {
     pushBlock(blocks, world, grid, ref, staticExtend, false, staticSeen, blueprintBlockKind(ref) !== "black" && (ref.lit ?? (clock.layerStateVersion !== 1 && litKeys.has(cellKey(ref)))));
   }
-  const dyn = clock.dynamic;
-  if (dyn?.cells?.length) {
+  for (const dyn of blueprintDynamicGroups(clock.dynamic)) {
     const dynamicSeen = new Set<string>();
     for (const ref of blueprintDynamicDrawCells(dyn)) {
       const extend = blueprintDynamicCellExtend(dyn, ref, staticKeys);
@@ -1365,7 +1394,7 @@ export function blueprintClearExtend(age: number, span = BLUEPRINT_CROSS_RAISE, 
 }
 
 function allLiveLayers(clock: Pick<BlueprintClock, "staticCells" | "cells" | "dynamic">) {
-  return [...(clock.staticCells ?? clock.cells ?? []), ...(clock.dynamic?.cells ?? [])];
+  return [...(clock.staticCells ?? clock.cells ?? []), ...blueprintDynamicGroups(clock.dynamic).flatMap((g) => g.cells)];
 }
 
 /** 仍占着这一格的所有层，含黑块。动态缩平过程中高度接近 0 也算在场。 */
@@ -1505,48 +1534,30 @@ function extendAt(ref: BlueprintCellRef) {
   if (staticCells.some((cell) => cell.col === ref.col && cell.row === ref.row)) {
     heights.push(blueprintExtend(staticAge, staticRaise));
   }
-  if (dynamic?.cells.some((cell) => cell.col === ref.col && cell.row === ref.row)) {
-    heights.push(blueprintDynamicCellExtend(dynamic, ref, staticKeySet()));
+  for (const group of blueprintDynamicGroups(dynamic)) {
+    if (group.cells.some((cell) => cell.col === ref.col && cell.row === ref.row)) {
+      heights.push(blueprintDynamicCellExtend(group, ref, staticKeySet()));
+    }
   }
   if (!heights.length) return 0;
   return Math.max(0, ...heights);
 }
 
 /** 按层丢掉可清除的层；黑块留下。高度接近 0 的可清除层也算被清走。 */
-function dropClearableLayers(keys: Set<string>) {
-  const keep = (cell: BlueprintCellRef) => !(keys.has(cellKey(cell)) && blueprintKindClearable(cell.kind));
+function dropLayers(keys: Set<string>, keepBlack: boolean) {
+  const keep = (cell: BlueprintCellRef) => !keys.has(cellKey(cell)) || (keepBlack && !blueprintKindClearable(cell.kind));
   staticCells = staticCells.filter(keep);
-  if (dynamic) {
-    const cells = dynamic.cells.filter(keep);
-    if (!cells.length) {
-      dynamic = null;
-    } else if (cells.length !== dynamic.cells.length) {
-      const dropped = new Set(dynamic.cells.filter((cell) => !keep(cell)).map(cellKey));
-      const pending = dynamic.phase === "cross_out"
-        ? blueprintTranslateCells(cells, dynamic.dir)
-        : dynamic.pending.filter((cell) => !dropped.has(cellKey(cell)));
-      dynamic = { ...dynamic, cells, pending };
-    }
-  }
+  dynamic = packDynamic(blueprintDynamicGroups(dynamic).flatMap((group) => {
+    const cells = group.cells.filter(keep);
+    if (!cells.length) return [];
+    const pending = group.phase === "cross_out" ? blueprintTranslateCells(cells, group.dir) : [];
+    return [{ ...group, cells, pending }];
+  }));
   pruneLit();
 }
-
-/** 反物质开洞：连黑块一并收走。 */
-function dropAllLayers(keys: Set<string>) {
-  staticCells = staticCells.filter((cell) => !keys.has(cellKey(cell)));
-  if (dynamic) {
-    const cells = dynamic.cells.filter((cell) => !keys.has(cellKey(cell)));
-    if (!cells.length) {
-      dynamic = null;
-    } else if (cells.length !== dynamic.cells.length) {
-      const pending = dynamic.phase === "cross_out"
-        ? blueprintTranslateCells(cells, dynamic.dir)
-        : dynamic.pending.filter((cell) => !keys.has(cellKey(cell)));
-      dynamic = { ...dynamic, cells, pending };
-    }
-  }
-  pruneLit();
-}
+function dropClearableLayers(keys: Set<string>) { dropLayers(keys, true); }
+/** 反物质开洞：连黑块与所有动态组一并收走。 */
+function dropAllLayers(keys: Set<string>) { dropLayers(keys, false); }
 
 function layersAtKey(key: string) {
   return [...staticCells, ...(dynamic?.cells ?? [])].filter((cell) => cellKey(cell) === key);
@@ -1694,16 +1705,11 @@ function paintCellRed(ref: BlueprintCellRef) {
     return out;
   };
   staticCells = paint(staticCells);
-  if (dynamic) {
-    const cells = paint(dynamic.cells);
-    if (!cells.length) dynamic = null;
-    else if (cells.length !== dynamic.cells.length || changed) {
-      const pending = dynamic.phase === "cross_out"
-        ? blueprintTranslateCells(cells, dynamic.dir)
-        : dynamic.pending.filter((cell) => cellKey(cell) !== cellKey(ref) || cells.some((kept) => cellKey(kept) === cellKey(cell)));
-      dynamic = { ...dynamic, cells, pending };
-    }
-  }
+  dynamic = packDynamic(blueprintDynamicGroups(dynamic).flatMap((group) => {
+    const cells = paint(group.cells);
+    if (!cells.length) return [];
+    return [{ ...group, cells, pending: group.phase === "cross_out" ? blueprintTranslateCells(cells, group.dir) : [] }];
+  }));
   return changed || keptRed;
 }
 
@@ -1851,7 +1857,7 @@ export function touchBlueprintCell(world: View, col: number, row: number) {
   // 纯黑格只做普通碰撞：不点亮，不进入清段。
   if (!hasClearableLayer(ref)) return 0;
   const shown = blueprintVisibleBlocks(world).find((block) => cellKey(block) === key);
-  const top = shown && liveLayerEntries().find((layer) => layer.dynamic === shown.dynamic && cellKey(layer.cell) === key);
+  const top = shown && liveLayerEntries().find((layer) => layer.id === shown.id);
   if (!top || shown?.retracting || blueprintBlockKind(top.cell) === "black") return 0;
   top.cell.lit = true;
   pruneLit();
