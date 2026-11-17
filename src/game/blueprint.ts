@@ -89,6 +89,9 @@ export const BLUEPRINT_BLUE = "#11448f";
 /** 可调的生成权重；颜色与奖励只使用快照中的 seed / serial。 */
 export const BLUEPRINT_KIND_WEIGHTS = { white: 0.8, green: 0.12, red: 0.08 } as const;
 export const BLUEPRINT_LIT_RGB = "255, 255, 255";
+export const BLUEPRINT_RED_RGB = "217, 0, 27";
+/** 经典 / 肉鸽绿块抽到时钟奖时的加时额度（秒）。一分钟模式不发放此项。 */
+export const BLUEPRINT_CLOCK_SECONDS = 1;
 export type BlueprintBlockKind = "white" | "green" | "red";
 export type BlueprintRewardEvent = "base" | "combo" | "seconds";
 export type BlueprintRewards = { base: number; combo: number; seconds: number };
@@ -204,6 +207,26 @@ let clearing: BlueprintClearingCell[] = [];
 let rewards: BlueprintRewards = { base: 0, combo: 0, seconds: 0 };
 let rewardSerial = 0;
 let rewardEvents: BlueprintRewardEvent[] = [];
+/** 由引擎按模式设置。默认 true，保持经典/肉鸽与现有模块测试的三选一。 */
+let allowSeconds = true;
+
+export function setBlueprintAllowSeconds(allow: boolean) {
+  allowSeconds = Boolean(allow);
+}
+
+export function getBlueprintAllowSeconds() {
+  return allowSeconds;
+}
+
+/** 一分钟模式 HUD / 续钟分母只返回 timerMax，避免被 rewards.seconds 撑大。 */
+export function blueprintHudClockBudget(timerMax: number, rewardSeconds: number, minuteMode: boolean) {
+  return minuteMode ? timerMax : timerMax + rewardSeconds;
+}
+
+/** 一分钟模式即使收到 seconds 也不加时、不弹时钟文案。 */
+export function blueprintAppliesClockReward(minuteMode: boolean) {
+  return !minuteMode;
+}
 
 export function getBlueprintRewards(): BlueprintRewards {
   return { ...rewards };
@@ -1230,9 +1253,12 @@ function layersAt(ref: BlueprintCellRef) {
 function rewardClearedGreens(cells: readonly BlueprintCellRef[]) {
   for (const cell of uniqueCells(cells)) {
     if (!layersAt(cell).some((layer) => layer.kind === "green")) continue;
-    const choices: BlueprintRewardEvent[] = ["base", "combo", "seconds"];
-    const event = choices[Math.min(2, Math.floor(unitAt(seed, rewardSerial++, 41) * 3))]!;
-    rewards[event] += event === "base" ? 2 : event === "combo" ? 1 : 3;
+    // 一分钟模式直接从池里去掉 seconds，二项等概率；不要先三选一再丢掉。
+    const choices: BlueprintRewardEvent[] = allowSeconds
+      ? ["base", "combo", "seconds"]
+      : ["base", "combo"];
+    const event = choices[Math.min(choices.length - 1, Math.floor(unitAt(seed, rewardSerial++, 41) * choices.length))]!;
+    rewards[event] += event === "base" ? 2 : event === "combo" ? 1 : BLUEPRINT_CLOCK_SECONDS;
     rewardEvents.push(event);
   }
 }
@@ -1610,6 +1636,12 @@ export function blueprintCellPixels(cell: Rect) {
   };
 }
 
+/** 凸块白描边的矩形。落在该格四条网格线上，用来盖住背景网格，不是填色内侧再套一圈。 */
+export function blueprintBlockStrokeRect(cell: Rect) {
+  const { left, top, right, bottom } = blueprintCellPixels(cell);
+  return { x: left + 0.5, y: top + 0.5, w: right - left, h: bottom - top };
+}
+
 export type BlueprintShadowBox = { x: number; y: number; w: number; h: number };
 export type BlueprintShadowPiece = BlueprintShadowBox & { keep: number };
 
@@ -1753,16 +1785,18 @@ function drawBlock(ctx: CanvasRenderingContext2D, block: BlueprintBlock, others:
     paintShadow(ctx, shadow, clipped, extend);
   }
   if (block.lit || block.kind !== "white") {
-    const rgb = block.kind === "green" ? "76, 230, 133" : block.kind === "red" ? "255, 83, 92" : BLUEPRINT_LIT_RGB;
+    const rgb = block.kind === "green" ? "76, 230, 133" : block.kind === "red" ? BLUEPRINT_RED_RGB : BLUEPRINT_LIT_RGB;
     ctx.fillStyle = `rgba(${rgb}, ${(block.lit ? 0.55 : 0.35) + 0.4 * Math.min(1, extend)})`;
     ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.96)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(fill.x + 1.5, fill.y + 1.5, Math.max(0, fill.w - 3), Math.max(0, fill.h - 3));
   } else {
     ctx.fillStyle = `rgba(236, 244, 255, ${blueprintFillAlpha(extend)})`;
     ctx.fillRect(fill.x, fill.y, fill.w, fill.h);
   }
+  // 不透明白描边压在该格四条网格线上，盖住底下的网格；所有已画出的凸块都画，含未点亮白块。
+  const stroke = blueprintBlockStrokeRect(block.cell);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(stroke.x, stroke.y, stroke.w, stroke.h);
 }
 
 /** Redraw only solid blocks after the code-world dark wash, preserving their colors. */

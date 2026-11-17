@@ -7,9 +7,15 @@ import {
   getBlueprintFloorDensity, setBlueprintFloorDensity, blueprintMajorColumn,
   BLUEPRINT_BALL_CLEAR,
   BLUEPRINT_LIT_RGB,
+  BLUEPRINT_RED_RGB,
+  BLUEPRINT_CLOCK_SECONDS,
   BLUEPRINT_KIND_WEIGHTS,
   getBlueprintRewards,
   drainBlueprintRewardEvents,
+  getBlueprintAllowSeconds,
+  setBlueprintAllowSeconds,
+  blueprintHudClockBudget,
+  blueprintAppliesClockReward,
   resetBlueprintProgress,
   BLUEPRINT_BLOCK_SIZE,
   BLUEPRINT_BOUNCE_CLEAR,
@@ -26,6 +32,7 @@ import {
   BLUEPRINT_SHAPES,
   blueprintBlockSize,
   blueprintBlocks,
+  blueprintBlockStrokeRect,
   blueprintCellCover,
   blueprintCellPixels,
   blueprintDespawnChance,
@@ -66,6 +73,7 @@ import {
   consumeBlueprintLitForHole,
   settleBlueprintBasket,
   collideBlueprint,
+  drawBlueprint,
   getBlueprintClock,
   resetBlueprint,
   restoreBlueprintClock,
@@ -820,6 +828,113 @@ test("凸出填色贴住网格线", () => {
   }
 });
 
+function oldInsetStrokeRect(fill: { x: number; y: number; w: number; h: number }) {
+  return { x: fill.x + 1.5, y: fill.y + 1.5, w: fill.w - 3, h: fill.h - 3 };
+}
+
+test("凸块白描边落在网格线上，不是旧的填色内缩矩形", () => {
+  const batch = rollBlueprintBatch(world, { seed: 8, serial: 1, goals: 3, ball: null, hoop: null });
+  for (const block of blueprintBlocks(world, clock({ cells: batch.cells, goals: 3, cycle: BLUEPRINT_RAISE, duration: BLUEPRINT_RAISE }))) {
+    const px = blueprintCellPixels(block.cell);
+    const stroke = blueprintBlockStrokeRect(block.cell);
+    // 与 strokeGrid 相同：线画在 Math.round(p)+0.5，宽高为格子左右/上下边之差。
+    assert.equal(stroke.x, px.left + 0.5);
+    assert.equal(stroke.y, px.top + 0.5);
+    assert.equal(stroke.w, px.right - px.left);
+    assert.equal(stroke.h, px.bottom - px.top);
+    const inset = oldInsetStrokeRect(px.fill);
+    assert.notDeepEqual(stroke, inset);
+    assert.notEqual(stroke.x, inset.x);
+    assert.notEqual(stroke.y, inset.y);
+    assert.notEqual(stroke.w, inset.w);
+    assert.notEqual(stroke.h, inset.h);
+  }
+});
+
+function recordingCtx() {
+  const strokes: { style: string; lineWidth: number; x: number; y: number; w: number; h: number }[] = [];
+  let strokeStyle = "";
+  let lineWidth = 0;
+  const ctx = {
+    fillStyle: "",
+    globalAlpha: 1,
+    get strokeStyle() { return strokeStyle; },
+    set strokeStyle(value: string) { strokeStyle = String(value); },
+    get lineWidth() { return lineWidth; },
+    set lineWidth(value: number) { lineWidth = Number(value); },
+    beginPath() {},
+    moveTo() {},
+    lineTo() {},
+    stroke() {},
+    fillRect() {},
+    save() {},
+    restore() {},
+    clip() {},
+    rect() {},
+    createLinearGradient() {
+      return { addColorStop() {} };
+    },
+    strokeRect(x: number, y: number, w: number, h: number) {
+      strokes.push({ style: strokeStyle, lineWidth, x, y, w, h });
+    },
+  };
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, strokes };
+}
+
+test("已画出的凸块都在网格线上描不透明白边，含未点亮白块、亮白、绿、红", () => {
+  const cells: BlueprintCellRef[] = [
+    { col: 4, row: 8, kind: "white" },
+    { col: 5, row: 8, kind: "white" },
+    { col: 6, row: 8, kind: "green" },
+    { col: 7, row: 8, kind: "red" },
+  ];
+  resetBlueprint(1);
+  restoreBlueprintClock(clock({
+    staticCells: cells,
+    staticAge: BLUEPRINT_RAISE,
+    duration: BLUEPRINT_RAISE,
+    lit: ["5:8"],
+  }));
+  const { ctx, strokes } = recordingCtx();
+  drawBlueprint(ctx, world);
+  const blocks = blueprintBlocks(world, getBlueprintClock());
+  const tags = new Set(blocks.map((block) => `${block.kind}:${block.lit}`));
+  assert.ok(tags.has("white:false"), "unlit white");
+  assert.ok(tags.has("white:true"), "lit white");
+  assert.ok(tags.has("green:false"), "green");
+  assert.ok(tags.has("red:false"), "red");
+  assert.equal(blocks.length, 4);
+  for (const block of blocks) {
+    assert.ok(block.extend >= 0.04);
+    const expected = blueprintBlockStrokeRect(block.cell);
+    const hit = strokes.find((stroke) => stroke.x === expected.x && stroke.y === expected.y && stroke.w === expected.w && stroke.h === expected.h);
+    assert.ok(hit, `missing grid-aligned stroke for ${block.kind} lit=${block.lit}`);
+    assert.equal(hit!.style, "#ffffff");
+    assert.equal(hit!.lineWidth, 1);
+    const inset = oldInsetStrokeRect(blueprintCellPixels(block.cell).fill);
+    assert.notDeepEqual({ x: hit!.x, y: hit!.y, w: hit!.w, h: hit!.h }, inset);
+  }
+
+  // 尚未凸出到绘制阈值的格子不描边。
+  restoreBlueprintClock(clock({
+    staticCells: [{ col: 4, row: 9, kind: "white" }],
+    staticAge: 0,
+    duration: BLUEPRINT_RAISE,
+  }));
+  const flatBlocks = blueprintBlocks(world, getBlueprintClock());
+  const { ctx: flatCtx, strokes: flatStrokes } = recordingCtx();
+  drawBlueprint(flatCtx, world);
+  assert.ok(flatBlocks.length > 0);
+  for (const block of flatBlocks) {
+    assert.ok(block.extend < 0.04);
+    const expected = blueprintBlockStrokeRect(block.cell);
+    assert.equal(
+      flatStrokes.filter((stroke) => stroke.x === expected.x && stroke.y === expected.y && stroke.w === expected.w && stroke.h === expected.h).length,
+      0,
+    );
+  }
+});
+
 test("同排有未亮格不清排，全亮才缩回，缩回不是瞬间删除", () => {
   const a = { col: 4, row: 8 };
   const b = { col: 5, row: 8 };
@@ -1489,6 +1604,8 @@ test("靠近倒计时条的格子整格在条下，不会被切成半截", () =>
 
 test("PR31 普通点亮白色；彩块权重与生成确定且三色均可生成", () => {
   assert.equal(BLUEPRINT_LIT_RGB, "255, 255, 255");
+  assert.equal(BLUEPRINT_RED_RGB, "217, 0, 27");
+  assert.equal(BLUEPRINT_CLOCK_SECONDS, 1);
   assert.deepEqual(BLUEPRINT_KIND_WEIGHTS, { white: 0.8, green: 0.12, red: 0.08 });
   const seen = new Set();
   for (let serial = 0; serial < 100; serial++) {
@@ -1514,7 +1631,7 @@ test("PR31 green 真正消除才三选一，叠层/重触/清动画仅领一次"
     assert.equal(events.length, 1);
     const event = events[0]!;
     seen.add(event);
-    assert.deepEqual(getBlueprintRewards(), { base: event === "base" ? 2 : 0, combo: event === "combo" ? 1 : 0, seconds: event === "seconds" ? 3 : 0 });
+    assert.deepEqual(getBlueprintRewards(), { base: event === "base" ? 2 : 0, combo: event === "combo" ? 1 : 0, seconds: event === "seconds" ? BLUEPRINT_CLOCK_SECONDS : 0 });
     assert.equal(touchBlueprintCell(world, 4, 8), 0);
     consumeBlueprintLitForHole();
     assert.deepEqual(drainBlueprintRewardEvents(), []);
@@ -1640,4 +1757,124 @@ test("正式默认固定横线140%纵线180%，无效输入恢复所选默认", 
   assert.equal(setBlueprintFloorDensity(NaN),1.4);
   assert.equal(setBlueprintFloorSpread(NaN),1.8);
   setBlueprintFloorDensity(1);setBlueprintFloorSpread(1);
+});
+
+
+function clearIsolatedGreen(seed: number) {
+  const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
+  restoreBlueprintClock(clock({ seed, staticCells: [green], staticAge: 1 }));
+  assert.equal(touchBlueprintCell(world, 4, 8), 1);
+  return drainBlueprintRewardEvents();
+}
+
+test("一分钟 + 蓝图：多次绿消除只有 base/combo，seconds 为 0，timer 与 HUD 分母保持 60", () => {
+  const previous = getBlueprintAllowSeconds();
+  setBlueprintAllowSeconds(false);
+  try {
+    const seen = new Set<string>();
+    let eventCount = 0;
+    let grantedSeconds = 0;
+    for (let seed = 1; seed <= 80; seed++) {
+      const events = clearIsolatedGreen(seed);
+      assert.equal(events.length, 1, "每个绿块都要发出一项奖励，不能先三选一再丢掉 seconds");
+      assert.ok(events[0] === "base" || events[0] === "combo");
+      seen.add(events[0]!);
+      eventCount += events.length;
+      grantedSeconds += getBlueprintRewards().seconds;
+    }
+    assert.deepEqual([...seen].sort(), ["base", "combo"]);
+    assert.equal(eventCount, 80);
+    assert.equal(grantedSeconds, 0);
+    assert.equal(getBlueprintRewards().seconds, 0);
+
+    let timer = 60;
+    const timerMax = 60;
+    // 模拟 showBlueprintRewards：一分钟即使误收到 seconds 也不加时、不弹时钟文案。
+    for (const reward of ["base", "combo", "seconds"] as const) {
+      if (reward === "seconds" && !blueprintAppliesClockReward(true)) continue;
+      if (reward === "seconds") timer += BLUEPRINT_CLOCK_SECONDS;
+    }
+    assert.equal(timer, 60);
+    assert.equal(timerMax, 60);
+    assert.equal(blueprintHudClockBudget(timerMax, getBlueprintRewards().seconds, true), 60);
+    assert.equal(blueprintHudClockBudget(timerMax, 9, true), 60, "兜底：分母不被 rewards.seconds 撑大");
+    assert.equal(blueprintAppliesClockReward(true), false);
+  } finally {
+    setBlueprintAllowSeconds(previous);
+  }
+});
+
+test("一分钟模式红叉连带与黑洞清绿块同样不加时", () => {
+  const previous = getBlueprintAllowSeconds();
+  setBlueprintAllowSeconds(false);
+  try {
+    const red: BlueprintCellRef = { col: 5, row: 9, kind: "red" };
+    const cross: BlueprintCellRef[] = [red, { col: 4, row: 9 }, { col: 6, row: 9, kind: "green" }, { col: 5, row: 8 }, { col: 5, row: 10 }];
+    restoreBlueprintClock(clock({ seed: 11, staticCells: cross, staticAge: 1 }));
+    assert.equal(touchBlueprintCell(world, red.col, red.row), 5);
+    const fromRed = drainBlueprintRewardEvents();
+    assert.equal(fromRed.length, 1);
+    assert.ok(fromRed[0] === "base" || fromRed[0] === "combo");
+    assert.equal(getBlueprintRewards().seconds, 0);
+
+    const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
+    restoreBlueprintClock(clock({ seed: 21, staticCells: [green], staticAge: 1 }));
+    assert.equal(consumeBlueprintLitForHole(), 0);
+    const fromHole = drainBlueprintRewardEvents();
+    assert.equal(fromHole.length, 1);
+    assert.ok(fromHole[0] === "base" || fromHole[0] === "combo");
+    assert.equal(getBlueprintRewards().seconds, 0);
+  } finally {
+    setBlueprintAllowSeconds(previous);
+  }
+});
+
+test("经典 + 蓝图：seconds 仍可发出，timer 加 1，累计进入后续续钟预算", () => {
+  const previous = getBlueprintAllowSeconds();
+  setBlueprintAllowSeconds(true);
+  try {
+    assert.equal(blueprintAppliesClockReward(false), true);
+    let secondsEvent: string | undefined;
+    let timer = 15;
+    const timerMax = 15;
+    for (let seed = 1; seed <= 40; seed++) {
+      const events = clearIsolatedGreen(seed);
+      assert.equal(events.length, 1);
+      if (events[0] === "seconds") {
+        secondsEvent = events[0];
+        if (blueprintAppliesClockReward(false)) timer += BLUEPRINT_CLOCK_SECONDS;
+        break;
+      }
+    }
+    assert.equal(secondsEvent, "seconds");
+    assert.equal(getBlueprintRewards().seconds, BLUEPRINT_CLOCK_SECONDS);
+    assert.equal(getBlueprintRewards().seconds, 1);
+    assert.equal(timer, 16);
+    assert.equal(blueprintHudClockBudget(15, 1, false), 16);
+    assert.equal(blueprintHudClockBudget(timerMax, getBlueprintRewards().seconds, false), 16, "续钟预算含累计 +1");
+    assert.equal(blueprintHudClockBudget(timerMax, 6, false), 21);
+  } finally {
+    setBlueprintAllowSeconds(previous);
+  }
+});
+
+test("一分钟兜底：即使收到 seconds 也不加时、不弹时钟文案", () => {
+  assert.equal(blueprintAppliesClockReward(true), false);
+  assert.equal(blueprintAppliesClockReward(false), true);
+  assert.equal(blueprintHudClockBudget(60, 3, true), 60);
+  assert.equal(blueprintHudClockBudget(15, BLUEPRINT_CLOCK_SECONDS, false), 16);
+
+  let toast: string | null = null;
+  let timer = 60;
+  if (blueprintAppliesClockReward(true)) {
+    timer += BLUEPRINT_CLOCK_SECONDS;
+    toast = `永久时钟 +${BLUEPRINT_CLOCK_SECONDS}秒`;
+  }
+  assert.equal(timer, 60);
+  assert.equal(toast, null);
+
+  setBlueprintAllowSeconds(true);
+  assert.equal(getBlueprintAllowSeconds(), true);
+  resetBlueprint(1);
+  assert.equal(getBlueprintAllowSeconds(), true, "resetBlueprint 不改模式标志");
 });
