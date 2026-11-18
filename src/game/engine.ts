@@ -257,6 +257,7 @@ export function createGame(
       motion: hoopNetMotion(h, args[4], heatN()),
       profile: netProfile(),
       brakingScale: heatN() >= STAGE_BLAZE ? .35 : heatN() >= STAGE_IGNITE ? .65 : 1,
+      fireRecovery: canHeat(),
     });
     else {
       // A rewind snapshot may have been captured with the other visual mode.
