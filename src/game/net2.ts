@@ -78,11 +78,23 @@ const rowCenterZ = new Float64Array(NET_ROWS);
 export type Net2Environment = {
   /** Fraction of speed loss retained on a valid downward entry (1 = normal). */
   brakingScale?: number;
+  /** Fire skill only: recover along the surviving hoop-axis velocity, not the side rebound. */
+  fireRecovery?: boolean;
   horizontalAccel?: number;
   wind?: number;
   motion?: { angle: number; pivotX: number; pivotY: number; accelX: number; accelY: number };
   profile?: NetProfile;
 };
+
+/** Spend only the existing recovery budget, without amplifying a side rebound.
+ * A reversed or stalled axial velocity is a real contact result, not a cue to
+ * push the ball down. Preserve it rather than undoing/amplifying that rebound.
+ */
+export function recoverFireNetSpeed(body: Pick<Ball, "vx" | "vy">, incomingVy: number, targetSpeed: number) {
+  if (!(incomingVy * body.vy > 0) || !Number.isFinite(targetSpeed)) return;
+  const axialSquared = targetSpeed * targetSpeed - body.vx * body.vx;
+  if (axialSquared > body.vy * body.vy) body.vy = Math.sign(body.vy) * Math.sqrt(axialSquared);
+}
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -777,15 +789,20 @@ export function stepNet2(h: Hoop, ball: Ball, prevX: number, prevY: number, _wor
           const scale = Math.sqrt(energy / after);
           body.vx *= scale; body.vy *= scale; body.omega *= scale;
         }
-        // Heat reduces loss of speed, while preserving the contact's exit angle
-        // and the cloth response. Never restore more than the incoming energy.
+        // Heat reduces speed loss within the original energy budget. Fire puts
+        // recovered speed along the surviving hoop axis, not the side rebound;
+        // opt-out callers retain the existing isotropic response.
         const braking = clamp(env.brakingScale ?? 1, 0, 1);
         if (braking < 1) {
           const speed = Math.hypot(body.vx, body.vy);
           const limit = Math.min(Math.hypot(vx, vy), Math.sqrt(Math.max(0, energy - inertia * body.omega * body.omega)));
           if (speed > 1e-8 && limit > speed) {
-            const scale = (speed + (limit - speed) * (1 - braking)) / speed;
-            body.vx *= scale; body.vy *= scale;
+            const target = speed + (limit - speed) * (1 - braking);
+            if (env.fireRecovery) recoverFireNetSpeed(body, vy, target);
+            else {
+              const scale = target / speed;
+              body.vx *= scale; body.vy *= scale;
+            }
           }
         }
         if (knots) {
