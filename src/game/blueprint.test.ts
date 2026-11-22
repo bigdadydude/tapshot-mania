@@ -27,6 +27,7 @@ import {
   applyBlueprintScoreDouble,
   getBlueprintScoreDoubleCharges,
   getBlueprintRewards,
+  drainBlueprintRecapClears,
   drainBlueprintRewardEvents,
   getBlueprintAllowSeconds,
   setBlueprintAllowSeconds,
@@ -2966,3 +2967,80 @@ test("四球只改上限：真实step每球换批重抽，同球不刷，保留�
   assert.ok(retainedSmaller > 0 && retainedMultiSmaller > 0 && multiBorn > 0 && sameCapNewSamples > 0);
   t.diagnostic(JSON.stringify({ seeds: 32, actual: [0, 50], refreshes, retainedSmaller, retainedMultiSmaller, multiBorn, sameCapNewSamples }));
 });
+
+test("复盘清格按实际掉格累加，范围消除不把递归格再计一遍", () => {
+  drainBlueprintRecapClears();
+  const green: BlueprintCellRef = { col: 4, row: 8, kind: "green" };
+  const mate = { col: 5, row: 8 };
+  // Keep row 8 as a two-cell segment (green + mate). Extra cells sit on
+  // neighboring rows so area-clear has targets without blocking that line.
+  const extras: BlueprintCellRef[] = [
+    { col: 3, row: 7 }, { col: 4, row: 7 }, { col: 5, row: 7 }, { col: 6, row: 7 },
+    { col: 3, row: 9 }, { col: 4, row: 9 }, { col: 5, row: 9 }, { col: 6, row: 9 },
+  ];
+  const unique = (cells: readonly { col: number; row: number }[]) =>
+    new Set(cells.map((c) => `${c.col}:${c.row}`)).size;
+  let sawArea = false;
+  for (let seed = 1; seed <= 200; seed++) {
+    drainBlueprintRecapClears();
+    restoreBlueprintClock(clock({
+      seed,
+      goals: 12,
+      staticCells: [green, mate, ...extras],
+      staticAge: 1,
+    }));
+    assert.equal(touchBlueprintCell(world, 4, 8), 0);
+    const cleared = touchBlueprintCell(world, 5, 8);
+    assert.ok(cleared >= 2);
+    const events = drainBlueprintRewardEvents();
+    const drained = drainBlueprintRecapClears();
+    const retracting = unique(getBlueprintClock().clearing);
+    assert.equal(drained, retracting);
+    assert.ok(drained >= 2);
+    if (events.includes("areaClear")) {
+      assert.ok(drained > 2, "范围消除应计入邻格且不与起始清段重复");
+      sawArea = true;
+      break;
+    }
+  }
+  assert.equal(sawArea, true);
+});
+
+test("黑洞复盘计当前活格，不含已在清除动画中的格", () => {
+  drainBlueprintRecapClears();
+  const litStatic = { col: 4, row: 8 };
+  const darkStatic = { col: 5, row: 8 };
+  const litMover = { col: 6, row: 8 };
+  const darkMover = { col: 6, row: 9 };
+  const overlap = { col: 7, row: 9 };
+  resetBlueprint(4);
+  drainBlueprintRecapClears();
+  restoreBlueprintClock(clock({
+    goals: 2,
+    staticCells: [litStatic, darkStatic, overlap],
+    staticAge: BLUEPRINT_RAISE,
+    lit: ["4:8", "6:8", "7:9"],
+    pendingBonus: 3,
+    clearing: [{ col: 8, row: 9, age: 0.05, span: BLUEPRINT_CROSS_RAISE, from: 1 }],
+    dynamic: dyn({ cells: [litMover, darkMover, overlap], phase: "hold", stepSpan: 10 }),
+  }));
+  const live = blueprintFieldCells(getBlueprintClock()).length;
+  assert.equal(live, 5);
+  assert.equal(consumeBlueprintLitForHole(), 3);
+  assert.equal(drainBlueprintRecapClears(), 5);
+  assert.equal(drainBlueprintRecapClears(), 0);
+});
+
+test("resetBlueprint 不清掉待 drain 的复盘清格", () => {
+  drainBlueprintRecapClears();
+  restoreBlueprintClock(clock({
+    staticCells: [{ col: 4, row: 8 }],
+    staticAge: 1,
+  }));
+  assert.equal(touchBlueprintCell(world, 4, 8), 1);
+  resetBlueprint(9);
+  resetBlueprintProgress();
+  assert.equal(drainBlueprintRecapClears(), 1);
+  assert.equal(drainBlueprintRecapClears(), 0);
+});
+

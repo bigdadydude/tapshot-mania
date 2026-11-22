@@ -208,6 +208,9 @@ export type RunRecapMapStats = {
   birdAbsorbs?: number;
   birdIceBreaks?: number;
   prisonFrees?: number;
+  searchlightBreaks?: number;
+  blueprintClears?: number;
+  gantryDodges?: number;
 };
 
 /** End-of-run summary for the game-over recap table. */

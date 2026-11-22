@@ -12,6 +12,9 @@ import {
   noteRecapPrisonFree,
   noteRecapSkillInput,
   noteRecapSkillTime,
+  noteRecapBlueprintClears,
+  noteRecapGantryDodges,
+  noteRecapSearchlightBreaks,
   noteRecapTrafficAbsorbs,
   noteRecapTrafficBurns,
   noteRecapTrafficNearMiss,
@@ -121,6 +124,9 @@ test("recap rows hide optional lines until real counts exist", () => {
   assert.equal(labels.includes("擦车而过"), false);
   assert.equal(labels.includes("击晕飞鸟"), false);
   assert.equal(labels.includes("释放次数"), false);
+  assert.equal(labels.includes("破坏探照灯"), false);
+  assert.equal(labels.includes("蓝图清格"), false);
+  assert.equal(labels.includes("躲避信号灯"), false);
 
   const t = createRecapTracker();
   noteRecapMake(t, { streak: 6, awarded: 20, clutch: true });
@@ -130,6 +136,9 @@ test("recap rows hide optional lines until real counts exist", () => {
   noteRecapTrafficAbsorbs(t, 3);
   syncBirdRecap(t, { kills: 4, absorbed: 1, iceBreaks: 2 });
   noteRecapPrisonFree(t);
+  noteRecapSearchlightBreaks(t, 2);
+  noteRecapBlueprintClears(t, 7);
+  noteRecapGantryDodges(t, 3);
   const filled = recapRows(snapshotRunRecap(t, context()));
   const filledLabels = filled.map((row) => row.label);
   assert.equal(filled.find((row) => row.label === "绝杀球数")?.value, "1");
@@ -142,6 +151,12 @@ test("recap rows hide optional lines until real counts exist", () => {
   assert.equal(filled.find((row) => row.label === "吸收飞鸟")?.value, "1");
   assert.equal(filled.find((row) => row.label === "击碎冰鸟")?.value, "2");
   assert.equal(filled.find((row) => row.label === "释放次数")?.value, "1");
+  assert.equal(filled.find((row) => row.label === "破坏探照灯")?.value, "2");
+  assert.equal(filled.find((row) => row.label === "蓝图清格")?.value, "7");
+  assert.equal(filled.find((row) => row.label === "躲避信号灯")?.value, "3");
+  assert.equal(snapshotRunRecap(t, context()).map.searchlightBreaks, 2);
+  assert.equal(snapshotRunRecap(t, context()).map.blueprintClears, 7);
+  assert.equal(snapshotRunRecap(t, context()).map.gantryDodges, 3);
   assert.ok(filledLabels.includes("绝杀球数"));
 });
 
@@ -165,6 +180,21 @@ test("bird watch keeps run totals across a fresh wave", () => {
   assert.equal(t.birdStuns, 3);
   assert.equal(t.birdAbsorbs, 1);
   assert.equal(t.birdIceBreaks, 1);
+});
+
+test("zero map counts stay off the snapshot and table", () => {
+  const t = createRecapTracker();
+  noteRecapSearchlightBreaks(t, 0);
+  noteRecapBlueprintClears(t, 0);
+  noteRecapGantryDodges(t, 0);
+  const recap = snapshotRunRecap(t, context());
+  assert.equal("searchlightBreaks" in recap.map, false);
+  assert.equal("blueprintClears" in recap.map, false);
+  assert.equal("gantryDodges" in recap.map, false);
+  const labels = recapRows(recap).map((row) => row.label);
+  assert.equal(labels.includes("破坏探照灯"), false);
+  assert.equal(labels.includes("蓝图清格"), false);
+  assert.equal(labels.includes("躲避信号灯"), false);
 });
 
 test("reset clears run totals for a new match", () => {

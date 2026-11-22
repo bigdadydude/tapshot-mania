@@ -179,6 +179,7 @@ export function collideTrainGantries(
   scrollDelta: number,
   dt: number,
   blockImpact?: (nx: number, ny: number) => boolean,
+  hitOut?: { id?: number },
 ) {
   if (!(dt > 0)) return false;
   const objectVx = -scrollDelta / dt;
@@ -186,13 +187,17 @@ export function collideTrainGantries(
     dy = ball.y - prevY;
   const gantries = getTrainGantries(world, route, Math.abs(dx) + ball.r);
   let hit: ReturnType<typeof sweepGantryCircle> = null;
+  let hitId: number | undefined;
   for (const gantry of gantries)
     for (const rect of gantry.rects) {
       const found = sweepGantryCircle(prevX, prevY, dx, dy, ball.r, {
         ...rect,
         x: rect.x + scrollDelta,
       });
-      if (found && (!hit || found.t < hit.t)) hit = found;
+      if (found && (!hit || found.t < hit.t)) {
+        hit = found;
+        hitId = gantry.id;
+      }
     }
   if (!hit) return false;
   if (blockImpact?.(hit.nx, hit.ny)) return false;
@@ -204,7 +209,63 @@ export function collideTrainGantries(
     ball.vx -= 1.65 * vn * hit.nx;
     ball.vy -= 1.65 * vn * hit.ny;
   }
+  if (hitOut) hitOut.id = hitId;
   return true;
+}
+
+export type GantryDodgeWatch = Map<
+  number,
+  { seenOnScreen: boolean; hit: boolean; lastX: number; width: number; awarded: boolean }
+>;
+
+export function createGantryDodgeWatch(): GantryDodgeWatch {
+  return new Map();
+}
+
+export function resetGantryDodgeWatch(watch: GantryDodgeWatch) {
+  watch.clear();
+}
+
+export function noteGantryDodgeHit(watch: GantryDodgeWatch, id: number) {
+  const cur = watch.get(id);
+  if (cur) cur.hit = true;
+  else watch.set(id, { seenOnScreen: false, hit: true, lastX: 0, width: 0, awarded: false });
+}
+
+/**
+ * Track whole gantries (beam/mast/signal together). A dodge is awarded when a
+ * gantry that was on-screen later fully leaves to the left without a real hit.
+ * tunnelBlocked wipes must not count as left exits.
+ */
+export function stepGantryDodgeWatch(
+  watch: GantryDodgeWatch,
+  worldW: number,
+  gantries: ReadonlyArray<{ id: number; x: number; width: number }>,
+  opts?: { tunnelBlocked?: boolean },
+): number {
+  if (opts?.tunnelBlocked) return 0;
+  for (const g of gantries) {
+    const entry = watch.get(g.id) ?? {
+      seenOnScreen: false,
+      hit: false,
+      lastX: g.x,
+      width: g.width,
+      awarded: false,
+    };
+    if (g.x < worldW && g.x + g.width > 0) entry.seenOnScreen = true;
+    entry.lastX = g.x;
+    entry.width = g.width;
+    watch.set(g.id, entry);
+  }
+  let awarded = 0;
+  for (const entry of watch.values()) {
+    if (entry.awarded || !entry.seenOnScreen || entry.hit) continue;
+    if (entry.lastX + entry.width <= 0) {
+      entry.awarded = true;
+      awarded += 1;
+    }
+  }
+  return awarded;
 }
 
 /** Warning shares the actual obstacle geometry and simulation clock. */

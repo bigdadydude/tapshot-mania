@@ -376,6 +376,20 @@ export function getBlueprintScoreDoubleCharges() {
 export function drainBlueprintRewardEvents(): BlueprintRewardEvent[] {
   return rewardEvents.splice(0);
 }
+
+/** Run-total cells actually removed from the field; not cleared by blueprint resets. */
+let pendingRecapClears = 0;
+
+function noteBlueprintRecapClears(count: number) {
+  if (count > 0) pendingRecapClears += count;
+}
+
+/** Drain pending recap clear-cell counts into the run tracker. */
+export function drainBlueprintRecapClears(): number {
+  const n = pendingRecapClears;
+  pendingRecapClears = 0;
+  return n;
+}
 /** 是否已按当前进球数落定（含进球前的空场）。 */
 let hasBatch = false;
 let aim: BlueprintAim | null = null;
@@ -1757,6 +1771,7 @@ function beginLineClear(
   dropClearableLayers(new Set(started.map(cellKey)));
   clearing = clearing.concat(started);
   if (payPending) pendingBonus += started.length;
+  noteBlueprintRecapClears(started.length);
   let extra = 0;
   for (const center of areaCenters) extra += applyAreaClear(center);
   for (const center of turnRedCenters) extra += applyTurnRed(center);
@@ -1773,6 +1788,9 @@ export function consumeBlueprintLitForHole() {
   const litCount = field.filter((cell) => lit.has(cellKey(cell))).length;
   // 黑洞清除的未亮 green 同样领奖；正在清除的动画早已领奖，不再计算。
   // 抽到周围消除只记事件，不再对已被清空的场地扫一遍。
+  // Recap counts every live cell currently on the field, including unlit ones.
+  // Cells already in the retract animation were counted in beginLineClear.
+  noteBlueprintRecapClears(field.length);
   rewardClearedGreens(field, false);
   dropAllLayers(new Set(field.map(cellKey)));
   clearing = [];

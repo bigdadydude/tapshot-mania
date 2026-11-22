@@ -8,7 +8,7 @@ import { buzzerRejectsTap, champClutchAppliesHalfClock, isChampClutchWindow } fr
 import { miniMeStreakPerStack, streakAfterMake } from "./make-streak";
 import { touchesAntimatter } from "./antimatter-pickup";
 import { getTrainTunnel, restoreTrainTunnel, stepTrainTunnel, tunnelPassing, tunnelReserved, tunnelHoopMin, tunnelGeometry, collideTunnel } from "./train-tunnel.ts";
-import { collideTrainGantries, getTrainGantries, getTrainGantryWarnings } from "./train-gantry.ts";
+import { collideTrainGantries, createGantryDodgeWatch, getTrainGantries, getTrainGantryWarnings, noteGantryDodgeHit, resetGantryDodgeWatch, stepGantryDodgeWatch } from "./train-gantry.ts";
 import { createBirds, stepBirds, collideBirds, collideFrozenBirds, releaseBirdCarrier, hackerDropBirds, type BirdSkills, collideBirdGantries, birdOwnsBall, spawnBirdWave, type BirdKind, type BirdState } from "./birds.ts";
 import { createRocket, rocketLayout, releaseRocket, stepRocket, refillRocket, drawRocket } from "./rocket";
 import { SUPER, createSuper, superSwipe, superImpact, superBirdImpact, superToggle, superPulseShield, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper, drawSuperGhosts, drawSuperGas, drawSuperAura, superIsFrozen } from "./super";
@@ -48,7 +48,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, rainClearTraffic, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
-import { consumeBlueprintComboProtection, collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, blueprintRewardToast, BLUEPRINT_CLOCK_SECONDS, type BlueprintClock } from "./blueprint";
+import { consumeBlueprintComboProtection, collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRecapClears, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, blueprintRewardToast, BLUEPRINT_CLOCK_SECONDS, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage, isClothNet } from "./types";
@@ -89,6 +89,9 @@ import {
   noteRecapHold,
   noteRecapPeakCombo,
   noteRecapPrisonFree,
+  noteRecapSearchlightBreaks,
+  noteRecapBlueprintClears,
+  noteRecapGantryDodges,
   noteRecapSkillInput,
   noteRecapSkillTime,
   noteRecapMiss,
@@ -356,6 +359,7 @@ export function createGame(
   let balanceUnattributedScore = 0;
   let balancePlainGainAcc = 0;
   const recap = createRecapTracker();
+  const gantryWatch = createGantryDodgeWatch();
   audio.setMix(mix);
 
   let ball = makeBall(world, 1, ballRadius(world.ballR, ballId));
@@ -1838,6 +1842,7 @@ export function createGame(
       onObjectAbsorbed: rewardAbsorbedObjects,
       getHackerKnockdown: () => hackerStrikeSweep,
       onHackerKnockdown: () => noteRainDropCombo(1),
+      onSearchlightOut: () => noteRecapSearchlightBreaks(recap),
     };
   }
 
@@ -1851,7 +1856,7 @@ export function createGame(
     ball.sootLeft = 0; hoop.sootLeft = 0; if (other) other.sootLeft = 0;
     clearSceneLayers();
     reloadSceneArt();
-    if (id === "train") resetTrainScroll();
+    if (id === "train") { resetTrainScroll(); resetGantryDodgeWatch(gantryWatch); }
     if (id === "blueprint") resetBlueprint();
     persist();
   }
@@ -2196,6 +2201,7 @@ export function createGame(
     });
     if (blueprintOn()) {
       const bonus = consumeBlueprintLitForHole();
+      noteRecapBlueprintClears(recap, drainBlueprintRecapClears());
       showBlueprintRewards();
       if (bonus > 0) {
         // 开洞当下加进得分。不进待领，不等下一次进球，不乘冠军时刻。
@@ -3011,6 +3017,7 @@ export function createGame(
     balanceUnattributedScore = 0;
     balancePlainGainAcc = 0;
     resetRecapTracker(recap);
+    resetGantryDodgeWatch(gantryWatch);
   }
 
   function balanceTelemetryLive() {
@@ -3185,6 +3192,7 @@ export function createGame(
     madeCount = 0;
     blueprintMadeCount = 0;
     resetTrainScroll();
+    resetGantryDodgeWatch(gantryWatch);
     resetBlueprintProgress();
     ball.sootLeft = 0;
     if (isRogueMode()) {
@@ -3575,6 +3583,7 @@ export function createGame(
     madeCount = 0;
     blueprintMadeCount = 0;
     resetTrainScroll();
+    resetGantryDodgeWatch(gantryWatch);
     resetBlueprintProgress(true); // Same rogue run keeps permanent green-block rewards.
     ball.sootLeft = 0;
     score = 0;
@@ -4744,6 +4753,7 @@ export function createGame(
     madeCount = 0;
     blueprintMadeCount = 0;
     resetTrainScroll();
+    resetGantryDodgeWatch(gantryWatch);
     resetBlueprint();
     ball.sootLeft = 0;
     hackerDir = null;
@@ -5492,6 +5502,7 @@ export function createGame(
         hoopX: hoop.x,
         hoopY: hoop.y,
       }, world, { generationHold: holeOn });
+      noteRecapBlueprintClears(recap, drainBlueprintRecapClears());
       showBlueprintRewards();
     }
     if (trafficEnabled() && madeCount > 0) {
@@ -5899,7 +5910,11 @@ export function createGame(
         }
         const incomingVx = ball.vx, incomingVy = ball.vy;
         const route = getTrainScroll();
-        if (collideTunnel(world, ball, prevBallX, prevBallY, dt) || collideTrainGantries(world, route, ball, prevBallX, prevBallY, route.near - trainBefore, dt, isSuper() ? (nx, ny) => superCancelsSolid(nx, ny) : undefined)) {
+        const gantryHit = { id: undefined as number | undefined };
+        const hitTunnel = collideTunnel(world, ball, prevBallX, prevBallY, dt);
+        const hitGantry = !hitTunnel && collideTrainGantries(world, route, ball, prevBallX, prevBallY, route.near - trainBefore, dt, isSuper() ? (nx, ny) => superCancelsSolid(nx, ny) : undefined, gantryHit);
+        if (hitGantry && gantryHit.id !== undefined) noteGantryDodgeHit(gantryWatch, gantryHit.id);
+        if (hitTunnel || hitGantry) {
           vectorCollision(incomingVx, incomingVy);
           shotAirborne = true;
           // Do not let the displacement caused by a collision count as a basket.
@@ -5909,6 +5924,12 @@ export function createGame(
             if (gfx.impact) camShake = Math.max(camShake, 0.1);
           }
         }
+      }
+      if (trainBackdropOn() && phase === "playing") {
+        const route = getTrainScroll();
+        const pad = world.w * 2;
+        const visible = getTrainGantries(world, route, pad);
+        noteRecapGantryDodges(recap, stepGantryDodgeWatch(gantryWatch, world.w, visible, { tunnelBlocked: Boolean(route.tunnelBlocked) }));
       }
       if (!hackerScripted && blueprintOn() && quantumTunnelLeft <= 0) {
         const incomingVx = ball.vx;

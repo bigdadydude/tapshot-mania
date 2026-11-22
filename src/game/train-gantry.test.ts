@@ -6,6 +6,10 @@ import {
   resetTrainGantries,
   sweepGantryCircle,
   collideTrainGantries,
+  createGantryDodgeWatch,
+  noteGantryDodgeHit,
+  resetGantryDodgeWatch,
+  stepGantryDodgeWatch,
   type GantryRect,
 } from "./train-gantry.ts";
 const world = { w: 390, h: 844, floorY: 844 * 0.765 };
@@ -138,3 +142,73 @@ test("edge warning precedes entry, blinks on simulation time, and clears on entr
   );
   assert.deepEqual(getTrainGantryWarnings(world, { ...ahead, near: 0 }), []);
 });
+
+test("gantry dodge: on-screen then fully left without a hit counts once", () => {
+  const watch = createGantryDodgeWatch();
+  const g = { id: 7, x: 100, width: 48 };
+  assert.equal(stepGantryDodgeWatch(watch, 390, [g]), 0);
+  assert.equal(stepGantryDodgeWatch(watch, 390, [{ ...g, x: -10 }]), 0);
+  assert.equal(stepGantryDodgeWatch(watch, 390, [{ ...g, x: -48 }]), 1);
+  assert.equal(stepGantryDodgeWatch(watch, 390, [{ ...g, x: -80 }]), 0);
+});
+
+test("gantry dodge: a real hit then leaving left is not a dodge", () => {
+  const watch = createGantryDodgeWatch();
+  const g = { id: 3, x: 80, width: 48 };
+  stepGantryDodgeWatch(watch, 390, [g]);
+  noteGantryDodgeHit(watch, 3);
+  assert.equal(stepGantryDodgeWatch(watch, 390, [{ ...g, x: -48 }]), 0);
+});
+
+test("gantry dodge: still on screen is not awarded", () => {
+  const watch = createGantryDodgeWatch();
+  const g = { id: 1, x: 200, width: 48 };
+  assert.equal(stepGantryDodgeWatch(watch, 390, [g]), 0);
+  assert.equal(stepGantryDodgeWatch(watch, 390, [{ ...g, x: 20 }]), 0);
+});
+
+test("gantry dodge: warning-zone only, never on screen, is not awarded", () => {
+  const watch = createGantryDodgeWatch();
+  const g = { id: 9, x: 400, width: 48 };
+  assert.equal(stepGantryDodgeWatch(watch, 390, [g]), 0);
+  assert.equal(stepGantryDodgeWatch(watch, 390, []), 0);
+  assert.equal(stepGantryDodgeWatch(watch, 390, [{ ...g, x: -48 }]), 0);
+});
+
+test("gantry dodge: tunnelBlocked wipe is not a dodge", () => {
+  const watch = createGantryDodgeWatch();
+  const g = { id: 4, x: 120, width: 48 };
+  assert.equal(stepGantryDodgeWatch(watch, 390, [g]), 0);
+  assert.equal(stepGantryDodgeWatch(watch, 390, [], { tunnelBlocked: true }), 0);
+  assert.equal(stepGantryDodgeWatch(watch, 390, [g]), 0);
+});
+
+test("collideTrainGantries reports the struck gantry id, but a block is not a hit", () => {
+  resetTrainGantries();
+  const r = { ...route, near: 1550 };
+  const g = getTrainGantries(world, r)[0]!;
+  const mast = g.rects.find((rect) => rect.kind === "mast")!;
+  const ball = { x: mast.x - 20, y: g.y + 100, vx: 0, vy: 0, r: 12 };
+  const prevX = ball.x;
+  const r2 = { ...r, near: 1600 };
+  const hitOut: { id?: number } = {};
+  assert.equal(collideTrainGantries(world, r2, { ...ball }, prevX, ball.y, 50, 0.1, undefined, hitOut), true);
+  assert.equal(hitOut.id, g.id);
+  const blocked: { id?: number } = {};
+  const blockedBall = { x: mast.x - 20, y: g.y + 100, vx: 0, vy: 0, r: 12 };
+  assert.equal(
+    collideTrainGantries(world, r2, blockedBall, prevX, blockedBall.y, 50, 0.1, () => true, blocked),
+    false,
+  );
+  assert.equal(blocked.id, undefined);
+});
+
+test("resetGantryDodgeWatch clears seen gantries so a later pass can count again", () => {
+  const watch = createGantryDodgeWatch();
+  stepGantryDodgeWatch(watch, 390, [{ id: 2, x: 40, width: 48 }]);
+  stepGantryDodgeWatch(watch, 390, [{ id: 2, x: -48, width: 48 }]);
+  resetGantryDodgeWatch(watch);
+  assert.equal(stepGantryDodgeWatch(watch, 390, [{ id: 2, x: 40, width: 48 }]), 0);
+  assert.equal(stepGantryDodgeWatch(watch, 390, [{ id: 2, x: -48, width: 48 }]), 1);
+});
+

@@ -40,6 +40,9 @@ export type RecapTracker = {
   birdAbsorbs: number;
   birdIceBreaks: number;
   prisonFrees: number;
+  searchlightBreaks: number;
+  blueprintClears: number;
+  gantryDodges: number;
   birdKillsSeen: number;
   birdAbsorbedSeen: number;
   birdIceSeen: number;
@@ -65,6 +68,9 @@ export function createRecapTracker(): RecapTracker {
     birdAbsorbs: 0,
     birdIceBreaks: 0,
     prisonFrees: 0,
+    searchlightBreaks: 0,
+    blueprintClears: 0,
+    gantryDodges: 0,
     birdKillsSeen: 0,
     birdAbsorbedSeen: 0,
     birdIceSeen: 0,
@@ -165,6 +171,18 @@ export function noteRecapPrisonFree(t: RecapTracker) {
   t.prisonFrees += 1;
 }
 
+export function noteRecapSearchlightBreaks(t: RecapTracker, count = 1) {
+  if (count > 0) t.searchlightBreaks += count;
+}
+
+export function noteRecapBlueprintClears(t: RecapTracker, count: number) {
+  if (count > 0) t.blueprintClears += count;
+}
+
+export function noteRecapGantryDodges(t: RecapTracker, count: number) {
+  if (count > 0) t.gantryDodges += count;
+}
+
 export function sceneLabel(id: SceneId): string {
   return SCENE_LABELS.find((s) => s.id === id)?.name ?? id;
 }
@@ -205,6 +223,9 @@ export function snapshotRunRecap(
   if (t.birdAbsorbs > 0) map.birdAbsorbs = t.birdAbsorbs;
   if (t.birdIceBreaks > 0) map.birdIceBreaks = t.birdIceBreaks;
   if (t.prisonFrees > 0) map.prisonFrees = t.prisonFrees;
+  if (t.searchlightBreaks > 0) map.searchlightBreaks = t.searchlightBreaks;
+  if (t.blueprintClears > 0) map.blueprintClears = t.blueprintClears;
+  if (t.gantryDodges > 0) map.gantryDodges = t.gantryDodges;
   return {
     playMode: opts.playMode,
     ballId: opts.ballId,
@@ -271,5 +292,8 @@ export function recapRows(
   if (map.birdAbsorbs) rows.push({ label: "吸收飞鸟", value: `${map.birdAbsorbs}` });
   if (map.birdIceBreaks) rows.push({ label: "击碎冰鸟", value: `${map.birdIceBreaks}` });
   if (map.prisonFrees) rows.push({ label: "释放次数", value: `${map.prisonFrees}` });
+  if (map.searchlightBreaks) rows.push({ label: "破坏探照灯", value: `${map.searchlightBreaks}` });
+  if (map.blueprintClears) rows.push({ label: "蓝图清格", value: `${map.blueprintClears}` });
+  if (map.gantryDodges) rows.push({ label: "躲避信号灯", value: `${map.gantryDodges}` });
   return rows;
 }

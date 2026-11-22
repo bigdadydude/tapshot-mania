@@ -69,6 +69,8 @@ export type ModifierHost = {
   /** Active antimatter black hole: projectiles become non-solid and fly into it. */
   getBlackHole?: () => { x: number; y: number; r: number } | null;
   onObjectAbsorbed?: (count: number) => void;
+  /** Fresh yard-searchlight extinguish; not called when stacking time on a lamp already out. */
+  onSearchlightOut?: () => void;
 };
 
 export type YardLightsHud = {
