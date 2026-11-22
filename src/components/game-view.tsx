@@ -1622,7 +1622,7 @@ function OverCard({
           ) : null}
         </div>
         {recap ? (
-          <div className="border-t border-border text-left">
+          <div className="flex min-h-0 flex-1 flex-col border-t border-border text-left">
             <RecapTable recap={recap} />
           </div>
         ) : null}
