@@ -180,7 +180,8 @@ test("gantry dodge: tunnelBlocked wipe is not a dodge", () => {
   const g = { id: 4, x: 120, width: 48 };
   assert.equal(stepGantryDodgeWatch(watch, 390, [g]), 0);
   assert.equal(stepGantryDodgeWatch(watch, 390, [], { tunnelBlocked: true }), 0);
-  assert.equal(stepGantryDodgeWatch(watch, 390, [g]), 0);
+  // After the wipe, a leftover pre-tunnel gantry exiting left must not count.
+  assert.equal(stepGantryDodgeWatch(watch, 390, [{ ...g, x: -48 }]), 0);
 });
 
 test("collideTrainGantries reports the struck gantry id, but a block is not a hit", () => {

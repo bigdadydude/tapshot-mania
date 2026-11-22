@@ -243,7 +243,11 @@ export function stepGantryDodgeWatch(
   gantries: ReadonlyArray<{ id: number; x: number; width: number }>,
   opts?: { tunnelBlocked?: boolean },
 ): number {
-  if (opts?.tunnelBlocked) return 0;
+  if (opts?.tunnelBlocked) {
+    // Obstacles vanish with the tunnel; do not award later left-exits of pre-tunnel gantries.
+    watch.clear();
+    return 0;
+  }
   for (const g of gantries) {
     const entry = watch.get(g.id) ?? {
       seenOnScreen: false,

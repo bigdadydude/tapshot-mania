@@ -1455,6 +1455,8 @@ export function createGame(
     const timer01 = raw01;
     const displayScore =
       isRogueMode() && rogueRun && phase === "over" ? rogueTotalScore() : score;
+    // Catch clears from collide/settle later in the same frame as the snapshot.
+    noteRecapBlueprintClears(recap, drainBlueprintRecapClears());
     onHud({
       phase,
       score: displayScore,
