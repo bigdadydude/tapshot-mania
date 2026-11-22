@@ -1776,7 +1776,7 @@ test("前三次进球完成仍无方块，种类解锁表不变并归一化", ()
     assert.equal(blueprintSampleCount(goals, 0), 0);
     assert.equal(rollBlueprintBatch(world, { seed: 52, serial: 0, goals }).cells.length, 0);
   }
-  for (let goals = 4; goals <= 7; goals++) {
+  for (let goals = 4; goals <= 6; goals++) {
     for (let serial = 0; serial < 80; serial++) {
       assert.equal(blueprintSampleCount(goals, serial / 79), 1);
       const batch = rollBlueprintBatch(world, { seed: 52, serial, goals });
@@ -2201,16 +2201,16 @@ test("黑块可出现在动态组；未解锁种类不会生成", () => {
   }
 });
 
-test("数量曲线：actual0–3为0，第4球起每4球softMax+1，第40球封顶10", () => {
+test("数量曲线：actual0–3为0，第4球起每3球softMax+1，第31球封顶10", () => {
   assert.equal(blueprintCountSoftMax(0), 0);
   for (const goals of [0, 1, 2, 3]) {
     assert.equal(blueprintCountSoftMax(goals), 0);
     for (let i = 0; i <= 20; i++) assert.equal(blueprintSampleCount(goals, i / 20), 0);
   }
   const table: [number, number][] = [
-    [4, 1], [7, 1], [8, 2], [11, 2], [12, 3], [15, 3], [16, 4], [19, 4],
-    [20, 5], [23, 5], [24, 6], [27, 6], [28, 7], [31, 7], [32, 8], [35, 8],
-    [36, 9], [39, 9], [40, 10], [43, 10], [100, 10],
+    [4, 1], [6, 1], [7, 2], [9, 2], [10, 3], [12, 3], [13, 4], [15, 4],
+    [16, 5], [18, 5], [19, 6], [21, 6], [22, 7], [24, 7], [25, 8], [27, 8],
+    [28, 9], [30, 9], [31, 10], [34, 10], [100, 10],
   ];
   for (const [goals, soft] of table) {
     assert.equal(blueprintCountSoftMax(goals), soft, `softMax(${goals})`);
@@ -2225,7 +2225,7 @@ test("数量曲线：actual0–3为0，第4球起每4球softMax+1，第40球封�
   }
   // 不再使用旧的前 5 球固定 1、每 2 球一跳，或第 16 球从 7 跳到 10。
   assert.equal(blueprintCountSoftMax(1), 0);
-  assert.equal(blueprintCountSoftMax(16), 4);
+  assert.equal(blueprintCountSoftMax(16), 5);
   assert.notEqual(blueprintCountSoftMax(16), 10);
   const sums = { early: 0, late: 0 };
   for (let i = 0; i < 100; i++) {
@@ -2637,7 +2637,7 @@ test("触发红自身叠黑：只清红层，黑层保留且不向外穿透", ()
 
 test("数量均匀抽样：安全边界映射到 1/softMax，所有合法整数都有等宽区间", () => {
   for (let soft = 1; soft <= 10; soft++) {
-    const actual = 4 + 4 * (soft - 1);
+    const actual = 4 + 3 * (soft - 1);
     assert.equal(blueprintCountSoftMax(actual), soft);
     for (const roll of [-1, 0, NaN, Infinity, -Infinity]) {
       assert.equal(blueprintSampleCount(actual, roll), 1, `safe low: soft=${soft}, roll=${roll}`);
@@ -2711,7 +2711,7 @@ test("实际换批：静态与形状只填均匀抽到的目标，不强行补�
     const total = after.staticCells.length + (after.dynamic?.cells.length ?? 0);
     assert.ok(total <= blueprintCountSoftMax(actual), `actual=${actual}, total=${total}`);
     if (actual <= 3) assert.equal(total, 0);
-    if (actual >= 4 && actual <= 7) assert.equal(total, 1);
+    if (actual >= 4 && actual <= 6) assert.equal(total, 1);
   }
 });
 
@@ -2826,7 +2826,7 @@ test("实际空动态槽换批：原概率成功会新生，概率失败不生�
 });
 
 test("实际空动态槽：softMax 0 没块、softMax 1 只一静态，want=1 也不额外生动态", () => {
-  for (const actual of [0, 1, 2, 3, 4, 5, 6, 7]) {
+  for (const actual of [0, 1, 2, 3, 4, 5, 6]) {
     for (let seed = 1; seed <= 60; seed++) {
       const { after, target } = stepFromNoDynamic(seed, actual);
       assert.equal(after.dynamic, null);
