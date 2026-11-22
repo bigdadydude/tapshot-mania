@@ -4,7 +4,7 @@ import { createGame, rankFor, GAME_REV, type GameHandle } from "@/game/engine";
 import { primeArt } from "@/game/art";
 import { DEFAULT_DEV, wantDevQuery } from "@/game/dev";
 import { BALLS, DEFAULT_BALL, ballFuseLabel, playableBalls, type BallId } from "@/game/balls";
-import { DEFAULT_GFX, type CloudMode, type Gfx, type HudState, type PlayMode } from "@/game/types";
+import { DEFAULT_GFX, type CloudMode, type Gfx, type HudState, type PlayMode, type RunRecap } from "@/game/types";
 import { SCENE_LABELS, type SceneId } from "@/game/scenes";
 import { DevConsole } from "@/components/dev-console";
 import { SearchlightEditor } from "@/components/searchlight-editor";
@@ -19,6 +19,7 @@ import {
 import { ROGUE_CATALOG, RARITY_LABEL, type RogueCatalogEntry } from "@/game/rogue-catalog";
 import { modifierName } from "@/game/modifiers";
 import { autoStrengthForBall, loadBalanceStore, mergeLiveSession, type AutoBallReadout } from "@/game/balance-test";
+import { recapRows } from "@/game/run-recap";
 import { cn } from "@/lib/utils";
 
 primeArt();
@@ -28,6 +29,7 @@ const idleHud: HudState = {
   best: 0,
   combo: 0,
   trafficNearMiss: 0,
+  recap: null,
   rank: rankFor(0),
   muted: false,
   hint: true,
@@ -268,6 +270,7 @@ export function GameView() {
               best={hud.best}
               rank={hud.rank}
               rogue={hud.rogue}
+              recap={hud.recap}
               ballId={hud.ballId}
               playMode={hud.playMode}
               onRetry={() => gameRef.current?.retry()}
@@ -1427,11 +1430,40 @@ function ShopRow({
   );
 }
 
+function RecapTable({ recap, hideRogueDuplicates = false }: { recap: RunRecap; hideRogueDuplicates?: boolean }) {
+  const rows = recapRows(recap, { hideRogueDuplicates });
+  return (
+    <div
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y [-webkit-overflow-scrolling:touch]"
+      style={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="px-4 py-2">
+        <p className="mb-1 text-[10px] font-medium tracking-widest text-subtle">本局数据</p>
+        <div className="space-y-0">
+          {rows.map((row) => (
+            <div
+              key={row.label}
+              className="flex items-center justify-between border-b border-border/60 py-2.5 last:border-b-0"
+            >
+              <span className="text-sm text-muted">{row.label}</span>
+              <span className="font-sans text-base font-semibold tabular-nums text-fg">
+                {row.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OverCard({
   score,
   best,
   rank,
   rogue,
+  recap,
   ballId,
   playMode,
   onRetry,
@@ -1446,6 +1478,7 @@ function OverCard({
   best: number;
   rank: string;
   rogue: HudState["rogue"];
+  recap: RunRecap | null;
   ballId: BallId;
   playMode: PlayMode;
   onRetry: () => void;
@@ -1513,10 +1546,10 @@ function OverCard({
         onClick={blankBack}
       >
         <div
-          className="mb-4 w-full max-w-xs overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-lg"
+          className="mb-4 flex max-h-[min(36rem,calc(100dvh-8rem))] w-full max-w-xs flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-lg"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="border-b border-border px-5 py-4 text-center">
+          <div className="shrink-0 border-b border-border px-5 py-4 text-center">
             <p className="text-xs font-medium tracking-widest text-muted">本局结算</p>
             <p className="mt-2 font-sans text-4xl font-black tabular-nums text-fg">
               {score}
@@ -1526,7 +1559,7 @@ function OverCard({
               {isBest ? " · 新纪录深度" : best > 0 ? ` · 最远第 ${best} 关` : ""}
             </p>
           </div>
-          <div className="border-b border-border px-4 py-3">
+          <div className="shrink-0 border-b border-border px-4 py-3">
             <p className="mb-2 text-[10px] font-medium tracking-widest text-subtle">
               装备一览
             </p>
@@ -1541,7 +1574,7 @@ function OverCard({
               ))}
             </ul>
           </div>
-          <div className="space-y-0 px-4 py-2">
+          <div className="shrink-0 space-y-0 border-b border-border px-4 py-2">
             {stats.map((row) => (
               <div
                 key={row.label}
@@ -1554,6 +1587,7 @@ function OverCard({
               </div>
             ))}
           </div>
+          {recap ? <RecapTable recap={recap} hideRogueDuplicates /> : null}
         </div>
         <p className="pointer-events-none mb-2 text-center text-sm text-fg">
           {devMode ? "点击空白处返回沙盒" : "点击空白处返回主界面"}
@@ -1569,20 +1603,27 @@ function OverCard({
       onClick={leave}
     >
       <div
-        className="mb-5 w-full max-w-xs rounded-xl border border-border bg-bg-elevated px-6 py-6 text-center shadow-lg"
+        className="mb-5 flex max-h-[min(36rem,calc(100dvh-10rem))] w-full max-w-xs flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated text-center shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <p className="text-xs font-medium tracking-widest text-muted">时间到</p>
-        <p className="mt-3 font-sans text-6xl font-black leading-none tabular-nums text-fg">
-          {score}
-        </p>
-        <p className="mt-2 text-sm text-muted">{rank}</p>
-        <p className="mt-3 text-xs text-subtle">{isBest ? "新纪录" : `最高 ${best}`}</p>
-        {balanceReadout ? (
-          <div className="mt-4 min-w-0 border-t border-border pt-3 text-left">
-            <p className="text-xs text-muted">{balanceReadout.ballName} · 结果总览</p>
-            <p className="mt-1 break-words text-sm font-semibold leading-snug text-fg">{balanceReadout.label}</p>
-            <p className="mt-1 break-words text-xs leading-relaxed text-muted">{balanceReadout.componentsLabel}</p>
+        <div className="shrink-0 px-6 pt-6 pb-3">
+          <p className="text-xs font-medium tracking-widest text-muted">时间到</p>
+          <p className="mt-3 font-sans text-6xl font-black leading-none tabular-nums text-fg">
+            {score}
+          </p>
+          <p className="mt-2 text-sm text-muted">{rank}</p>
+          <p className="mt-3 text-xs text-subtle">{isBest ? "新纪录" : `最高 ${best}`}</p>
+          {balanceReadout ? (
+            <div className="mt-4 min-w-0 border-t border-border pt-3 text-left">
+              <p className="text-xs text-muted">{balanceReadout.ballName} · 结果总览</p>
+              <p className="mt-1 break-words text-sm font-semibold leading-snug text-fg">{balanceReadout.label}</p>
+              <p className="mt-1 break-words text-xs leading-relaxed text-muted">{balanceReadout.componentsLabel}</p>
+            </div>
+          ) : null}
+        </div>
+        {recap ? (
+          <div className="border-t border-border text-left">
+            <RecapTable recap={recap} />
           </div>
         ) : null}
       </div>
@@ -1593,14 +1634,14 @@ function OverCard({
           onRetry();
         }}
         className={cn(
-          "pointer-events-auto h-12 w-full max-w-xs rounded-lg bg-accent text-accent-fg",
+          "pointer-events-auto h-12 w-full max-w-xs shrink-0 rounded-lg bg-accent text-accent-fg",
           "text-base font-medium tracking-wide",
           "transition-transform duration-150 active:scale-[0.98]",
         )}
       >
         再来一局
       </button>
-      <p className="pointer-events-none mt-3 mb-2 text-center text-sm text-fg">
+      <p className="pointer-events-none mt-3 mb-2 shrink-0 text-center text-sm text-fg">
         {blankHint ?? "点击空白处返回主界面"}
       </p>
     </div>

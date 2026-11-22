@@ -36,7 +36,7 @@ import { rimArmPoints } from "./rim-arm";
 import { freezeNet, clearOfFrozenNet, touchesFrozenNet, shatterFrozenNet } from "./frost-net";
 import { boardGeom, braceColliders, clearSceneLayers, drawBoot, drawScene, paintBallSprite, hoopNetMotion } from "./render";
 import { loadSave, writeSave } from "./save";
-import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
+import { ballFuseLabel, ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { type HackerDir } from "./hacker-pad";
 import { HACKER_CHARGE, HACKER_RIPPLE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeIsFull, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawHackerLensWarps, drawLandingArrow, drawRainPhone, pointerOnChargeMeter, pointerOnRainPhone, releaseChargeHold, settledHackerCharge, stepAimArrow, stepChargeDecay, stepChargeGlow, stepChargeHold, stepHackerRipples, createHackerProgress, hackerComboBonus, awardHackerArrow, bankHackerCombo, hackerClockScale, type HackerProgress, type HackerCharge, type HackerFlight, type HackerRipple } from "./hacker-charge";
@@ -80,6 +80,27 @@ import {
   devRevokeRogue,
   type RogueRun,
 } from "./rogue";
+import {
+  createRecapTracker,
+  noteRecapAward,
+  noteRecapClick,
+  noteRecapClock,
+  noteRecapCountedMake,
+  noteRecapHold,
+  noteRecapPeakCombo,
+  noteRecapPrisonFree,
+  noteRecapSkillInput,
+  noteRecapSkillTime,
+  noteRecapMiss,
+  noteRecapTrafficAbsorbs,
+  noteRecapTrafficBurns,
+  noteRecapTrafficNearMiss,
+  resetRecapTracker,
+  shouldRecordBalanceTrial,
+  snapshotRunRecap,
+  syncBirdRecap,
+  watchBirds,
+} from "./run-recap";
 
 export const GAME_REV = 332;
 
@@ -334,6 +355,7 @@ export function createGame(
   let balanceRescues = 0;
   let balanceUnattributedScore = 0;
   let balancePlainGainAcc = 0;
+  const recap = createRecapTracker();
   audio.setMix(mix);
 
   let ball = makeBall(world, 1, ballRadius(world.ballR, ballId));
@@ -633,6 +655,7 @@ export function createGame(
   function markShotMissed() {
     if (shotOpen && !shotMade) {
       shotMissed = true;
+      noteRecapMiss(recap, true, false);
       // Count one completed miss per shot, only after the balance minute is live.
       if (balanceSession && isMinuteMode() && timerArmed) balanceMisses += 1;
     }
@@ -746,6 +769,7 @@ export function createGame(
     chain = null;
     resetPrisonCombo();
     refillPrisonTimer();
+    noteRecapPrisonFree(recap);
     callouts.push({
       text: "释放",
       x: hoop.x,
@@ -1404,6 +1428,8 @@ export function createGame(
   }
 
   function applyDevStatLocks() {
+    noteRecapPeakCombo(recap, streak);
+    syncBirdRecap(recap, birds);
     if (balanceSession) balancePeakCombo = Math.max(balancePeakCombo, streak);
     if (!devOn) return;
     if (devScoreLock !== null) {
@@ -1479,6 +1505,14 @@ export function createGame(
       ballId,
       playMode,
       sceneId: getSceneId(),
+      recap: snapshotRunRecap(recap, {
+        playMode,
+        ballId,
+        ballLabel: ballFuseLabel(ballId, fuseIds()),
+        sceneId: getSceneId(),
+        gameRev: GAME_REV,
+        score: displayScore,
+      }),
       prison: prisonHud(),
       rogue: toRogueHud(isRogueMode() ? rogueRun : null),
     });
@@ -1811,6 +1845,7 @@ export function createGame(
     if (getSceneId() === id) return;
     setScene(id);
     birds = createBirds();
+    watchBirds(recap);
     traffic = createTraffic();
     ball.trafficSafe = false;
     ball.sootLeft = 0; hoop.sootLeft = 0; if (other) other.sootLeft = 0;
@@ -2975,6 +3010,7 @@ export function createGame(
     balanceRescues = 0;
     balanceUnattributedScore = 0;
     balancePlainGainAcc = 0;
+    resetRecapTracker(recap);
   }
 
   function balanceTelemetryLive() {
@@ -2982,14 +3018,17 @@ export function createGame(
   }
 
   function noteBalanceClick() {
+    noteRecapClick(recap, phase === "playing");
     if (balanceTelemetryLive()) balanceClicks += 1;
   }
 
   function noteBalanceHold() {
+    noteRecapHold(recap, phase === "playing");
     if (balanceTelemetryLive()) balanceHolds += 1;
   }
 
   function noteBalanceSkillInput() {
+    noteRecapSkillInput(recap, phase === "playing");
     if (balanceTelemetryLive()) balanceSkillInputs += 1;
   }
 
@@ -3108,6 +3147,7 @@ export function createGame(
     syncBlueprintClockReward();
     birdBaseBonus = 0;
     birds = createBirds();
+    watchBirds(recap);
     traffic = createTraffic();
     ball.trafficSafe = false;
     resetBalanceTrialCounters();
@@ -3252,7 +3292,13 @@ export function createGame(
 
   function recordBalanceTrial(endReason: "time" | "retry" = "time") {
     // A test run is valid only after its first make has armed the minute clock.
-    if (!balanceSession || !devOn || !isMinuteMode() || !timerArmed || balanceTrialRecorded) return;
+    if (!balanceSession || !shouldRecordBalanceTrial({
+      hasSession: true,
+      devOn,
+      minuteMode: isMinuteMode(),
+      timerArmed,
+      alreadyRecorded: balanceTrialRecorded,
+    })) return;
     const isBaseline = ballId === balanceSession.baseline;
     const skillState: SkillState = isBaseline ? "baseline" : balanceSkillOn ? "on" : "off";
     const effectiveSeconds = Math.max(0, hackerClockBudget() - timer);
@@ -3523,6 +3569,7 @@ export function createGame(
     hackerDir = null;
     hackerRimSlide = null;
     birds = createBirds();
+    watchBirds(recap);
     traffic = createTraffic();
     ball.trafficSafe = false;
     madeCount = 0;
@@ -4678,6 +4725,7 @@ export function createGame(
     syncBlueprintClockReward();
     birdBaseBonus = 0;
     birds = createBirds();
+    watchBirds(recap);
     traffic = createTraffic();
     ball.trafficSafe = false;
     phase = "title";
@@ -5447,7 +5495,11 @@ export function createGame(
       showBlueprintRewards();
     }
     if (trafficEnabled() && madeCount > 0) {
-      rewardAbsorbedObjects(stepTraffic(traffic, world, dt));
+      {
+        const absorbed = stepTraffic(traffic, world, dt);
+        noteRecapTrafficAbsorbs(recap, absorbed);
+        rewardAbsorbedObjects(absorbed);
+      }
       if (holeOn) beginTrafficAbsorption(traffic, holeX, holeY);
     }
     ball.trafficSafe = trafficEnabled() && traffic.safeLeft > 0;
@@ -5489,16 +5541,18 @@ export function createGame(
         drain = dt * (1 - t * 0.78);
       }
       timer -= drain;
+      noteRecapClock(recap, drain);
+      const skillBusy =
+        quantumTunnelLeft > 0 ||
+        Boolean(boltStorm) ||
+        holeOn ||
+        champHalfClock ||
+        rewindActive ||
+        (vector.burst > 0) ||
+        hoop.frostLeft > 0 ||
+        Boolean(other && other.frostLeft > 0);
+      noteRecapSkillTime(recap, drain, { busy: skillBusy, locked: boltOverheated });
       if (balanceTelemetryLive() && balanceSkillOn && ballId !== balanceSession?.baseline) {
-        const skillBusy =
-          quantumTunnelLeft > 0 ||
-          Boolean(boltStorm) ||
-          holeOn ||
-          champHalfClock ||
-          rewindActive ||
-          (vector.burst > 0) ||
-          hoop.frostLeft > 0 ||
-          Boolean(other && other.frostLeft > 0);
         if (skillBusy) balanceSkillActiveSeconds += drain;
         // Overheat is lost time (ball locked), not time the skill is active.
         // Count the same countdown drain, and not the dive frame that starts it.
@@ -5834,6 +5888,7 @@ export function createGame(
         hackerStrikeSweep = {fromX:prevBallX,fromY:prevBallY,toX:ball.x,toY:ball.y};
         const dropped = trainBackdropOn() ? hackerDropBirds(birds, ball, {x:prevBallX,y:prevBallY}) : 0;
         const cars = trafficEnabled() ? rainClearTraffic(traffic, world, ball) : 0;
+        noteRecapTrafficBurns(recap, cars);
         noteRainDropCombo(dropped + cars);
       }
       if (!hackerScripted) touchHackerStand();
@@ -5917,6 +5972,7 @@ export function createGame(
           emitHud();
         }
         if (traffic.burnScore > 0) {
+          noteRecapTrafficBurns(recap, 1);
           score += traffic.burnScore;
           if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
           noteBest();
@@ -5937,7 +5993,10 @@ export function createGame(
         stepTrafficNearMiss(traffic, world, ball, quantumTunnelLeft > 0);
         ball.trafficNearMiss = traffic.nearMiss;
         if (nearMissBefore !== traffic.nearMiss) {
-          if (traffic.nearMiss > nearMissBefore) callouts.push({ text: `擦车而过 ×${traffic.nearMiss}`, x: ball.x, y: ball.y - ball.r * 2, life: 0.8, max: 0.8, kind: "base" });
+          if (traffic.nearMiss > nearMissBefore) {
+            noteRecapTrafficNearMiss(recap, traffic.nearMiss - nearMissBefore);
+            callouts.push({ text: `擦车而过 ×${traffic.nearMiss}`, x: ball.x, y: ball.y - ball.r * 2, life: 0.8, max: 0.8, kind: "base" });
+          }
           emitHud();
         }
         if (vector.burst <= 0 && trafficOutOfBounds(traffic, world, ball)) grantTrafficSafe(traffic, ball);
@@ -6943,6 +7002,7 @@ export function createGame(
     }
 
     madeCount += 1;
+    noteRecapCountedMake(recap);
     if (!ghost && isHacker()) addHackerMake(hackerCharge);
     if (!ghost) blueprintMadeCount += 1;
     if (trainBackdropOn()) startTrainScroll();
@@ -6963,6 +7023,7 @@ export function createGame(
     }
 
     if (shackled && !clutch) {
+      noteRecapAward(recap, { streak, awarded: 0, clutch: false });
       noteGraf();
       if (!timerArmed) timerArmed = true;
       audio.swish();
@@ -7170,6 +7231,14 @@ export function createGame(
       rogueRun.peakStreak = Math.max(rogueRun.peakStreak, streak);
       rogueRun.peakStreakAll = Math.max(rogueRun.peakStreakAll, streak);
       rogueRun.peakMake = Math.max(rogueRun.peakMake, gain);
+    }
+    {
+      let awarded = payout;
+      if (!ghost && isRogueMode() && rogueRun) {
+        const minis = miniMeStacks(rogueRun);
+        if (minis > 0) awarded += Math.round(gain / 2) * minis;
+      }
+      noteRecapAward(recap, { streak, awarded, clutch });
     }
     noteBest();
     if (!timerArmed) timerArmed = true;
