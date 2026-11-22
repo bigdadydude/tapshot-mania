@@ -655,13 +655,25 @@ export function createGame(
     shotMissed = false;
     comboRescue = "approach";
     shotAirborne = false;
+    recapMissNoted = false;
     resetTrail();
+  }
+
+  function noteRecapOpenMiss() {
+    if (shotOpen && !shotMade && !recapMissNoted) {
+      noteRecapMiss(recap, true, false);
+      recapMissNoted = true;
+    }
+  }
+
+  function startRecapShotAttempt() {
+    recapMissNoted = false;
   }
 
   function markShotMissed() {
     if (shotOpen && !shotMade) {
       shotMissed = true;
-      noteRecapMiss(recap, true, false);
+      noteRecapOpenMiss();
       // Count one completed miss per shot, only after the balance minute is live.
       if (balanceSession && isMinuteMode() && timerArmed) balanceMisses += 1;
     }
@@ -922,6 +934,8 @@ export function createGame(
   let shotMissed = false;
   /** Left the floor during this attempt �?avoids marking miss on takeoff overlap. */
   let shotAirborne = false;
+  /** Recap-only: this attempt was already counted as 不中. Combo still uses shotMissed. */
+  let recapMissNoted = false;
   // Natural ricochets do not spend the rescue; only a jump after contact starts it.
   type ComboRescue = "approach" | "contact" | "rescue" | "secondContact" | "secondRescue" | "spent";
   let comboRescue: ComboRescue = "approach";
@@ -1965,6 +1979,8 @@ export function createGame(
     prevBallX = x0;
     prevBallY = y0;
     resetShotFlags();
+    noteRecapOpenMiss();
+    startRecapShotAttempt();
     shotOpen = true;
     shotMade = false;
     shotMissed = false;
@@ -3236,6 +3252,7 @@ export function createGame(
     shotMissed = false;
     comboRescue = "approach";
     shotAirborne = false;
+    recapMissNoted = false;
     opener = 0;
     bgmOn = false;
     recoverTo = 0;
@@ -3389,11 +3406,13 @@ export function createGame(
     combo = 0;
     streak = 0;
     comboCounting = true;
+    noteRecapOpenMiss();
     shotOpen = false;
     shotMade = false;
     shotMissed = false;
     comboRescue = "approach";
     shotAirborne = false;
+    recapMissNoted = false;
     opener = 0;
     bgmOn = false;
     recoverTo = 0;
@@ -3625,6 +3644,7 @@ export function createGame(
     shotMissed = false;
     comboRescue = "approach";
     shotAirborne = false;
+    recapMissNoted = false;
     opener = 0;
     overRim = false;
     rimHits = 0;
@@ -3904,6 +3924,8 @@ export function createGame(
     scoreGateHoop = null;
     scoredLock = 0;
     resetShotFlags();
+    noteRecapOpenMiss();
+    startRecapShotAttempt();
     shotOpen = true;
     shotMade = false;
     shotMissed = false;
@@ -4153,6 +4175,8 @@ export function createGame(
     ball.scored = false;
     scoreGateHoop = null;
     resetShotFlags();
+    noteRecapOpenMiss();
+    startRecapShotAttempt();
     shotOpen = true; shotMade = false; shotMissed = false; shotAirborne = true; comboRescue = "approach";
     hint = false;
     noteBalanceSkillEffect({ trigger: true, rescue: true });
@@ -4317,6 +4341,7 @@ export function createGame(
     // Mid-air re-tap on an unfinished attempt: boost only �?do not break combo.
     if (shotOpen && !shotMade && !shotMissed) {
       hint = false;
+      if (recapMissNoted) startRecapShotAttempt();
       if (legacyHole()) {
         const dx = hoop.x - ball.x;
         const dy = hoop.y - ball.y;
@@ -4356,6 +4381,8 @@ export function createGame(
     ball.squash = 1.08;
     ball.scored = false;
     resetShotFlags();
+    noteRecapOpenMiss();
+    startRecapShotAttempt();
     shotOpen = true;
     shotMade = false;
     shotMissed = false;
@@ -4481,6 +4508,7 @@ export function createGame(
       if(p.x>=bar.x-10 && p.x<=bar.x+bar.w+10 && p.y>=bar.y-10 && p.y<=bar.y+bar.h+10){
         if(superBall.dash){ball.vx=superBall.dash.vx;ball.vy=superBall.dash.vy;superBall.dash=null;}
         superToggle(superBall);
+        noteBalanceSkillInput();
         superTapUndo=null;
         superBall.pointer={id:e.pointerId,x:p.x,y:p.y,used:true};
         try{canvas.setPointerCapture(e.pointerId);}catch{}
@@ -4590,6 +4618,7 @@ export function createGame(
           if(!canParry && superTapUndo && superBall.clock-superTapUndo.at<=SUPER.swipeCancel) restoreSuperTapUndo();
           else superTapUndo=null;
           const result=superSwipe(superBall,ball,p.x-start.x,p.y-start.y);
+          noteBalanceSkillInput();
           if(result==='dash'){prepareVectorShot();}
           if(result==='parry'){
             if (releaseBirdCarrier(birds)) rewardBirdStuns(1);
@@ -4802,6 +4831,7 @@ export function createGame(
     shotMissed = false;
     comboRescue = "approach";
     shotAirborne = false;
+    recapMissNoted = false;
     other = null;
     hoop = makeHoop(world, -1, true);
     applyRogueHoopScale(hoop);
@@ -6691,7 +6721,9 @@ export function createGame(
       syncChain();
       return;
     }
-    // Wrap is not a miss: clear airborne so the post-wrap floor contact does not markShotMissed.
+    // Combo still does not treat wrap as a miss. Recap counts a default wrap-off once.
+    if (getBall(ballId).wrap !== "height") noteRecapOpenMiss();
+    // Clear airborne so the post-wrap floor contact does not markShotMissed again.
     shotAirborne = false;
     if (getBall(ballId).wrap === "height") {
       // Spawn on the approach side of the active hoop (same rule as classic wrap).
