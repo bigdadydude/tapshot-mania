@@ -102,7 +102,9 @@ import {
   shouldRecordBalanceTrial,
   snapshotRunRecap,
   syncBirdRecap,
+  syncTrafficRecap,
   watchBirds,
+  watchTraffic,
 } from "./run-recap";
 
 export const GAME_REV = 332;
@@ -1434,6 +1436,7 @@ export function createGame(
   function applyDevStatLocks() {
     noteRecapPeakCombo(recap, streak);
     syncBirdRecap(recap, birds);
+    syncTrafficRecap(recap, traffic);
     if (balanceSession) balancePeakCombo = Math.max(balancePeakCombo, streak);
     if (!devOn) return;
     if (devScoreLock !== null) {
@@ -1854,6 +1857,7 @@ export function createGame(
     birds = createBirds();
     watchBirds(recap);
     traffic = createTraffic();
+    watchTraffic(recap);
     ball.trafficSafe = false;
     ball.sootLeft = 0; hoop.sootLeft = 0; if (other) other.sootLeft = 0;
     clearSceneLayers();
@@ -3158,6 +3162,7 @@ export function createGame(
     birds = createBirds();
     watchBirds(recap);
     traffic = createTraffic();
+    watchTraffic(recap);
     ball.trafficSafe = false;
     resetBalanceTrialCounters();
     phase = "playing";
@@ -3581,6 +3586,7 @@ export function createGame(
     birds = createBirds();
     watchBirds(recap);
     traffic = createTraffic();
+    watchTraffic(recap);
     ball.trafficSafe = false;
     madeCount = 0;
     blueprintMadeCount = 0;
@@ -4738,6 +4744,7 @@ export function createGame(
     birds = createBirds();
     watchBirds(recap);
     traffic = createTraffic();
+    watchTraffic(recap);
     ball.trafficSafe = false;
     phase = "title";
     paused = false;
@@ -4896,6 +4903,7 @@ export function createGame(
         if (!devOn) enterSandbox();
         devScene = cmd.id;
         traffic = createTraffic();
+        watchTraffic(recap);
         ball.trafficSafe = false;
         if (cmd.id !== "void") {
           applyScenePack(cmd.id);

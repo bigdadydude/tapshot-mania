@@ -23,7 +23,9 @@ import {
   shouldRecordBalanceTrial,
   snapshotRunRecap,
   syncBirdRecap,
+  syncTrafficRecap,
   watchBirds,
+  watchTraffic,
 } from "./run-recap.ts";
 
 function context(partial: Partial<Parameters<typeof snapshotRunRecap>[1]> = {}) {
@@ -127,6 +129,8 @@ test("recap rows hide optional lines until real counts exist", () => {
   assert.equal(labels.includes("破坏探照灯"), false);
   assert.equal(labels.includes("蓝图清格"), false);
   assert.equal(labels.includes("躲避信号灯"), false);
+  assert.equal(labels.includes("被老鹰抓走"), false);
+  assert.equal(labels.includes("被车撞"), false);
 
   const t = createRecapTracker();
   noteRecapMake(t, { streak: 6, awarded: 20, clutch: true });
@@ -134,7 +138,8 @@ test("recap rows hide optional lines until real counts exist", () => {
   noteRecapTrafficNearMiss(t, 2);
   noteRecapTrafficBurns(t, 1);
   noteRecapTrafficAbsorbs(t, 3);
-  syncBirdRecap(t, { kills: 4, absorbed: 1, iceBreaks: 2 });
+  syncBirdRecap(t, { kills: 4, absorbed: 1, iceBreaks: 2, catches: 2 });
+  syncTrafficRecap(t, { hits: 3 });
   noteRecapPrisonFree(t);
   noteRecapSearchlightBreaks(t, 2);
   noteRecapBlueprintClears(t, 7);
@@ -147,9 +152,11 @@ test("recap rows hide optional lines until real counts exist", () => {
   assert.equal(filled.find((row) => row.label === "擦车而过")?.value, "2");
   assert.equal(filled.find((row) => row.label === "烧毁车辆")?.value, "1");
   assert.equal(filled.find((row) => row.label === "吸收车辆")?.value, "3");
+  assert.equal(filled.find((row) => row.label === "被车撞")?.value, "3");
   assert.equal(filled.find((row) => row.label === "击晕飞鸟")?.value, "4");
   assert.equal(filled.find((row) => row.label === "吸收飞鸟")?.value, "1");
   assert.equal(filled.find((row) => row.label === "击碎冰鸟")?.value, "2");
+  assert.equal(filled.find((row) => row.label === "被老鹰抓走")?.value, "2");
   assert.equal(filled.find((row) => row.label === "释放次数")?.value, "1");
   assert.equal(filled.find((row) => row.label === "破坏探照灯")?.value, "2");
   assert.equal(filled.find((row) => row.label === "蓝图清格")?.value, "7");
@@ -157,6 +164,8 @@ test("recap rows hide optional lines until real counts exist", () => {
   assert.equal(snapshotRunRecap(t, context()).map.searchlightBreaks, 2);
   assert.equal(snapshotRunRecap(t, context()).map.blueprintClears, 7);
   assert.equal(snapshotRunRecap(t, context()).map.gantryDodges, 3);
+  assert.equal(snapshotRunRecap(t, context()).map.eagleCatches, 2);
+  assert.equal(snapshotRunRecap(t, context()).map.trafficHits, 3);
   assert.ok(filledLabels.includes("绝杀球数"));
 });
 
@@ -174,12 +183,31 @@ test("rogue recap omits peak rows already shown in the run summary", () => {
 
 test("bird watch keeps run totals across a fresh wave", () => {
   const t = createRecapTracker();
-  syncBirdRecap(t, { kills: 2, absorbed: 1, iceBreaks: 0 });
+  syncBirdRecap(t, { kills: 2, absorbed: 1, iceBreaks: 0, catches: 2 });
   watchBirds(t);
-  syncBirdRecap(t, { kills: 1, absorbed: 0, iceBreaks: 1 });
+  syncBirdRecap(t, { kills: 1, absorbed: 0, iceBreaks: 1, catches: 1 });
   assert.equal(t.birdStuns, 3);
   assert.equal(t.birdAbsorbs, 1);
   assert.equal(t.birdIceBreaks, 1);
+  assert.equal(t.eagleCatches, 3);
+});
+
+test("traffic hits accumulate across a mid-run traffic reset, ignoring other car events", () => {
+  const t = createRecapTracker();
+  noteRecapTrafficNearMiss(t, 4);
+  noteRecapTrafficBurns(t, 2);
+  noteRecapTrafficAbsorbs(t, 1);
+  syncTrafficRecap(t, { hits: 2 });
+  watchTraffic(t);
+  syncTrafficRecap(t, { hits: 1 });
+  assert.equal(t.trafficHits, 3);
+  assert.equal(t.trafficNearMisses, 4);
+  assert.equal(t.trafficBurns, 2);
+  assert.equal(t.trafficAbsorbs, 1);
+  const recap = snapshotRunRecap(t, context());
+  assert.equal(recap.map.trafficHits, 3);
+  assert.equal(recapRows(recap).find((row) => row.label === "被车撞")?.value, "3");
+  assert.equal(recapRows(recap).find((row) => row.label === "擦车而过")?.value, "4");
 });
 
 test("zero map counts stay off the snapshot and table", () => {
@@ -187,14 +215,20 @@ test("zero map counts stay off the snapshot and table", () => {
   noteRecapSearchlightBreaks(t, 0);
   noteRecapBlueprintClears(t, 0);
   noteRecapGantryDodges(t, 0);
+  syncBirdRecap(t, { kills: 0, absorbed: 0, iceBreaks: 0, catches: 0 });
+  syncTrafficRecap(t, { hits: 0 });
   const recap = snapshotRunRecap(t, context());
   assert.equal("searchlightBreaks" in recap.map, false);
   assert.equal("blueprintClears" in recap.map, false);
   assert.equal("gantryDodges" in recap.map, false);
+  assert.equal("eagleCatches" in recap.map, false);
+  assert.equal("trafficHits" in recap.map, false);
   const labels = recapRows(recap).map((row) => row.label);
   assert.equal(labels.includes("破坏探照灯"), false);
   assert.equal(labels.includes("蓝图清格"), false);
   assert.equal(labels.includes("躲避信号灯"), false);
+  assert.equal(labels.includes("被老鹰抓走"), false);
+  assert.equal(labels.includes("被车撞"), false);
 });
 
 test("reset clears run totals for a new match", () => {

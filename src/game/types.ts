@@ -204,9 +204,11 @@ export type RunRecapMapStats = {
   trafficNearMisses?: number;
   trafficBurns?: number;
   trafficAbsorbs?: number;
+  trafficHits?: number;
   birdStuns?: number;
   birdAbsorbs?: number;
   birdIceBreaks?: number;
+  eagleCatches?: number;
   prisonFrees?: number;
   searchlightBreaks?: number;
   blueprintClears?: number;

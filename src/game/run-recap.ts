@@ -36,9 +36,11 @@ export type RecapTracker = {
   trafficNearMisses: number;
   trafficBurns: number;
   trafficAbsorbs: number;
+  trafficHits: number;
   birdStuns: number;
   birdAbsorbs: number;
   birdIceBreaks: number;
+  eagleCatches: number;
   prisonFrees: number;
   searchlightBreaks: number;
   blueprintClears: number;
@@ -46,6 +48,8 @@ export type RecapTracker = {
   birdKillsSeen: number;
   birdAbsorbedSeen: number;
   birdIceSeen: number;
+  birdCatchesSeen: number;
+  trafficHitsSeen: number;
 };
 
 export function createRecapTracker(): RecapTracker {
@@ -64,9 +68,11 @@ export function createRecapTracker(): RecapTracker {
     trafficNearMisses: 0,
     trafficBurns: 0,
     trafficAbsorbs: 0,
+    trafficHits: 0,
     birdStuns: 0,
     birdAbsorbs: 0,
     birdIceBreaks: 0,
+    eagleCatches: 0,
     prisonFrees: 0,
     searchlightBreaks: 0,
     blueprintClears: 0,
@@ -74,6 +80,8 @@ export function createRecapTracker(): RecapTracker {
     birdKillsSeen: 0,
     birdAbsorbedSeen: 0,
     birdIceSeen: 0,
+    birdCatchesSeen: 0,
+    trafficHitsSeen: 0,
   };
 }
 
@@ -86,18 +94,32 @@ export function watchBirds(t: RecapTracker) {
   t.birdKillsSeen = 0;
   t.birdAbsorbedSeen = 0;
   t.birdIceSeen = 0;
+  t.birdCatchesSeen = 0;
 }
 
 export function syncBirdRecap(
   t: RecapTracker,
-  birds: { kills: number; absorbed: number; iceBreaks: number },
+  birds: { kills: number; absorbed: number; iceBreaks: number; catches?: number },
 ) {
+  const catches = birds.catches ?? 0;
   if (birds.kills > t.birdKillsSeen) t.birdStuns += birds.kills - t.birdKillsSeen;
   if (birds.absorbed > t.birdAbsorbedSeen) t.birdAbsorbs += birds.absorbed - t.birdAbsorbedSeen;
   if (birds.iceBreaks > t.birdIceSeen) t.birdIceBreaks += birds.iceBreaks - t.birdIceSeen;
+  if (catches > t.birdCatchesSeen) t.eagleCatches += catches - t.birdCatchesSeen;
   t.birdKillsSeen = birds.kills;
   t.birdAbsorbedSeen = birds.absorbed;
   t.birdIceSeen = birds.iceBreaks;
+  t.birdCatchesSeen = catches;
+}
+
+/** Call when a new TrafficState is created so mid-run resets do not drop run totals. */
+export function watchTraffic(t: RecapTracker) {
+  t.trafficHitsSeen = 0;
+}
+
+export function syncTrafficRecap(t: RecapTracker, traffic: { hits: number }) {
+  if (traffic.hits > t.trafficHitsSeen) t.trafficHits += traffic.hits - t.trafficHitsSeen;
+  t.trafficHitsSeen = traffic.hits;
 }
 
 export function noteRecapClick(t: RecapTracker, playing: boolean) {
@@ -219,9 +241,11 @@ export function snapshotRunRecap(
   if (t.trafficNearMisses > 0) map.trafficNearMisses = t.trafficNearMisses;
   if (t.trafficBurns > 0) map.trafficBurns = t.trafficBurns;
   if (t.trafficAbsorbs > 0) map.trafficAbsorbs = t.trafficAbsorbs;
+  if (t.trafficHits > 0) map.trafficHits = t.trafficHits;
   if (t.birdStuns > 0) map.birdStuns = t.birdStuns;
   if (t.birdAbsorbs > 0) map.birdAbsorbs = t.birdAbsorbs;
   if (t.birdIceBreaks > 0) map.birdIceBreaks = t.birdIceBreaks;
+  if (t.eagleCatches > 0) map.eagleCatches = t.eagleCatches;
   if (t.prisonFrees > 0) map.prisonFrees = t.prisonFrees;
   if (t.searchlightBreaks > 0) map.searchlightBreaks = t.searchlightBreaks;
   if (t.blueprintClears > 0) map.blueprintClears = t.blueprintClears;
@@ -288,9 +312,11 @@ export function recapRows(
   if (map.trafficNearMisses) rows.push({ label: "擦车而过", value: `${map.trafficNearMisses}` });
   if (map.trafficBurns) rows.push({ label: "烧毁车辆", value: `${map.trafficBurns}` });
   if (map.trafficAbsorbs) rows.push({ label: "吸收车辆", value: `${map.trafficAbsorbs}` });
+  if (map.trafficHits) rows.push({ label: "被车撞", value: `${map.trafficHits}` });
   if (map.birdStuns) rows.push({ label: "击晕飞鸟", value: `${map.birdStuns}` });
   if (map.birdAbsorbs) rows.push({ label: "吸收飞鸟", value: `${map.birdAbsorbs}` });
   if (map.birdIceBreaks) rows.push({ label: "击碎冰鸟", value: `${map.birdIceBreaks}` });
+  if (map.eagleCatches) rows.push({ label: "被老鹰抓走", value: `${map.eagleCatches}` });
   if (map.prisonFrees) rows.push({ label: "释放次数", value: `${map.prisonFrees}` });
   if (map.searchlightBreaks) rows.push({ label: "破坏探照灯", value: `${map.searchlightBreaks}` });
   if (map.blueprintClears) rows.push({ label: "蓝图清格", value: `${map.blueprintClears}` });
