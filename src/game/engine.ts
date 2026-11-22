@@ -1458,8 +1458,10 @@ export function createGame(
     const timer01 = raw01;
     const displayScore =
       isRogueMode() && rogueRun && phase === "over" ? rogueTotalScore() : score;
-    // Catch clears from collide/settle later in the same frame as the snapshot.
+    // Catch totals updated later in this same physics step (clears, hits, catches).
     noteRecapBlueprintClears(recap, drainBlueprintRecapClears());
+    syncBirdRecap(recap, birds);
+    syncTrafficRecap(recap, traffic);
     onHud({
       phase,
       score: displayScore,
