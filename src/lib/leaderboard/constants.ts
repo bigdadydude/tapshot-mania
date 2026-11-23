@@ -4,6 +4,8 @@ export const LEADERBOARD_PRIVACY_NOTICE =
 
 export const LEADERBOARD_LIMIT = 100;
 export const NICKNAME_MAX_CHARS = 16;
+/** Display/submit fallback when this device has no saved nickname yet. */
+export const DEFAULT_NICKNAME = "玩家";
 
 /** Timeline event timestamps are seconds of armed match-clock drain. */
 export const TIMELINE_CLOCK =

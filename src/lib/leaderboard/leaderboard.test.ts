@@ -12,9 +12,9 @@ import {
   reviewFlagsFor,
   timelineScoreTotal,
 } from "./anticheat.ts";
-import { LEADERBOARD_LIMIT, type EligibilityFlags, type TimelineEvent } from "./constants.ts";
+import { DEFAULT_NICKNAME, LEADERBOARD_LIMIT, type EligibilityFlags, type TimelineEvent } from "./constants.ts";
 import { isRunEligible, shouldOfferSubmit, runEligibilityFlags } from "./eligibility.ts";
-import { normalizeNickname, parseSavedNickname, visibleCharCount } from "./nickname.ts";
+import { commitDisplayName, displayNickname, normalizeNickname, parseSavedNickname, visibleCharCount } from "./nickname.ts";
 import { parseListMode, parseSubmitPayload } from "./payload.ts";
 import { publicRowsFromStored, toPublicRow } from "./public-row.ts";
 
@@ -66,6 +66,40 @@ test("nickname trims, rejects empty, and caps at 16 visible characters", () => {
   assert.equal(parseSavedNickname("  老玩家  "), "老玩家");
   assert.equal(parseSavedNickname(""), "");
   assert.equal(parseSavedNickname("x".repeat(20)), "");
+});
+
+test("display nickname falls back to 玩家 when unsaved, and uses the saved name when present", () => {
+  assert.equal(DEFAULT_NICKNAME, "玩家");
+  assert.equal(visibleCharCount(DEFAULT_NICKNAME), 2);
+  assert.deepEqual(normalizeNickname("玩家"), { ok: true, nickname: "玩家" });
+  assert.equal(displayNickname(""), "玩家");
+  assert.equal(displayNickname(undefined), "玩家");
+  assert.equal(displayNickname("阿强"), "阿强");
+});
+
+test("name commit does not persist the default unless the player actually edited, and clearing does not keep an empty name", () => {
+  assert.deepEqual(
+    commitDisplayName({ draft: "玩家", saved: "", dirty: false }),
+    { action: "none", display: "玩家" },
+  );
+  assert.deepEqual(
+    commitDisplayName({ draft: "玩家", saved: "", dirty: true }),
+    { action: "save", saved: "玩家", display: "玩家" },
+  );
+  assert.deepEqual(
+    commitDisplayName({ draft: "  阿强  ", saved: "", dirty: true }),
+    { action: "save", saved: "阿强", display: "阿强" },
+  );
+  assert.deepEqual(
+    commitDisplayName({ draft: "   ", saved: "阿强", dirty: true }),
+    { action: "save", saved: "", display: "玩家" },
+  );
+  const tooLong = commitDisplayName({ draft: "一二三四五六七八九十1234567", saved: "阿强", dirty: true });
+  assert.equal(tooLong.action, "error");
+  if (tooLong.action === "error") {
+    assert.equal(tooLong.error, "昵称最多 16 个字");
+    assert.equal(tooLong.display, "一二三四五六七八九十1234567");
+  }
 });
 
 test("submit gate offers only a better eligible classic or minute score", () => {

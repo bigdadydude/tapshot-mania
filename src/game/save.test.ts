@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { LEADERBOARD_SAVE_DEFAULTS, leaderboardSaveFieldsFrom } from "../lib/leaderboard/save-fields.ts";
+import { displayNickname } from "../lib/leaderboard/nickname.ts";
 
 test("old saves without nickname fields default safely and keep other data untouched", () => {
   const fields = leaderboardSaveFieldsFrom({
@@ -14,6 +15,7 @@ test("old saves without nickname fields default safely and keep other data untou
   assert.equal(fields.nickname, "");
   assert.equal(fields.submittedClassic, 0);
   assert.equal(fields.submittedMinute, 0);
+  assert.equal(displayNickname(fields.nickname), "玩家");
 });
 
 test("keeps a stored nickname and last submitted scores", () => {

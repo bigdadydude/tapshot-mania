@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { listLeaderboard, submitLeaderboardRun } from "@/lib/leaderboard/api.ts";
 import { LEADERBOARD_PRIVACY_NOTICE, type EligibilityFlags, type LeaderboardMode, type PublicLeaderboardRow, type TimelineEvent } from "@/lib/leaderboard/constants.ts";
 import { lastSubmittedFor, runEligibilityFlags, shouldOfferSubmit } from "@/lib/leaderboard/eligibility.ts";
-import { normalizeNickname } from "@/lib/leaderboard/nickname.ts";
+import { displayNickname } from "@/lib/leaderboard/nickname.ts";
 
 export { LEADERBOARD_PRIVACY_NOTICE };
 
@@ -152,29 +152,22 @@ export function SubmitBoardBlock({
       flags,
     });
 
-  const [name, setName] = useState(nickname);
+  const [startedWithoutName] = useState(() => !nickname);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
-  const [editing, setEditing] = useState(!nickname);
-  const firstSubmit = !nickname;
 
   if (!eligibleOffer && !done) return null;
 
   async function submit() {
     if (mode !== "classic" && mode !== "minute") return;
-    const parsed = normalizeNickname(name);
-    if (!parsed.ok) {
-      setError(parsed.error);
-      setEditing(true);
-      return;
-    }
+    const submitName = displayNickname(nickname);
     setBusy(true);
     setError(null);
     try {
       const result = await submitLeaderboardRun({
         data: {
-          nickname: parsed.nickname,
+          nickname: submitName,
           mode,
           score: recap.score,
           recap,
@@ -186,8 +179,7 @@ export function SubmitBoardBlock({
         setError(result.error);
         return;
       }
-      onRemember(mode, parsed.nickname, recap.score);
-      setName(parsed.nickname);
+      onRemember(mode, submitName, recap.score);
       setDone(true);
     } catch {
       setError("提交失败，请稍后再试");
@@ -210,34 +202,9 @@ export function SubmitBoardBlock({
       onClick={(e) => e.stopPropagation()}
     >
       <p className="text-[10px] font-medium tracking-widest text-subtle">提交本局成绩</p>
-      {firstSubmit ? (
+      {startedWithoutName ? (
         <p className="mt-1.5 text-[11px] leading-relaxed text-subtle">{LEADERBOARD_PRIVACY_NOTICE}</p>
       ) : null}
-      {editing || firstSubmit ? (
-        <label className="mt-2 block">
-          <span className="text-xs text-muted">昵称</span>
-          <input
-            type="text"
-            value={name}
-            maxLength={32}
-            autoComplete="off"
-            placeholder="输入昵称"
-            onChange={(e) => setName(e.target.value)}
-            className="mt-1 h-10 w-full rounded-lg border border-border bg-bg-subtle/80 px-3 text-sm text-fg outline-none placeholder:text-subtle"
-          />
-        </label>
-      ) : (
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <p className="min-w-0 truncate text-sm text-fg">{name || nickname}</p>
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="shrink-0 text-xs text-muted"
-          >
-            修改昵称
-          </button>
-        </div>
-      )}
       {error ? <p className="mt-2 text-xs text-muted">{error}</p> : null}
       <button
         type="button"
