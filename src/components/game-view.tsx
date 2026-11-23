@@ -20,6 +20,7 @@ import { ROGUE_CATALOG, RARITY_LABEL, type RogueCatalogEntry } from "@/game/rogu
 import { modifierName } from "@/game/modifiers";
 import { autoStrengthForBall, loadBalanceStore, mergeLiveSession, type AutoBallReadout } from "@/game/balance-test";
 import { LeaderboardPanel, SubmitBoardBlock, hudEligibilityFlags } from "@/components/leaderboard-panel";
+import { NicknameField } from "@/components/nickname-field";
 import { RecapTable } from "@/components/recap-table";
 import { cn } from "@/lib/utils";
 
@@ -377,6 +378,8 @@ export function GameView() {
       {showSettings ? (
         <SettingsHub
           showDev={hud.dev.unlocked}
+          nickname={hud.nickname}
+          onNicknameChange={(name) => gameRef.current?.setNickname(name)}
           onGfx={() => setMenu("gfx")}
           onSound={() => setMenu("sound")}
           onDev={() => {
@@ -1595,7 +1598,7 @@ function OverCard({
             ))}
           </div>
           {recap ? (
-            <RecapTable recap={recap} hideRogueDuplicates nickname={nickname} onNicknameChange={onNicknameChange} />
+            <RecapTable recap={recap} hideRogueDuplicates nickname={nickname} />
           ) : null}
         </div>
         <p className="pointer-events-none mb-2 text-center text-sm text-fg">
@@ -1632,7 +1635,7 @@ function OverCard({
         </div>
         {recap ? (
           <div className="flex min-h-0 flex-1 flex-col border-t border-border text-left">
-            <RecapTable recap={recap} nickname={nickname} onNicknameChange={onNicknameChange} />
+            <RecapTable recap={recap} nickname={nickname} />
           </div>
         ) : null}
       </div>
@@ -1644,6 +1647,7 @@ function OverCard({
           submittedByBoard={submittedByBoard}
           getTimeline={getTimeline}
           onRemember={onRememberSubmit}
+          onNicknameChange={onNicknameChange}
         />
       ) : null}
       <button
@@ -2007,12 +2011,16 @@ function MenuBtn({
 
 function SettingsHub({
   showDev,
+  nickname,
+  onNicknameChange,
   onGfx,
   onSound,
   onDev,
   onBack,
 }: {
   showDev: boolean;
+  nickname: string;
+  onNicknameChange: (name: string) => void;
   onGfx: () => void;
   onSound: () => void;
   onDev: () => void;
@@ -2022,6 +2030,12 @@ function SettingsHub({
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-bg/70 px-6">
       <div className="w-full max-w-xs rounded-xl border border-border bg-bg-elevated p-5 shadow-lg">
         <p className="mb-4 text-center text-xs font-medium tracking-widest text-muted">设置</p>
+        <div className="mb-4">
+          <NicknameField nickname={nickname} onNicknameChange={onNicknameChange} />
+          <p className="mt-1.5 text-[11px] leading-relaxed text-subtle">
+            改名只对之后新提交的成绩生效，已经上榜的记录不会改变。
+          </p>
+        </div>
         <div className="flex flex-col gap-2">
           <MenuBtn label="画面" onClick={onGfx} />
           <MenuBtn label="声音" onClick={onSound} />

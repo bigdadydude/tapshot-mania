@@ -13,6 +13,7 @@ import {
   timelineScoreTotal,
 } from "./anticheat.ts";
 import { DEFAULT_NICKNAME, LEADERBOARD_LIMIT, type EligibilityFlags, type TimelineEvent } from "./constants.ts";
+import { autoSubmitPlan, autoSubmitRunKey, shouldAskFirstNickname } from "./auto-submit.ts";
 import { isRunEligible, lastSubmittedFor, shouldOfferSubmit, runEligibilityFlags } from "./eligibility.ts";
 import { commitDisplayName, displayNickname, normalizeNickname, parseSavedNickname, visibleCharCount } from "./nickname.ts";
 import { parseListMode, parseRunId, parseSubmitPayload } from "./payload.ts";
@@ -408,4 +409,85 @@ test("finite score mismatch is still a valid payload so the server can flag and 
   });
   assert.equal(parsed.ok, true);
   if (parsed.ok) assert.equal(parsed.value.score, 99);
+});
+
+test("first-name prompt is only for a still-empty saved nickname, not the display default", () => {
+  assert.equal(shouldAskFirstNickname(""), true);
+  assert.equal(shouldAskFirstNickname(undefined), true);
+  assert.equal(shouldAskFirstNickname(null), true);
+  assert.equal(shouldAskFirstNickname("玩家"), false);
+  assert.equal(shouldAskFirstNickname("阿强"), false);
+});
+
+test("eligible overs auto-submit when a name is saved, and ask for a name first when it is not", () => {
+  const clean = flags();
+  assert.equal(
+    autoSubmitPlan({ mode: "classic", score: 10, lastSubmitted: 0, flags: clean, savedNickname: "" }),
+    "ask-name",
+  );
+  assert.equal(
+    autoSubmitPlan({ mode: "classic", score: 10, lastSubmitted: 0, flags: clean, savedNickname: "阿强" }),
+    "submit",
+  );
+  assert.equal(
+    autoSubmitPlan({ mode: "classic", score: 10, lastSubmitted: 0, flags: clean, savedNickname: "玩家" }),
+    "submit",
+  );
+  assert.equal(
+    autoSubmitPlan({ mode: "classic", score: 0, lastSubmitted: 0, flags: clean, savedNickname: "" }),
+    "skip",
+  );
+  assert.equal(
+    autoSubmitPlan({ mode: "rogue", score: 99, lastSubmitted: 0, flags: clean, savedNickname: "阿强" }),
+    "skip",
+  );
+  assert.equal(
+    autoSubmitPlan({ mode: "classic", score: 20, lastSubmitted: 20, flags: clean, savedNickname: "阿强" }),
+    "skip",
+  );
+  assert.equal(
+    autoSubmitPlan({
+      mode: "classic",
+      score: 50,
+      lastSubmitted: 0,
+      flags: flags({ sandbox: true }),
+      savedNickname: "阿强",
+    }),
+    "skip",
+  );
+  assert.equal(
+    autoSubmitPlan({
+      mode: "classic",
+      score: 50,
+      lastSubmitted: 0,
+      flags: flags({ balance: true }),
+      savedNickname: "",
+    }),
+    "skip",
+  );
+});
+
+test("auto-submit run keys distinguish boards and score lines of the same recap", () => {
+  const a = recap({ playMode: "classic", sceneId: "street", ballId: "plain", score: 40, durationSeconds: 20 });
+  assert.notEqual(
+    autoSubmitRunKey(a),
+    autoSubmitRunKey(recap({ playMode: "minute", sceneId: "street", ballId: "plain", score: 40, durationSeconds: 20 })),
+  );
+  assert.notEqual(
+    autoSubmitRunKey(a),
+    autoSubmitRunKey(recap({ playMode: "classic", sceneId: "prison", ballId: "plain", score: 40, durationSeconds: 20 })),
+  );
+  assert.notEqual(
+    autoSubmitRunKey(a),
+    autoSubmitRunKey(recap({ playMode: "classic", sceneId: "street", ballId: "frost", score: 40, durationSeconds: 20 })),
+  );
+  assert.notEqual(
+    autoSubmitRunKey(a),
+    autoSubmitRunKey(recap({ playMode: "classic", sceneId: "street", ballId: "plain", score: 41, durationSeconds: 20 })),
+  );
+  assert.notEqual(
+    autoSubmitRunKey(a),
+    autoSubmitRunKey(recap({ playMode: "classic", sceneId: "street", ballId: "plain", score: 40, durationSeconds: 21 })),
+  );
+  assert.equal(autoSubmitRunKey(a), autoSubmitRunKey(recap({ ...a })));
 });
