@@ -20,6 +20,8 @@ import { ROGUE_CATALOG, RARITY_LABEL, type RogueCatalogEntry } from "@/game/rogu
 import { modifierName } from "@/game/modifiers";
 import { autoStrengthForBall, loadBalanceStore, mergeLiveSession, type AutoBallReadout } from "@/game/balance-test";
 import { recapRows } from "@/game/run-recap";
+import { commitDisplayName, displayNickname } from "@/lib/leaderboard/nickname.ts";
+import { LeaderboardPanel, SubmitBoardBlock, hudEligibilityFlags } from "@/components/leaderboard-panel";
 import { cn } from "@/lib/utils";
 
 primeArt();
@@ -45,6 +47,9 @@ const idleHud: HudState = {
   sceneId: "street",
   prison: null,
   rogue: null,
+  nickname: "",
+  submittedClassic: 0,
+  submittedMinute: 0,
 };
 
 type Menu = "none" | "pause" | "settings" | "gfx" | "sound";
@@ -57,6 +62,7 @@ export function GameView() {
   const [crash, setCrash] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu>("none");
   const [titleTaps, setTitleTaps] = useState(0);
+  const [boardOpen, setBoardOpen] = useState(false);
   const [searchlightEdit, setSearchlightEdit] = useState(false);
   const [devPanelOpen, setDevPanelOpen] = useState(true);
   const [balanceFocus, setBalanceFocus] = useState(0);
@@ -240,6 +246,13 @@ export function GameView() {
                 }
               }}
               onDev={() => gameRef.current?.dev({ t: "enter" })}
+              onOpenBoard={() => setBoardOpen(true)}
+            />
+          ) : null}
+          {hud.phase === "title" && menu === "none" && hud.loadPct >= 1 && boardOpen ? (
+            <LeaderboardPanel
+              initialMode={hud.playMode === "minute" ? "minute" : "classic"}
+              onClose={() => setBoardOpen(false)}
             />
           ) : null}
           {hud.phase === "settle" && menu === "none" && hud.rogue ? (
@@ -280,6 +293,15 @@ export function GameView() {
               devMode={hud.dev.on}
               onDevBack={() => gameRef.current?.devBackFromSettle()}
               balanceReadout={hud.dev.on && hud.dev.balance.session ? balanceOverReadout : null}
+              nickname={hud.nickname}
+              submittedClassic={hud.submittedClassic}
+              submittedMinute={hud.submittedMinute}
+              eligibility={hudEligibilityFlags(hud.dev)}
+              getTimeline={() => gameRef.current?.getRunTimeline() ?? []}
+              onRememberSubmit={(mode, name, score) => {
+                gameRef.current?.rememberLeaderboardSubmit(mode, name, score);
+              }}
+              onNicknameChange={(name) => gameRef.current?.setNickname(name)}
             />
           ) : null}
 
@@ -435,6 +457,7 @@ function TitleCard({
   onScene,
   onTitleTap,
   onDev,
+  onOpenBoard,
 }: {
   best: number;
   unlocked: boolean;
@@ -447,6 +470,7 @@ function TitleCard({
   onScene: (id: SceneId) => void;
   onTitleTap: () => void;
   onDev: () => void;
+  onOpenBoard: () => void;
 }) {
   type Slide =
     | { kind: "random"; key: "random" }
@@ -809,6 +833,13 @@ function TitleCard({
         )}
       >
         开始
+      </button>
+      <button
+        type="button"
+        onClick={onOpenBoard}
+        className="pointer-events-auto mt-2 h-11 w-full max-w-xs rounded-lg border border-border bg-bg-elevated text-sm font-medium text-fg"
+      >
+        排行榜
       </button>
       {unlocked ? (
         <button
@@ -1430,7 +1461,86 @@ function ShopRow({
   );
 }
 
-function RecapTable({ recap, hideRogueDuplicates = false }: { recap: RunRecap; hideRogueDuplicates?: boolean }) {
+function RecapNameRow({
+  nickname,
+  onNicknameChange,
+}: {
+  nickname: string;
+  onNicknameChange?: (name: string) => void;
+}) {
+  const [value, setValue] = useState(() => displayNickname(nickname));
+  const [error, setError] = useState<string | null>(null);
+  const dirty = useRef(false);
+  const focused = useRef(false);
+
+  useEffect(() => {
+    if (focused.current) return;
+    setValue(displayNickname(nickname));
+    setError(null);
+  }, [nickname]);
+
+  function commit() {
+    const result = commitDisplayName({ draft: value, saved: nickname, dirty: dirty.current });
+    if (result.action === "error") {
+      setError(result.error);
+      setValue(result.display);
+      return;
+    }
+    setError(null);
+    setValue(result.display);
+    dirty.current = false;
+    if (result.action === "save" && result.saved !== nickname) {
+      onNicknameChange?.(result.saved);
+    }
+  }
+
+  return (
+    <div className="border-b border-border/60 py-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <span className="shrink-0 text-sm text-muted">名称</span>
+        <input
+          type="text"
+          value={value}
+          maxLength={32}
+          autoComplete="off"
+          enterKeyHint="done"
+          aria-label="名称"
+          onChange={(e) => {
+            dirty.current = true;
+            setError(null);
+            setValue(e.target.value);
+          }}
+          onFocus={() => {
+            focused.current = true;
+          }}
+          onBlur={() => {
+            focused.current = false;
+            commit();
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            (e.currentTarget as HTMLInputElement).blur();
+          }}
+          className="min-w-0 flex-1 bg-transparent text-right font-sans text-base font-semibold text-fg outline-none"
+        />
+      </div>
+      {error ? <p className="mt-1 text-right text-xs text-muted">{error}</p> : null}
+    </div>
+  );
+}
+
+function RecapTable({
+  recap,
+  hideRogueDuplicates = false,
+  nickname = "",
+  onNicknameChange,
+}: {
+  recap: RunRecap;
+  hideRogueDuplicates?: boolean;
+  nickname?: string;
+  onNicknameChange?: (name: string) => void;
+}) {
   const rows = recapRows(recap, { hideRogueDuplicates });
   return (
     <div
@@ -1441,6 +1551,7 @@ function RecapTable({ recap, hideRogueDuplicates = false }: { recap: RunRecap; h
       <div className="px-4 py-2">
         <p className="mb-1 text-[10px] font-medium tracking-widest text-subtle">本局数据</p>
         <div className="space-y-0">
+          <RecapNameRow nickname={nickname} onNicknameChange={onNicknameChange} />
           {rows.map((row) => (
             <div
               key={row.label}
@@ -1473,6 +1584,13 @@ function OverCard({
   devMode = false,
   onDevBack,
   balanceReadout = null,
+  nickname = "",
+  submittedClassic = 0,
+  submittedMinute = 0,
+  eligibility,
+  getTimeline,
+  onRememberSubmit,
+  onNicknameChange,
 }: {
   score: number;
   best: number;
@@ -1490,6 +1608,13 @@ function OverCard({
   onDevBack?: () => void;
   /** 平衡测试打完后的自动 S。没有会话时不传。 */
   balanceReadout?: AutoBallReadout | null;
+  nickname?: string;
+  submittedClassic?: number;
+  submittedMinute?: number;
+  eligibility?: ReturnType<typeof hudEligibilityFlags>;
+  getTimeline?: () => import("@/lib/leaderboard/constants.ts").TimelineEvent[];
+  onRememberSubmit?: (mode: "classic" | "minute", nickname: string, score: number) => void;
+  onNicknameChange?: (name: string) => void;
 }) {
   const isRogue = playMode === "rogue" && rogue;
   const isBest = isRogue
@@ -1587,7 +1712,9 @@ function OverCard({
               </div>
             ))}
           </div>
-          {recap ? <RecapTable recap={recap} hideRogueDuplicates /> : null}
+          {recap ? (
+            <RecapTable recap={recap} hideRogueDuplicates nickname={nickname} onNicknameChange={onNicknameChange} />
+          ) : null}
         </div>
         <p className="pointer-events-none mb-2 text-center text-sm text-fg">
           {devMode ? "点击空白处返回沙盒" : "点击空白处返回主界面"}
@@ -1623,10 +1750,21 @@ function OverCard({
         </div>
         {recap ? (
           <div className="flex min-h-0 flex-1 flex-col border-t border-border text-left">
-            <RecapTable recap={recap} />
+            <RecapTable recap={recap} nickname={nickname} onNicknameChange={onNicknameChange} />
           </div>
         ) : null}
       </div>
+      {recap && eligibility && getTimeline && onRememberSubmit ? (
+        <SubmitBoardBlock
+          recap={recap}
+          flags={eligibility}
+          nickname={nickname}
+          submittedClassic={submittedClassic}
+          submittedMinute={submittedMinute}
+          getTimeline={getTimeline}
+          onRemember={onRememberSubmit}
+        />
+      ) : null}
       <button
         type="button"
         onClick={(e) => {
