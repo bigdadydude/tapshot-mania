@@ -24,7 +24,7 @@ export type SaveData = {
   gfx: Gfx;
   devUnlocked: boolean;
   ball: BallId;
-  /** Leaderboard nickname remembered on this device. Empty until first submit. */
+  /** Leaderboard nickname remembered on this device. Empty until the first confirmed name (first-play modal or settings). */
   nickname: string;
   /** Last classic score this device successfully submitted. Kept so older snapshots still parse. */
   submittedClassic: number;

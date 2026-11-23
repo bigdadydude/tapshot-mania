@@ -44,7 +44,7 @@ export type NameCommitResult =
   | { action: "error"; error: string; display: string };
 
 /**
- * Commit a recap name edit.
+ * Commit a settings name edit.
  * Unchanged (not dirty) focus/blur does not persist the default.
  * Empty/whitespace clears the saved name and shows the default.
  * A valid edit, including typing the default as a real change, is saved.
