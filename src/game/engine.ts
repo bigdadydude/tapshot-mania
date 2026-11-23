@@ -8,7 +8,7 @@ import { buzzerRejectsTap, champClutchAppliesHalfClock, isChampClutchWindow } fr
 import { miniMeStreakPerStack, streakAfterMake } from "./make-streak";
 import { touchesAntimatter } from "./antimatter-pickup";
 import { getTrainTunnel, restoreTrainTunnel, stepTrainTunnel, tunnelPassing, tunnelReserved, tunnelHoopMin, tunnelGeometry, collideTunnel } from "./train-tunnel.ts";
-import { collideTrainGantries, getTrainGantries, getTrainGantryWarnings } from "./train-gantry.ts";
+import { collideTrainGantries, createGantryDodgeWatch, getTrainGantries, getTrainGantryWarnings, noteGantryDodgeHit, resetGantryDodgeWatch, stepGantryDodgeWatch } from "./train-gantry.ts";
 import { createBirds, stepBirds, collideBirds, collideFrozenBirds, releaseBirdCarrier, hackerDropBirds, type BirdSkills, collideBirdGantries, birdOwnsBall, spawnBirdWave, type BirdKind, type BirdState } from "./birds.ts";
 import { createRocket, rocketLayout, releaseRocket, stepRocket, refillRocket, drawRocket } from "./rocket";
 import { SUPER, createSuper, superSwipe, superImpact, superBirdImpact, superToggle, superPulseShield, superBaseBonus, superScore, stepSuper, superDashVelocity, superLayout, drawSuper, drawSuperGhosts, drawSuperGas, drawSuperAura, superIsFrozen } from "./super";
@@ -36,7 +36,7 @@ import { rimArmPoints } from "./rim-arm";
 import { freezeNet, clearOfFrozenNet, touchesFrozenNet, shatterFrozenNet } from "./frost-net";
 import { boardGeom, braceColliders, clearSceneLayers, drawBoot, drawScene, paintBallSprite, hoopNetMotion } from "./render";
 import { loadSave, writeSave } from "./save";
-import { ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
+import { ballFuseLabel, ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { type HackerDir } from "./hacker-pad";
 import { HACKER_CHARGE, HACKER_RIPPLE, addHackerMake, aimTimedOut, beginChargeHold, chargeDisplayMakes, chargeHoldArmed, chargeIsFull, chargeLayerRatios, chargeMeterLayout, createHackerCharge, drawHackerCharge, drawHackerLensWarps, drawLandingArrow, drawRainPhone, pointerOnChargeMeter, pointerOnRainPhone, releaseChargeHold, settledHackerCharge, stepAimArrow, stepChargeDecay, stepChargeGlow, stepChargeHold, stepHackerRipples, createHackerProgress, hackerComboBonus, awardHackerArrow, bankHackerCombo, hackerClockScale, type HackerProgress, type HackerCharge, type HackerFlight, type HackerRipple } from "./hacker-charge";
@@ -48,7 +48,7 @@ import { createModifier, modifierName, type ModifierId, type StageModifier } fro
 import { getScene, getSceneId, setScene, type GrafKey, type SceneId } from "./scenes";
 import { beginTrafficAbsorption, collideTraffic, createTraffic, grantTrafficSafe, rainClearTraffic, stepTraffic, stepTrafficNearMiss, updateTrafficHackerSlide, trafficOutOfBounds } from "./traffic";
 import { TRAIN_INERTIA_K, restoreTrainScroll, getTrainScroll, resetTrainScroll, startTrainScroll, stepTrainScroll, trainGravScale, trainInertiaAccel } from "./train-bg";
-import { consumeBlueprintComboProtection, collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, blueprintRewardToast, BLUEPRINT_CLOCK_SECONDS, type BlueprintClock } from "./blueprint";
+import { consumeBlueprintComboProtection, collideBlueprint, consumeBlueprintLitForHole, getBlueprintClock, getBlueprintRewards, drainBlueprintRecapClears, drainBlueprintRewardEvents, resetBlueprint, resetBlueprintProgress, restoreBlueprintClock, settleBlueprintBasket, stepBlueprint, setBlueprintAllowSeconds, blueprintHudClockBudget, blueprintAppliesClockReward, blueprintRewardToast, BLUEPRINT_CLOCK_SECONDS, type BlueprintClock } from "./blueprint";
 import { drawTrafficAlerts, drawTrafficWorld } from "./traffic-render";
 import type { Ball, Callout, Gfx, Hoop, HudState, Particle, Phase, PlayMode, TrailPt, World } from "./types";
 import { FIRE_BLAZE, FIRE_IGNITE, FIRE_SMOKE, FIRE_WHITE, fireStage, isClothNet } from "./types";
@@ -80,6 +80,32 @@ import {
   devRevokeRogue,
   type RogueRun,
 } from "./rogue";
+import {
+  createRecapTracker,
+  noteRecapAward,
+  noteRecapClick,
+  noteRecapClock,
+  noteRecapCountedMake,
+  noteRecapHold,
+  noteRecapPeakCombo,
+  noteRecapPrisonFree,
+  noteRecapSearchlightBreaks,
+  noteRecapBlueprintClears,
+  noteRecapGantryDodges,
+  noteRecapSkillInput,
+  noteRecapSkillTime,
+  noteRecapMiss,
+  noteRecapTrafficAbsorbs,
+  noteRecapTrafficBurns,
+  noteRecapTrafficNearMiss,
+  resetRecapTracker,
+  shouldRecordBalanceTrial,
+  snapshotRunRecap,
+  syncBirdRecap,
+  syncTrafficRecap,
+  watchBirds,
+  watchTraffic,
+} from "./run-recap";
 
 export const GAME_REV = 332;
 
@@ -334,6 +360,8 @@ export function createGame(
   let balanceRescues = 0;
   let balanceUnattributedScore = 0;
   let balancePlainGainAcc = 0;
+  const recap = createRecapTracker();
+  const gantryWatch = createGantryDodgeWatch();
   audio.setMix(mix);
 
   let ball = makeBall(world, 1, ballRadius(world.ballR, ballId));
@@ -627,12 +655,25 @@ export function createGame(
     shotMissed = false;
     comboRescue = "approach";
     shotAirborne = false;
+    recapMissNoted = false;
     resetTrail();
+  }
+
+  function noteRecapOpenMiss() {
+    if (shotOpen && !shotMade && !recapMissNoted) {
+      noteRecapMiss(recap, true, false);
+      recapMissNoted = true;
+    }
+  }
+
+  function startRecapShotAttempt() {
+    recapMissNoted = false;
   }
 
   function markShotMissed() {
     if (shotOpen && !shotMade) {
       shotMissed = true;
+      noteRecapOpenMiss();
       // Count one completed miss per shot, only after the balance minute is live.
       if (balanceSession && isMinuteMode() && timerArmed) balanceMisses += 1;
     }
@@ -746,6 +787,7 @@ export function createGame(
     chain = null;
     resetPrisonCombo();
     refillPrisonTimer();
+    noteRecapPrisonFree(recap);
     callouts.push({
       text: "释放",
       x: hoop.x,
@@ -892,6 +934,8 @@ export function createGame(
   let shotMissed = false;
   /** Left the floor during this attempt �?avoids marking miss on takeoff overlap. */
   let shotAirborne = false;
+  /** Recap-only: this attempt was already counted as 不中. Combo still uses shotMissed. */
+  let recapMissNoted = false;
   // Natural ricochets do not spend the rescue; only a jump after contact starts it.
   type ComboRescue = "approach" | "contact" | "rescue" | "secondContact" | "secondRescue" | "spent";
   let comboRescue: ComboRescue = "approach";
@@ -1404,6 +1448,9 @@ export function createGame(
   }
 
   function applyDevStatLocks() {
+    noteRecapPeakCombo(recap, streak);
+    syncBirdRecap(recap, birds);
+    syncTrafficRecap(recap, traffic);
     if (balanceSession) balancePeakCombo = Math.max(balancePeakCombo, streak);
     if (!devOn) return;
     if (devScoreLock !== null) {
@@ -1425,6 +1472,10 @@ export function createGame(
     const timer01 = raw01;
     const displayScore =
       isRogueMode() && rogueRun && phase === "over" ? rogueTotalScore() : score;
+    // Catch totals updated later in this same physics step (clears, hits, catches).
+    noteRecapBlueprintClears(recap, drainBlueprintRecapClears());
+    syncBirdRecap(recap, birds);
+    syncTrafficRecap(recap, traffic);
     onHud({
       phase,
       score: displayScore,
@@ -1479,6 +1530,14 @@ export function createGame(
       ballId,
       playMode,
       sceneId: getSceneId(),
+      recap: snapshotRunRecap(recap, {
+        playMode,
+        ballId,
+        ballLabel: ballFuseLabel(ballId, fuseIds()),
+        sceneId: getSceneId(),
+        gameRev: GAME_REV,
+        score: displayScore,
+      }),
       prison: prisonHud(),
       rogue: toRogueHud(isRogueMode() ? rogueRun : null),
     });
@@ -1804,6 +1863,7 @@ export function createGame(
       onObjectAbsorbed: rewardAbsorbedObjects,
       getHackerKnockdown: () => hackerStrikeSweep,
       onHackerKnockdown: () => noteRainDropCombo(1),
+      onSearchlightOut: () => noteRecapSearchlightBreaks(recap),
     };
   }
 
@@ -1811,12 +1871,14 @@ export function createGame(
     if (getSceneId() === id) return;
     setScene(id);
     birds = createBirds();
+    watchBirds(recap);
     traffic = createTraffic();
+    watchTraffic(recap);
     ball.trafficSafe = false;
     ball.sootLeft = 0; hoop.sootLeft = 0; if (other) other.sootLeft = 0;
     clearSceneLayers();
     reloadSceneArt();
-    if (id === "train") resetTrainScroll();
+    if (id === "train") { resetTrainScroll(); resetGantryDodgeWatch(gantryWatch); }
     if (id === "blueprint") resetBlueprint();
     persist();
   }
@@ -1917,6 +1979,8 @@ export function createGame(
     prevBallX = x0;
     prevBallY = y0;
     resetShotFlags();
+    noteRecapOpenMiss();
+    startRecapShotAttempt();
     shotOpen = true;
     shotMade = false;
     shotMissed = false;
@@ -2161,6 +2225,7 @@ export function createGame(
     });
     if (blueprintOn()) {
       const bonus = consumeBlueprintLitForHole();
+      noteRecapBlueprintClears(recap, drainBlueprintRecapClears());
       showBlueprintRewards();
       if (bonus > 0) {
         // 开洞当下加进得分。不进待领，不等下一次进球，不乘冠军时刻。
@@ -2975,6 +3040,8 @@ export function createGame(
     balanceRescues = 0;
     balanceUnattributedScore = 0;
     balancePlainGainAcc = 0;
+    resetRecapTracker(recap);
+    resetGantryDodgeWatch(gantryWatch);
   }
 
   function balanceTelemetryLive() {
@@ -2982,14 +3049,17 @@ export function createGame(
   }
 
   function noteBalanceClick() {
+    noteRecapClick(recap, phase === "playing");
     if (balanceTelemetryLive()) balanceClicks += 1;
   }
 
   function noteBalanceHold() {
+    noteRecapHold(recap, phase === "playing");
     if (balanceTelemetryLive()) balanceHolds += 1;
   }
 
   function noteBalanceSkillInput() {
+    noteRecapSkillInput(recap, phase === "playing");
     if (balanceTelemetryLive()) balanceSkillInputs += 1;
   }
 
@@ -3108,7 +3178,9 @@ export function createGame(
     syncBlueprintClockReward();
     birdBaseBonus = 0;
     birds = createBirds();
+    watchBirds(recap);
     traffic = createTraffic();
+    watchTraffic(recap);
     ball.trafficSafe = false;
     resetBalanceTrialCounters();
     phase = "playing";
@@ -3145,6 +3217,7 @@ export function createGame(
     madeCount = 0;
     blueprintMadeCount = 0;
     resetTrainScroll();
+    resetGantryDodgeWatch(gantryWatch);
     resetBlueprintProgress();
     ball.sootLeft = 0;
     if (isRogueMode()) {
@@ -3179,6 +3252,7 @@ export function createGame(
     shotMissed = false;
     comboRescue = "approach";
     shotAirborne = false;
+    recapMissNoted = false;
     opener = 0;
     bgmOn = false;
     recoverTo = 0;
@@ -3252,7 +3326,13 @@ export function createGame(
 
   function recordBalanceTrial(endReason: "time" | "retry" = "time") {
     // A test run is valid only after its first make has armed the minute clock.
-    if (!balanceSession || !devOn || !isMinuteMode() || !timerArmed || balanceTrialRecorded) return;
+    if (!balanceSession || !shouldRecordBalanceTrial({
+      hasSession: true,
+      devOn,
+      minuteMode: isMinuteMode(),
+      timerArmed,
+      alreadyRecorded: balanceTrialRecorded,
+    })) return;
     const isBaseline = ballId === balanceSession.baseline;
     const skillState: SkillState = isBaseline ? "baseline" : balanceSkillOn ? "on" : "off";
     const effectiveSeconds = Math.max(0, hackerClockBudget() - timer);
@@ -3326,11 +3406,13 @@ export function createGame(
     combo = 0;
     streak = 0;
     comboCounting = true;
+    noteRecapOpenMiss();
     shotOpen = false;
     shotMade = false;
     shotMissed = false;
     comboRescue = "approach";
     shotAirborne = false;
+    recapMissNoted = false;
     opener = 0;
     bgmOn = false;
     recoverTo = 0;
@@ -3523,11 +3605,14 @@ export function createGame(
     hackerDir = null;
     hackerRimSlide = null;
     birds = createBirds();
+    watchBirds(recap);
     traffic = createTraffic();
+    watchTraffic(recap);
     ball.trafficSafe = false;
     madeCount = 0;
     blueprintMadeCount = 0;
     resetTrainScroll();
+    resetGantryDodgeWatch(gantryWatch);
     resetBlueprintProgress(true); // Same rogue run keeps permanent green-block rewards.
     ball.sootLeft = 0;
     score = 0;
@@ -3559,6 +3644,7 @@ export function createGame(
     shotMissed = false;
     comboRescue = "approach";
     shotAirborne = false;
+    recapMissNoted = false;
     opener = 0;
     overRim = false;
     rimHits = 0;
@@ -3838,6 +3924,8 @@ export function createGame(
     scoreGateHoop = null;
     scoredLock = 0;
     resetShotFlags();
+    noteRecapOpenMiss();
+    startRecapShotAttempt();
     shotOpen = true;
     shotMade = false;
     shotMissed = false;
@@ -4087,6 +4175,8 @@ export function createGame(
     ball.scored = false;
     scoreGateHoop = null;
     resetShotFlags();
+    noteRecapOpenMiss();
+    startRecapShotAttempt();
     shotOpen = true; shotMade = false; shotMissed = false; shotAirborne = true; comboRescue = "approach";
     hint = false;
     noteBalanceSkillEffect({ trigger: true, rescue: true });
@@ -4251,6 +4341,7 @@ export function createGame(
     // Mid-air re-tap on an unfinished attempt: boost only �?do not break combo.
     if (shotOpen && !shotMade && !shotMissed) {
       hint = false;
+      if (recapMissNoted) startRecapShotAttempt();
       if (legacyHole()) {
         const dx = hoop.x - ball.x;
         const dy = hoop.y - ball.y;
@@ -4290,6 +4381,8 @@ export function createGame(
     ball.squash = 1.08;
     ball.scored = false;
     resetShotFlags();
+    noteRecapOpenMiss();
+    startRecapShotAttempt();
     shotOpen = true;
     shotMade = false;
     shotMissed = false;
@@ -4415,6 +4508,7 @@ export function createGame(
       if(p.x>=bar.x-10 && p.x<=bar.x+bar.w+10 && p.y>=bar.y-10 && p.y<=bar.y+bar.h+10){
         if(superBall.dash){ball.vx=superBall.dash.vx;ball.vy=superBall.dash.vy;superBall.dash=null;}
         superToggle(superBall);
+        noteBalanceSkillInput();
         superTapUndo=null;
         superBall.pointer={id:e.pointerId,x:p.x,y:p.y,used:true};
         try{canvas.setPointerCapture(e.pointerId);}catch{}
@@ -4524,6 +4618,7 @@ export function createGame(
           if(!canParry && superTapUndo && superBall.clock-superTapUndo.at<=SUPER.swipeCancel) restoreSuperTapUndo();
           else superTapUndo=null;
           const result=superSwipe(superBall,ball,p.x-start.x,p.y-start.y);
+          noteBalanceSkillInput();
           if(result==='dash'){prepareVectorShot();}
           if(result==='parry'){
             if (releaseBirdCarrier(birds)) rewardBirdStuns(1);
@@ -4678,7 +4773,9 @@ export function createGame(
     syncBlueprintClockReward();
     birdBaseBonus = 0;
     birds = createBirds();
+    watchBirds(recap);
     traffic = createTraffic();
+    watchTraffic(recap);
     ball.trafficSafe = false;
     phase = "title";
     paused = false;
@@ -4696,6 +4793,7 @@ export function createGame(
     madeCount = 0;
     blueprintMadeCount = 0;
     resetTrainScroll();
+    resetGantryDodgeWatch(gantryWatch);
     resetBlueprint();
     ball.sootLeft = 0;
     hackerDir = null;
@@ -4733,6 +4831,7 @@ export function createGame(
     shotMissed = false;
     comboRescue = "approach";
     shotAirborne = false;
+    recapMissNoted = false;
     other = null;
     hoop = makeHoop(world, -1, true);
     applyRogueHoopScale(hoop);
@@ -4836,6 +4935,7 @@ export function createGame(
         if (!devOn) enterSandbox();
         devScene = cmd.id;
         traffic = createTraffic();
+        watchTraffic(recap);
         ball.trafficSafe = false;
         if (cmd.id !== "void") {
           applyScenePack(cmd.id);
@@ -5444,10 +5544,15 @@ export function createGame(
         hoopX: hoop.x,
         hoopY: hoop.y,
       }, world, { generationHold: holeOn });
+      noteRecapBlueprintClears(recap, drainBlueprintRecapClears());
       showBlueprintRewards();
     }
     if (trafficEnabled() && madeCount > 0) {
-      rewardAbsorbedObjects(stepTraffic(traffic, world, dt));
+      {
+        const absorbed = stepTraffic(traffic, world, dt);
+        noteRecapTrafficAbsorbs(recap, absorbed);
+        rewardAbsorbedObjects(absorbed);
+      }
       if (holeOn) beginTrafficAbsorption(traffic, holeX, holeY);
     }
     ball.trafficSafe = trafficEnabled() && traffic.safeLeft > 0;
@@ -5489,16 +5594,18 @@ export function createGame(
         drain = dt * (1 - t * 0.78);
       }
       timer -= drain;
+      noteRecapClock(recap, drain);
+      const skillBusy =
+        quantumTunnelLeft > 0 ||
+        Boolean(boltStorm) ||
+        holeOn ||
+        champHalfClock ||
+        rewindActive ||
+        (vector.burst > 0) ||
+        hoop.frostLeft > 0 ||
+        Boolean(other && other.frostLeft > 0);
+      noteRecapSkillTime(recap, drain, { busy: skillBusy, locked: boltOverheated });
       if (balanceTelemetryLive() && balanceSkillOn && ballId !== balanceSession?.baseline) {
-        const skillBusy =
-          quantumTunnelLeft > 0 ||
-          Boolean(boltStorm) ||
-          holeOn ||
-          champHalfClock ||
-          rewindActive ||
-          (vector.burst > 0) ||
-          hoop.frostLeft > 0 ||
-          Boolean(other && other.frostLeft > 0);
         if (skillBusy) balanceSkillActiveSeconds += drain;
         // Overheat is lost time (ball locked), not time the skill is active.
         // Count the same countdown drain, and not the dive frame that starts it.
@@ -5834,6 +5941,7 @@ export function createGame(
         hackerStrikeSweep = {fromX:prevBallX,fromY:prevBallY,toX:ball.x,toY:ball.y};
         const dropped = trainBackdropOn() ? hackerDropBirds(birds, ball, {x:prevBallX,y:prevBallY}) : 0;
         const cars = trafficEnabled() ? rainClearTraffic(traffic, world, ball) : 0;
+        noteRecapTrafficBurns(recap, cars);
         noteRainDropCombo(dropped + cars);
       }
       if (!hackerScripted) touchHackerStand();
@@ -5844,7 +5952,11 @@ export function createGame(
         }
         const incomingVx = ball.vx, incomingVy = ball.vy;
         const route = getTrainScroll();
-        if (collideTunnel(world, ball, prevBallX, prevBallY, dt) || collideTrainGantries(world, route, ball, prevBallX, prevBallY, route.near - trainBefore, dt, isSuper() ? (nx, ny) => superCancelsSolid(nx, ny) : undefined)) {
+        const gantryHit = { id: undefined as number | undefined };
+        const hitTunnel = collideTunnel(world, ball, prevBallX, prevBallY, dt);
+        const hitGantry = !hitTunnel && collideTrainGantries(world, route, ball, prevBallX, prevBallY, route.near - trainBefore, dt, isSuper() ? (nx, ny) => superCancelsSolid(nx, ny) : undefined, gantryHit);
+        if (hitGantry && gantryHit.id !== undefined) noteGantryDodgeHit(gantryWatch, gantryHit.id);
+        if (hitTunnel || hitGantry) {
           vectorCollision(incomingVx, incomingVy);
           shotAirborne = true;
           // Do not let the displacement caused by a collision count as a basket.
@@ -5854,6 +5966,12 @@ export function createGame(
             if (gfx.impact) camShake = Math.max(camShake, 0.1);
           }
         }
+      }
+      if (trainBackdropOn() && phase === "playing") {
+        const route = getTrainScroll();
+        const pad = world.w * 2;
+        const visible = getTrainGantries(world, route, pad);
+        noteRecapGantryDodges(recap, stepGantryDodgeWatch(gantryWatch, world.w, visible, { tunnelBlocked: Boolean(route.tunnelBlocked) }));
       }
       if (!hackerScripted && blueprintOn() && quantumTunnelLeft <= 0) {
         const incomingVx = ball.vx;
@@ -5917,6 +6035,7 @@ export function createGame(
           emitHud();
         }
         if (traffic.burnScore > 0) {
+          noteRecapTrafficBurns(recap, 1);
           score += traffic.burnScore;
           if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
           noteBest();
@@ -5937,7 +6056,10 @@ export function createGame(
         stepTrafficNearMiss(traffic, world, ball, quantumTunnelLeft > 0);
         ball.trafficNearMiss = traffic.nearMiss;
         if (nearMissBefore !== traffic.nearMiss) {
-          if (traffic.nearMiss > nearMissBefore) callouts.push({ text: `擦车而过 ×${traffic.nearMiss}`, x: ball.x, y: ball.y - ball.r * 2, life: 0.8, max: 0.8, kind: "base" });
+          if (traffic.nearMiss > nearMissBefore) {
+            noteRecapTrafficNearMiss(recap, traffic.nearMiss - nearMissBefore);
+            callouts.push({ text: `擦车而过 ×${traffic.nearMiss}`, x: ball.x, y: ball.y - ball.r * 2, life: 0.8, max: 0.8, kind: "base" });
+          }
           emitHud();
         }
         if (vector.burst <= 0 && trafficOutOfBounds(traffic, world, ball)) grantTrafficSafe(traffic, ball);
@@ -6599,7 +6721,9 @@ export function createGame(
       syncChain();
       return;
     }
-    // Wrap is not a miss: clear airborne so the post-wrap floor contact does not markShotMissed.
+    // Combo still does not treat wrap as a miss. Recap counts a default wrap-off once.
+    if (getBall(ballId).wrap !== "height") noteRecapOpenMiss();
+    // Clear airborne so the post-wrap floor contact does not markShotMissed again.
     shotAirborne = false;
     if (getBall(ballId).wrap === "height") {
       // Spawn on the approach side of the active hoop (same rule as classic wrap).
@@ -6943,6 +7067,7 @@ export function createGame(
     }
 
     madeCount += 1;
+    noteRecapCountedMake(recap);
     if (!ghost && isHacker()) addHackerMake(hackerCharge);
     if (!ghost) blueprintMadeCount += 1;
     if (trainBackdropOn()) startTrainScroll();
@@ -6963,6 +7088,7 @@ export function createGame(
     }
 
     if (shackled && !clutch) {
+      noteRecapAward(recap, { streak, awarded: 0, clutch: false });
       noteGraf();
       if (!timerArmed) timerArmed = true;
       audio.swish();
@@ -7170,6 +7296,14 @@ export function createGame(
       rogueRun.peakStreak = Math.max(rogueRun.peakStreak, streak);
       rogueRun.peakStreakAll = Math.max(rogueRun.peakStreakAll, streak);
       rogueRun.peakMake = Math.max(rogueRun.peakMake, gain);
+    }
+    {
+      let awarded = payout;
+      if (!ghost && isRogueMode() && rogueRun) {
+        const minis = miniMeStacks(rogueRun);
+        if (minis > 0) awarded += Math.round(gain / 2) * minis;
+      }
+      noteRecapAward(recap, { streak, awarded, clutch });
     }
     noteBest();
     if (!timerArmed) timerArmed = true;

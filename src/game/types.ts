@@ -200,6 +200,44 @@ export type PrisonHud = {
   freeLeft: number;
 };
 
+export type RunRecapMapStats = {
+  trafficNearMisses?: number;
+  trafficBurns?: number;
+  trafficAbsorbs?: number;
+  trafficHits?: number;
+  birdStuns?: number;
+  birdAbsorbs?: number;
+  birdIceBreaks?: number;
+  eagleCatches?: number;
+  prisonFrees?: number;
+  searchlightBreaks?: number;
+  blueprintClears?: number;
+  gantryDodges?: number;
+};
+
+/** End-of-run summary for the game-over recap table. */
+export type RunRecap = {
+  playMode: PlayMode;
+  ballId: BallId;
+  ballLabel: string;
+  sceneId: SceneId;
+  sceneLabel: string;
+  gameRev: number;
+  score: number;
+  peakCombo: number;
+  peakMake: number;
+  durationSeconds: number;
+  makes: number;
+  misses: number;
+  clicks: number;
+  holds: number;
+  skillInputs: number;
+  skillActiveSeconds: number;
+  skillLockSeconds: number;
+  clutchMakes: number;
+  map: RunRecapMapStats;
+};
+
 export type HudState = {
   phase: Phase;
   score: number;
@@ -207,6 +245,8 @@ export type HudState = {
   combo: number;
   /** Current cumulative emergency near-miss base-score bonus. */
   trafficNearMiss: number;
+  /** This run's recap; assembled throughout play and read at game over. */
+  recap: RunRecap | null;
   rank: string;
   muted: boolean;
   hint: boolean;

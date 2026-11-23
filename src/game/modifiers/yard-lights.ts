@@ -2,6 +2,7 @@
 
 import type { Ball, Hoop, World } from "../types";
 import type { ModifierHost, StageModifier, YardLightsHud } from "../modifiers";
+import { searchlightBreaksOnHit } from "../searchlight-break.ts";
 import { artImage } from "../art";
 import { hackerDropProjectile } from "../hacker-projectiles.ts";
 import {
@@ -789,7 +790,7 @@ export function createYardLights(): StageModifier {
   function hitLight(side: "left" | "right", host: ModifierHost) {
     const fx = lightFx[side];
     fx.shake = 0.38;
-    if (fx.out > 0) {
+    if (!searchlightBreaksOnHit(fx.out)) {
       // Stack stop time while already down.
       fx.out += LIGHT_OUT;
       host.hit("glass");
@@ -798,6 +799,7 @@ export function createYardLights(): StageModifier {
     fx.out = LIGHT_OUT;
     fx.wake = 0;
     snapSpotHome(side, host.world);
+    host.onSearchlightOut?.();
     host.hit("glass");
   }
 
