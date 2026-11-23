@@ -1,6 +1,6 @@
-import type { BallId } from "../../game/balls.ts";
+import { BALLS, type BallId } from "../../game/balls.ts";
 import type { PlayMode, RunRecap, RunRecapMapStats } from "../../game/types.ts";
-import type { SceneId } from "../../game/scenes.ts";
+import { SCENES as SCENE_PACKS, type SceneId } from "../../game/scenes.ts";
 import { isTimelineEventKind } from "../../game/run-timeline.ts";
 import {
   TIMELINE_MAX_EVENTS,
@@ -43,7 +43,22 @@ function asNum(value: unknown, fallback = 0): number {
 }
 
 const PLAY_MODES: PlayMode[] = ["classic", "minute", "rogue"];
-const SCENES: SceneId[] = ["street", "prison", "overpass", "train", "blueprint"];
+const SCENES: SceneId[] = SCENE_PACKS.map((scene) => scene.id);
+const BALL_IDS: BallId[] = BALLS.map((ball) => ball.id);
+
+export type LeaderboardListQuery = {
+  mode: LeaderboardMode;
+  sceneId: SceneId;
+  ballId: BallId;
+};
+
+function isKnownSceneId(value: unknown): value is SceneId {
+  return typeof value === "string" && (SCENES as string[]).includes(value);
+}
+
+function isKnownBallId(value: unknown): value is BallId {
+  return typeof value === "string" && (BALL_IDS as string[]).includes(value);
+}
 
 function parseMap(raw: unknown): RunRecapMapStats {
   if (!raw || typeof raw !== "object") return {};
@@ -70,7 +85,7 @@ function parseMap(raw: unknown): RunRecapMapStats {
   return map;
 }
 
-function parseRecap(raw: unknown): RunRecap | null {
+export function parseRecap(raw: unknown): RunRecap | null {
   if (!raw || typeof raw !== "object") return null;
   const src = raw as Record<string, unknown>;
   if (!PLAY_MODES.includes(src.playMode as PlayMode)) return null;
@@ -150,10 +165,26 @@ function parseFlags(raw: unknown): EligibilityFlags | null {
   };
 }
 
-export function parseListMode(raw: unknown): ParseResult<LeaderboardMode> {
-  const mode = raw && typeof raw === "object" ? (raw as { mode?: unknown }).mode : raw;
-  if (typeof mode !== "string" || !isLeaderboardMode(mode)) return { ok: false, error: "模式无效" };
-  return { ok: true, value: mode };
+const RUN_ID_MAX = 128;
+const RUN_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+export function parseRunId(raw: unknown): ParseResult<string> {
+  const id = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as { id?: unknown }).id : raw;
+  if (typeof id !== "string") return { ok: false, error: "找不到该成绩" };
+  const trimmed = id.trim();
+  if (!trimmed || trimmed.length > RUN_ID_MAX || !RUN_ID_RE.test(trimmed)) {
+    return { ok: false, error: "找不到该成绩" };
+  }
+  return { ok: true, value: trimmed };
+}
+
+export function parseListMode(raw: unknown): ParseResult<LeaderboardListQuery> {
+  if (!raw || typeof raw !== "object") return { ok: false, error: "模式无效" };
+  const src = raw as { mode?: unknown; sceneId?: unknown; ballId?: unknown };
+  if (typeof src.mode !== "string" || !isLeaderboardMode(src.mode)) return { ok: false, error: "模式无效" };
+  if (!isKnownSceneId(src.sceneId)) return { ok: false, error: "场景无效" };
+  if (!isKnownBallId(src.ballId)) return { ok: false, error: "球种无效" };
+  return { ok: true, value: { mode: src.mode, sceneId: src.sceneId, ballId: src.ballId } };
 }
 
 export function parseSubmitPayload(raw: unknown): ParseResult<SubmitRunInput> {

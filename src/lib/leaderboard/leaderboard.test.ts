@@ -13,10 +13,10 @@ import {
   timelineScoreTotal,
 } from "./anticheat.ts";
 import { DEFAULT_NICKNAME, LEADERBOARD_LIMIT, type EligibilityFlags, type TimelineEvent } from "./constants.ts";
-import { isRunEligible, shouldOfferSubmit, runEligibilityFlags } from "./eligibility.ts";
+import { isRunEligible, lastSubmittedFor, shouldOfferSubmit, runEligibilityFlags } from "./eligibility.ts";
 import { commitDisplayName, displayNickname, normalizeNickname, parseSavedNickname, visibleCharCount } from "./nickname.ts";
-import { parseListMode, parseSubmitPayload } from "./payload.ts";
-import { publicRowsFromStored, toPublicRow } from "./public-row.ts";
+import { parseListMode, parseRunId, parseSubmitPayload } from "./payload.ts";
+import { PUBLIC_DETAIL_SELECT, publicRowsFromStored, toPublicDetail, toPublicRow } from "./public-row.ts";
 
 function recap(partial: Partial<RunRecap> = {}): RunRecap {
   return {
@@ -299,8 +299,102 @@ test("submit payload rejects malformed or non-finite scores and empty nicknames"
   assert.equal(parseSubmitPayload({ ...good, mode: "rogue" }).ok, false);
   assert.equal(parseSubmitPayload({ ...good, recap: recap({ playMode: "minute" }) }).ok, false);
   assert.equal(parseSubmitPayload({ ...good, recap: recap({ score: Number.NaN }) }).ok, false);
-  assert.equal(parseListMode({ mode: "classic" }).ok, true);
-  assert.equal(parseListMode({ mode: "rogue" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic", sceneId: "street", ballId: "plain" }).ok, true);
+  assert.equal(parseListMode({ mode: "minute", sceneId: "blueprint", ballId: "time" }).ok, true);
+  assert.equal(parseListMode({ mode: "rogue", sceneId: "street", ballId: "plain" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic", sceneId: "street" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic", ballId: "plain" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic", sceneId: "street", ballId: "random" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic", sceneId: "rogue", ballId: "plain" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic", sceneId: "street", ballId: "anti" }).ok, false);
+  const parsed = parseListMode({ mode: "classic", sceneId: "prison", ballId: "frost" });
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) {
+    assert.deepEqual(parsed.value, { mode: "classic", sceneId: "prison", ballId: "frost" });
+  }
+});
+
+test("last submitted score is keyed by mode, scene, and ball, not the old mode totals", () => {
+  const save = {
+    submittedClassic: 80,
+    submittedMinute: 55,
+    submittedByBoard: {
+      "classic:street:plain": 40,
+      "classic:prison:plain": 90,
+      "minute:street:plain": 12,
+    },
+  };
+  assert.equal(lastSubmittedFor("classic", "street", "plain", save), 40);
+  assert.equal(lastSubmittedFor("classic", "prison", "plain", save), 90);
+  assert.equal(lastSubmittedFor("minute", "street", "plain", save), 12);
+  assert.equal(lastSubmittedFor("classic", "street", "frost", save), 0);
+  assert.equal(lastSubmittedFor("classic", "overpass", "plain", { submittedClassic: 80, submittedMinute: 55 }), 0);
+  assert.equal(
+    shouldOfferSubmit({
+      mode: "classic",
+      score: 50,
+      lastSubmitted: lastSubmittedFor("classic", "street", "frost", save),
+      flags: flags(),
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOfferSubmit({
+      mode: "classic",
+      score: 50,
+      lastSubmitted: lastSubmittedFor("classic", "prison", "plain", save),
+      flags: flags(),
+    }),
+    false,
+  );
+});
+
+test("parseRunId accepts a compact id or uuid and rejects missing or invalid values", () => {
+  assert.deepEqual(parseRunId({ id: "run-a" }), { ok: true, value: "run-a" });
+  assert.equal(parseRunId({ id: "550e8400-e29b-41d4-a716-446655440000" }).ok, true);
+  assert.equal(parseRunId("flagged").ok, true);
+  assert.equal(parseRunId({}).ok, false);
+  assert.equal(parseRunId({ id: "" }).ok, false);
+  assert.equal(parseRunId({ id: "   " }).ok, false);
+  assert.equal(parseRunId({ id: "bad id" }).ok, false);
+  assert.equal(parseRunId({ id: "a/b" }).ok, false);
+  assert.equal(parseRunId(null).ok, false);
+  assert.equal(parseRunId({ id: "x".repeat(129) }).ok, false);
+  const failed = parseRunId({ id: "" });
+  assert.equal(failed.ok, false);
+  if (!failed.ok) assert.equal(failed.error, "找不到该成绩");
+});
+
+test("public run detail exposes recap stats and drops timeline and review flags", () => {
+  const stored = {
+    id: "abc",
+    nickname: "阿强",
+    score: 88,
+    peak_combo: 12,
+    recap: recap({ score: 88, peakCombo: 12 }),
+    timeline: scores(88),
+    flags: flags(),
+    review_flags: ["score_mismatch"],
+  };
+  const detail = toPublicDetail(stored);
+  assert.ok(detail);
+  assert.deepEqual(detail, {
+    id: "abc",
+    nickname: "阿强",
+    score: 88,
+    peakCombo: 12,
+    recap: recap({ score: 88, peakCombo: 12 }),
+  });
+  assert.equal("timeline" in detail, false);
+  assert.equal("flags" in detail, false);
+  assert.equal("reviewFlags" in detail, false);
+  assert.equal("review_flags" in detail, false);
+  assert.equal(PUBLIC_DETAIL_SELECT.includes("timeline"), false);
+  assert.equal(PUBLIC_DETAIL_SELECT.includes("flags"), false);
+  assert.equal(PUBLIC_DETAIL_SELECT.includes("review_flags"), false);
+  assert.equal(toPublicDetail({ ...stored, recap: null }), null);
+  assert.equal(toPublicDetail({ ...stored, id: "" }), null);
 });
 
 test("finite score mismatch is still a valid payload so the server can flag and accept it", () => {

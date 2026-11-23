@@ -15,6 +15,7 @@ test("old saves without nickname fields default safely and keep other data untou
   assert.equal(fields.nickname, "");
   assert.equal(fields.submittedClassic, 0);
   assert.equal(fields.submittedMinute, 0);
+  assert.deepEqual(fields.submittedByBoard, {});
   assert.equal(displayNickname(fields.nickname), "玩家");
 });
 
@@ -29,6 +30,7 @@ test("keeps a stored nickname and last submitted scores", () => {
   assert.equal(fields.nickname, "阿强");
   assert.equal(fields.submittedClassic, 80);
   assert.equal(fields.submittedMinute, 55);
+  assert.deepEqual(fields.submittedByBoard, {});
 });
 
 test("invalid stored nickname or submitted scores fall back without throwing", () => {
@@ -40,4 +42,26 @@ test("invalid stored nickname or submitted scores fall back without throwing", (
   assert.equal(fields.nickname, "");
   assert.equal(fields.submittedClassic, 0);
   assert.equal(fields.submittedMinute, 0);
+  assert.deepEqual(fields.submittedByBoard, {});
+});
+
+test("parses a per-board submitted map and ignores invalid entries", () => {
+  const fields = leaderboardSaveFieldsFrom({
+    version: 13,
+    nickname: "阿强",
+    submittedClassic: 80,
+    submittedMinute: 55,
+    submittedByBoard: {
+      "classic:street:plain": 40,
+      "minute:prison:frost": 22,
+      "classic:street:rocket": Number.NaN,
+      "bad": "nope",
+    },
+  });
+  assert.equal(fields.submittedClassic, 80);
+  assert.equal(fields.submittedMinute, 55);
+  assert.deepEqual(fields.submittedByBoard, {
+    "classic:street:plain": 40,
+    "minute:prison:frost": 22,
+  });
 });

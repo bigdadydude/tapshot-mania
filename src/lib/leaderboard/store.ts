@@ -1,11 +1,17 @@
 import { reviewFlagsFor } from "./anticheat.ts";
 import {
   LEADERBOARD_LIMIT,
-  type LeaderboardMode,
+  type PublicLeaderboardDetail,
   type PublicLeaderboardRow,
 } from "./constants.ts";
-import type { SubmitRunInput } from "./payload.ts";
-import { publicRowsFromStored, type StoredPublicFields } from "./public-row.ts";
+import type { LeaderboardListQuery, SubmitRunInput } from "./payload.ts";
+import {
+  PUBLIC_DETAIL_SELECT,
+  publicRowsFromStored,
+  toPublicDetail,
+  type StoredPublicDetail,
+  type StoredPublicFields,
+} from "./public-row.ts";
 
 /** Minimal query surface satisfied by getSql(). Kept local so tests need not load @/lib/db. */
 export type LeaderboardSql = {
@@ -14,17 +20,27 @@ export type LeaderboardSql = {
 
 export async function listPublicBoard(
   sql: LeaderboardSql,
-  mode: LeaderboardMode,
+  query: LeaderboardListQuery,
 ): Promise<PublicLeaderboardRow[]> {
   const rows = await sql.query<StoredPublicFields>(
     `select id, nickname, ball_label, score, peak_combo
      from leaderboard_runs
-     where mode = $1
+     where mode = $1 and scene_id = $2 and ball_id = $3
      order by score desc, peak_combo desc, submitted_at asc
-     limit $2`,
-    [mode, LEADERBOARD_LIMIT],
+     limit $4`,
+    [query.mode, query.sceneId, query.ballId, LEADERBOARD_LIMIT],
   );
   return publicRowsFromStored(rows);
+}
+
+export async function getPublicRun(
+  sql: LeaderboardSql,
+  id: string,
+): Promise<PublicLeaderboardDetail | null> {
+  const rows = await sql.query<StoredPublicDetail>(PUBLIC_DETAIL_SELECT, [id]);
+  const row = rows[0];
+  if (!row) return null;
+  return toPublicDetail(row);
 }
 
 export async function insertLeaderboardRun(

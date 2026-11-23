@@ -26,10 +26,12 @@ export type SaveData = {
   ball: BallId;
   /** Leaderboard nickname remembered on this device. Empty until first submit. */
   nickname: string;
-  /** Last classic score this device successfully submitted. */
+  /** Last classic score this device successfully submitted. Kept so older snapshots still parse. */
   submittedClassic: number;
-  /** Last 1-minute score this device successfully submitted. */
+  /** Last 1-minute score this device successfully submitted. Kept so older snapshots still parse. */
   submittedMinute: number;
+  /** Last submitted score per `mode:sceneId:ballId` board. */
+  submittedByBoard: Record<string, number>;
 };
 
 const defaults: SaveData = {

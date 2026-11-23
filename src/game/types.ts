@@ -265,6 +265,8 @@ export type HudState = {
   nickname: string;
   submittedClassic: number;
   submittedMinute: number;
+  /** Last submitted score per mode+scene+ball board. */
+  submittedByBoard: Record<string, number>;
 };
 
 export type World = {
