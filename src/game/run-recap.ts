@@ -296,7 +296,6 @@ export function recapRows(
     { label: "进球", value: `${recap.makes}` },
     { label: "不中", value: `${recap.misses}` },
     { label: "点击次数", value: `${recap.clicks}` },
-    { label: "长按次数", value: `${recap.holds}` },
     { label: "技能使用", value: `${recap.skillInputs}` },
   );
   if (recap.skillActiveSeconds > 0) {

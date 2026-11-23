@@ -114,7 +114,6 @@ test("recap rows hide optional lines until real counts exist", () => {
     "进球",
     "不中",
     "点击次数",
-    "长按次数",
     "技能使用",
   ]);
   assert.equal(recapRows(empty).find((row) => row.label === "版本")?.value, "r332");
