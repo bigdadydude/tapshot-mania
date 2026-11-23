@@ -1,3 +1,5 @@
+import type { RunRecap } from "../../game/types.ts";
+
 /** Player-facing notice on the board and on a first submit. */
 export const LEADERBOARD_PRIVACY_NOTICE =
   "成绩和游玩数据会上传，用于排名和反作弊。只用昵称，不收集真实身份。";
@@ -47,4 +49,12 @@ export type PublicLeaderboardRow = {
   ballLabel: string;
   score: number;
   peakCombo: number;
+};
+
+export type PublicLeaderboardDetail = {
+  id: string;
+  nickname: string;
+  score: number;
+  peakCombo: number;
+  recap: RunRecap;
 };

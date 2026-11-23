@@ -85,7 +85,7 @@ function parseMap(raw: unknown): RunRecapMapStats {
   return map;
 }
 
-function parseRecap(raw: unknown): RunRecap | null {
+export function parseRecap(raw: unknown): RunRecap | null {
   if (!raw || typeof raw !== "object") return null;
   const src = raw as Record<string, unknown>;
   if (!PLAY_MODES.includes(src.playMode as PlayMode)) return null;
@@ -163,6 +163,19 @@ function parseFlags(raw: unknown): EligibilityFlags | null {
     scoreLock: src.scoreLock,
     comboLock: src.comboLock,
   };
+}
+
+const RUN_ID_MAX = 128;
+const RUN_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+export function parseRunId(raw: unknown): ParseResult<string> {
+  const id = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as { id?: unknown }).id : raw;
+  if (typeof id !== "string") return { ok: false, error: "找不到该成绩" };
+  const trimmed = id.trim();
+  if (!trimmed || trimmed.length > RUN_ID_MAX || !RUN_ID_RE.test(trimmed)) {
+    return { ok: false, error: "找不到该成绩" };
+  }
+  return { ok: true, value: trimmed };
 }
 
 export function parseListMode(raw: unknown): ParseResult<LeaderboardListQuery> {

@@ -3,8 +3,9 @@ import type { BallId } from "@/game/balls.ts";
 import type { SceneId } from "@/game/scenes.ts";
 import type { RunRecap } from "@/game/types.ts";
 import { cn } from "@/lib/utils";
-import { listLeaderboard, submitLeaderboardRun } from "@/lib/leaderboard/api.ts";
-import { LEADERBOARD_PRIVACY_NOTICE, type EligibilityFlags, type LeaderboardMode, type PublicLeaderboardRow, type TimelineEvent } from "@/lib/leaderboard/constants.ts";
+import { RecapTable } from "@/components/recap-table";
+import { getLeaderboardRun, listLeaderboard, submitLeaderboardRun } from "@/lib/leaderboard/api.ts";
+import { LEADERBOARD_PRIVACY_NOTICE, type EligibilityFlags, type LeaderboardMode, type PublicLeaderboardDetail, type PublicLeaderboardRow, type TimelineEvent } from "@/lib/leaderboard/constants.ts";
 import { lastSubmittedFor, runEligibilityFlags, shouldOfferSubmit } from "@/lib/leaderboard/eligibility.ts";
 import { displayNickname } from "@/lib/leaderboard/nickname.ts";
 
@@ -22,9 +23,16 @@ export function LeaderboardPanel({
   const [rows, setRows] = useState<PublicLeaderboardRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<PublicLeaderboardDetail | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    setOpenId(null);
+    setDetail(null);
+    setDetailError(null);
     setLoading(true);
     setError(null);
     listLeaderboard({ data: { mode, sceneId, ballId } })
@@ -45,41 +53,108 @@ export function LeaderboardPanel({
     };
   }, [mode, sceneId, ballId]);
 
+  useEffect(() => {
+    if (!openId) return;
+    let cancelled = false;
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(true);
+    getLeaderboardRun({ data: { id: openId } })
+      .then((result) => {
+        if (cancelled) return;
+        if (result.ok) {
+          setDetail(result.run);
+          setDetailError(null);
+        } else {
+          setDetail(null);
+          setDetailError(result.error);
+        }
+        setDetailLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDetail(null);
+        setDetailError("排行榜暂时无法加载");
+        setDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [openId]);
+
+  function closeDetail() {
+    setOpenId(null);
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(false);
+  }
+
   return (
-    <div className="pointer-events-auto mb-4 w-full max-w-xs overflow-hidden rounded-xl border border-border bg-bg-elevated">
-      <p className="px-4 pt-3 text-[10px] font-medium tracking-widest text-subtle">排行榜</p>
-      <p className="px-4 pt-1.5 pb-2 text-[11px] leading-relaxed text-subtle">{LEADERBOARD_PRIVACY_NOTICE}</p>
-      <div
-        className="max-h-[min(10rem,28dvh)] overflow-y-auto overscroll-contain border-t border-border touch-pan-y [-webkit-overflow-scrolling:touch]"
-        style={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
-      >
-        {loading ? (
-          <p className="px-4 py-5 text-center text-sm text-subtle">加载中…</p>
-        ) : error ? (
-          <p className="px-4 py-5 text-center text-sm text-muted">{error}</p>
-        ) : rows.length === 0 ? (
-          <p className="px-4 py-5 text-center text-sm text-subtle">暂无成绩</p>
-        ) : (
-          <ul className="px-3 py-1">
-            {rows.map((row) => (
-              <li
-                key={row.id}
-                className="flex items-baseline gap-2 border-b border-border/60 py-2 last:border-b-0"
-              >
-                <span className="w-6 shrink-0 text-xs tabular-nums text-subtle">{row.rank}</span>
-                <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">{row.nickname}</span>
-                <span className="shrink-0 text-right">
-                  <span className="block font-sans text-sm font-semibold tabular-nums text-fg">
-                    {row.score}
-                  </span>
-                  <span className="block text-[11px] tabular-nums text-subtle">×{row.peakCombo}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+    <>
+      <div className="pointer-events-auto mb-4 w-full max-w-xs overflow-hidden rounded-xl border border-border bg-bg-elevated">
+        <p className="px-4 pt-3 text-[10px] font-medium tracking-widest text-subtle">排行榜</p>
+        <p className="px-4 pt-1.5 pb-2 text-[11px] leading-relaxed text-subtle">{LEADERBOARD_PRIVACY_NOTICE}</p>
+        <div
+          className="max-h-[min(10rem,28dvh)] overflow-y-auto overscroll-contain border-t border-border touch-pan-y [-webkit-overflow-scrolling:touch]"
+          style={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
+        >
+          {loading ? (
+            <p className="px-4 py-5 text-center text-sm text-subtle">加载中…</p>
+          ) : error ? (
+            <p className="px-4 py-5 text-center text-sm text-muted">{error}</p>
+          ) : rows.length === 0 ? (
+            <p className="px-4 py-5 text-center text-sm text-subtle">暂无成绩</p>
+          ) : (
+            <ul className="px-3 py-1">
+              {rows.map((row) => (
+                <li key={row.id} className="border-b border-border/60 last:border-b-0">
+                  <button
+                    type="button"
+                    onClick={() => setOpenId(row.id)}
+                    className="flex w-full items-baseline gap-2 py-2 text-left"
+                  >
+                    <span className="w-6 shrink-0 text-xs tabular-nums text-subtle">{row.rank}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">{row.nickname}</span>
+                    <span className="shrink-0 text-right">
+                      <span className="block font-sans text-sm font-semibold tabular-nums text-fg">
+                        {row.score}
+                      </span>
+                      <span className="block text-[11px] tabular-nums text-subtle">×{row.peakCombo}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
-    </div>
+      {openId ? (
+        <div
+          className="pointer-events-auto fixed inset-0 z-30 flex flex-col items-center justify-end bg-bg/60 px-4 pb-[max(1.75rem,env(safe-area-inset-bottom))] pt-16"
+          onClick={closeDetail}
+        >
+          <div
+            className="mb-4 flex max-h-[min(36rem,calc(100dvh-8rem))] w-full max-w-xs flex-col overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {detailLoading ? (
+              <p className="px-4 py-8 text-center text-sm text-subtle">加载中…</p>
+            ) : detailError ? (
+              <p className="px-4 py-8 text-center text-sm text-muted">{detailError}</p>
+            ) : detail ? (
+              <RecapTable recap={detail.recap} nickname={detail.nickname} nameEditable={false} />
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={closeDetail}
+            className="pointer-events-auto h-12 w-full max-w-xs rounded-lg border border-border bg-bg-elevated text-sm font-medium text-fg"
+          >
+            关闭
+          </button>
+        </div>
+      ) : null}
+    </>
   );
 }
 

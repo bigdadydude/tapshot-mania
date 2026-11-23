@@ -1,10 +1,17 @@
 import { reviewFlagsFor } from "./anticheat.ts";
 import {
   LEADERBOARD_LIMIT,
+  type PublicLeaderboardDetail,
   type PublicLeaderboardRow,
 } from "./constants.ts";
 import type { LeaderboardListQuery, SubmitRunInput } from "./payload.ts";
-import { publicRowsFromStored, type StoredPublicFields } from "./public-row.ts";
+import {
+  PUBLIC_DETAIL_SELECT,
+  publicRowsFromStored,
+  toPublicDetail,
+  type StoredPublicDetail,
+  type StoredPublicFields,
+} from "./public-row.ts";
 
 /** Minimal query surface satisfied by getSql(). Kept local so tests need not load @/lib/db. */
 export type LeaderboardSql = {
@@ -24,6 +31,16 @@ export async function listPublicBoard(
     [query.mode, query.sceneId, query.ballId, LEADERBOARD_LIMIT],
   );
   return publicRowsFromStored(rows);
+}
+
+export async function getPublicRun(
+  sql: LeaderboardSql,
+  id: string,
+): Promise<PublicLeaderboardDetail | null> {
+  const rows = await sql.query<StoredPublicDetail>(PUBLIC_DETAIL_SELECT, [id]);
+  const row = rows[0];
+  if (!row) return null;
+  return toPublicDetail(row);
 }
 
 export async function insertLeaderboardRun(

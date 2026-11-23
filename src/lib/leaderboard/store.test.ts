@@ -5,8 +5,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import type { RunRecap } from "../../game/types.ts";
-import { insertLeaderboardRun, listPublicBoard, type LeaderboardSql } from "./store.ts";
+import { getPublicRun, insertLeaderboardRun, listPublicBoard, type LeaderboardSql } from "./store.ts";
 import { LEADERBOARD_LIMIT } from "./constants.ts";
+import { PUBLIC_DETAIL_SELECT } from "./public-row.ts";
 
 const OID_INT8 = 20;
 const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -169,5 +170,50 @@ test("flagged rows are still inserted and still appear on the public board", asy
   assert.equal(rows[0]?.id, "flagged");
   assert.equal(rows[0]?.nickname, "可疑");
   assert.equal(rows[0]?.score, 99);
+  await pg.close();
+});
+
+test("public run detail returns recap stats and never leaks timeline or flags", async () => {
+  const { pg, sql } = await openDb();
+  await insertLeaderboardRun(sql, {
+    nickname: "阿强",
+    mode: "classic",
+    score: 50,
+    recap: recap({ score: 50, peakCombo: 9, ballLabel: "经典球+时间球" }),
+    timeline: [{ t: 1, kind: "score", points: 50 }],
+    flags: { sandbox: false, balance: false, scoreLock: false, comboLock: false },
+  }, "run-a");
+
+  const detail = await getPublicRun(sql, "run-a");
+  assert.ok(detail);
+  assert.equal(detail.id, "run-a");
+  assert.equal(detail.nickname, "阿强");
+  assert.equal(detail.score, 50);
+  assert.equal(detail.peakCombo, 9);
+  assert.equal(detail.recap.playMode, "classic");
+  assert.equal(detail.recap.ballLabel, "经典球+时间球");
+  assert.equal(detail.recap.sceneId, "street");
+  assert.equal(detail.recap.score, 50);
+  assert.equal("timeline" in detail, false);
+  assert.equal("flags" in detail, false);
+  assert.equal("reviewFlags" in detail, false);
+  assert.equal("review_flags" in detail, false);
+  assert.equal("timeline" in detail.recap, false);
+  assert.equal("flags" in detail.recap, false);
+  assert.equal("review_flags" in detail.recap, false);
+
+  assert.equal(PUBLIC_DETAIL_SELECT.includes("timeline"), false);
+  assert.equal(PUBLIC_DETAIL_SELECT.includes("flags"), false);
+  assert.equal(PUBLIC_DETAIL_SELECT.includes("review_flags"), false);
+
+  const raw = await pg.query<Record<string, unknown>>(PUBLIC_DETAIL_SELECT, ["run-a"]);
+  const rawRow = raw.rows[0];
+  assert.ok(rawRow);
+  assert.equal("recap" in rawRow, true);
+  assert.equal("timeline" in rawRow, false);
+  assert.equal("flags" in rawRow, false);
+  assert.equal("review_flags" in rawRow, false);
+
+  assert.equal(await getPublicRun(sql, "missing"), null);
   await pg.close();
 });
