@@ -50,6 +50,7 @@ const idleHud: HudState = {
   nickname: "",
   submittedClassic: 0,
   submittedMinute: 0,
+  submittedByBoard: {},
 };
 
 type Menu = "none" | "pause" | "settings" | "gfx" | "sound";
@@ -62,7 +63,6 @@ export function GameView() {
   const [crash, setCrash] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu>("none");
   const [titleTaps, setTitleTaps] = useState(0);
-  const [boardOpen, setBoardOpen] = useState(false);
   const [searchlightEdit, setSearchlightEdit] = useState(false);
   const [devPanelOpen, setDevPanelOpen] = useState(true);
   const [balanceFocus, setBalanceFocus] = useState(0);
@@ -246,13 +246,6 @@ export function GameView() {
                 }
               }}
               onDev={() => gameRef.current?.dev({ t: "enter" })}
-              onOpenBoard={() => setBoardOpen(true)}
-            />
-          ) : null}
-          {hud.phase === "title" && menu === "none" && hud.loadPct >= 1 && boardOpen ? (
-            <LeaderboardPanel
-              initialMode={hud.playMode === "minute" ? "minute" : "classic"}
-              onClose={() => setBoardOpen(false)}
             />
           ) : null}
           {hud.phase === "settle" && menu === "none" && hud.rogue ? (
@@ -294,12 +287,11 @@ export function GameView() {
               onDevBack={() => gameRef.current?.devBackFromSettle()}
               balanceReadout={hud.dev.on && hud.dev.balance.session ? balanceOverReadout : null}
               nickname={hud.nickname}
-              submittedClassic={hud.submittedClassic}
-              submittedMinute={hud.submittedMinute}
+              submittedByBoard={hud.submittedByBoard}
               eligibility={hudEligibilityFlags(hud.dev)}
               getTimeline={() => gameRef.current?.getRunTimeline() ?? []}
-              onRememberSubmit={(mode, name, score) => {
-                gameRef.current?.rememberLeaderboardSubmit(mode, name, score);
+              onRememberSubmit={(mode, name, score, sceneId, ballId) => {
+                gameRef.current?.rememberLeaderboardSubmit(mode, name, score, sceneId, ballId);
               }}
               onNicknameChange={(name) => gameRef.current?.setNickname(name)}
             />
@@ -457,7 +449,6 @@ function TitleCard({
   onScene,
   onTitleTap,
   onDev,
-  onOpenBoard,
 }: {
   best: number;
   unlocked: boolean;
@@ -470,7 +461,6 @@ function TitleCard({
   onScene: (id: SceneId) => void;
   onTitleTap: () => void;
   onDev: () => void;
-  onOpenBoard: () => void;
 }) {
   type Slide =
     | { kind: "random"; key: "random" }
@@ -823,6 +813,10 @@ function TitleCard({
         </div>
       </div>
 
+      {playMode !== "rogue" && focusKey !== "random" ? (
+        <LeaderboardPanel mode={playMode} sceneId={sceneId} ballId={focusKey} />
+      ) : null}
+
       <button
         type="button"
         onClick={handleStart}
@@ -833,13 +827,6 @@ function TitleCard({
         )}
       >
         开始
-      </button>
-      <button
-        type="button"
-        onClick={onOpenBoard}
-        className="pointer-events-auto mt-2 h-11 w-full max-w-xs rounded-lg border border-border bg-bg-elevated text-sm font-medium text-fg"
-      >
-        排行榜
       </button>
       {unlocked ? (
         <button
@@ -1585,8 +1572,7 @@ function OverCard({
   onDevBack,
   balanceReadout = null,
   nickname = "",
-  submittedClassic = 0,
-  submittedMinute = 0,
+  submittedByBoard = {},
   eligibility,
   getTimeline,
   onRememberSubmit,
@@ -1609,11 +1595,16 @@ function OverCard({
   /** 平衡测试打完后的自动 S。没有会话时不传。 */
   balanceReadout?: AutoBallReadout | null;
   nickname?: string;
-  submittedClassic?: number;
-  submittedMinute?: number;
+  submittedByBoard?: Record<string, number>;
   eligibility?: ReturnType<typeof hudEligibilityFlags>;
   getTimeline?: () => import("@/lib/leaderboard/constants.ts").TimelineEvent[];
-  onRememberSubmit?: (mode: "classic" | "minute", nickname: string, score: number) => void;
+  onRememberSubmit?: (
+    mode: "classic" | "minute",
+    nickname: string,
+    score: number,
+    sceneId: SceneId,
+    ballId: BallId,
+  ) => void;
   onNicknameChange?: (name: string) => void;
 }) {
   const isRogue = playMode === "rogue" && rogue;
@@ -1759,8 +1750,7 @@ function OverCard({
           recap={recap}
           flags={eligibility}
           nickname={nickname}
-          submittedClassic={submittedClassic}
-          submittedMinute={submittedMinute}
+          submittedByBoard={submittedByBoard}
           getTimeline={getTimeline}
           onRemember={onRememberSubmit}
         />

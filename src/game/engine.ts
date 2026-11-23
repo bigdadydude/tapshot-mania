@@ -118,6 +118,7 @@ import {
   resetRunTimeline,
   type TimelineEvent,
 } from "./run-timeline";
+import { leaderboardBoardKey } from "../lib/leaderboard/eligibility.ts";
 
 export const GAME_REV = 332;
 
@@ -212,7 +213,7 @@ export type GameHandle = {
   dev: (cmd: DevCmd) => void;
   resize: () => void;
   setNickname: (name: string) => void;
-  rememberLeaderboardSubmit: (mode: "classic" | "minute", nickname: string, score: number) => void;
+  rememberLeaderboardSubmit: (mode: "classic" | "minute", nickname: string, score: number, sceneId: SceneId, ballId: BallId) => void;
   getRunTimeline: () => TimelineEvent[];
 };
 
@@ -381,6 +382,7 @@ export function createGame(
   let nickname = save.nickname;
   let submittedClassic = save.submittedClassic;
   let submittedMinute = save.submittedMinute;
+  let submittedByBoard: Record<string, number> = { ...save.submittedByBoard };
 
   const gantryWatch = createGantryDodgeWatch();
   audio.setMix(mix);
@@ -1564,6 +1566,7 @@ export function createGame(
       nickname,
       submittedClassic,
       submittedMinute,
+      submittedByBoard: { ...submittedByBoard },
     });
   }
 
@@ -1587,6 +1590,7 @@ export function createGame(
       nickname,
       submittedClassic,
       submittedMinute,
+      submittedByBoard,
     });
   }
 
@@ -8167,10 +8171,14 @@ export function createGame(
       persist();
       emitHud();
     },
-    rememberLeaderboardSubmit(mode, name, value) {
+    rememberLeaderboardSubmit(mode, name, value, sceneId, ballId) {
       nickname = name;
       if (mode === "minute") submittedMinute = value;
       else submittedClassic = value;
+      submittedByBoard = {
+        ...submittedByBoard,
+        [leaderboardBoardKey(mode, sceneId, ballId)]: value,
+      };
       persist();
       emitHud();
     },

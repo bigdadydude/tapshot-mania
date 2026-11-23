@@ -13,7 +13,7 @@ import {
   timelineScoreTotal,
 } from "./anticheat.ts";
 import { DEFAULT_NICKNAME, LEADERBOARD_LIMIT, type EligibilityFlags, type TimelineEvent } from "./constants.ts";
-import { isRunEligible, shouldOfferSubmit, runEligibilityFlags } from "./eligibility.ts";
+import { isRunEligible, lastSubmittedFor, shouldOfferSubmit, runEligibilityFlags } from "./eligibility.ts";
 import { commitDisplayName, displayNickname, normalizeNickname, parseSavedNickname, visibleCharCount } from "./nickname.ts";
 import { parseListMode, parseSubmitPayload } from "./payload.ts";
 import { publicRowsFromStored, toPublicRow } from "./public-row.ts";
@@ -299,8 +299,55 @@ test("submit payload rejects malformed or non-finite scores and empty nicknames"
   assert.equal(parseSubmitPayload({ ...good, mode: "rogue" }).ok, false);
   assert.equal(parseSubmitPayload({ ...good, recap: recap({ playMode: "minute" }) }).ok, false);
   assert.equal(parseSubmitPayload({ ...good, recap: recap({ score: Number.NaN }) }).ok, false);
-  assert.equal(parseListMode({ mode: "classic" }).ok, true);
-  assert.equal(parseListMode({ mode: "rogue" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic", sceneId: "street", ballId: "plain" }).ok, true);
+  assert.equal(parseListMode({ mode: "minute", sceneId: "blueprint", ballId: "time" }).ok, true);
+  assert.equal(parseListMode({ mode: "rogue", sceneId: "street", ballId: "plain" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic", sceneId: "street" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic", ballId: "plain" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic", sceneId: "street", ballId: "random" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic", sceneId: "rogue", ballId: "plain" }).ok, false);
+  assert.equal(parseListMode({ mode: "classic", sceneId: "street", ballId: "anti" }).ok, false);
+  const parsed = parseListMode({ mode: "classic", sceneId: "prison", ballId: "frost" });
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) {
+    assert.deepEqual(parsed.value, { mode: "classic", sceneId: "prison", ballId: "frost" });
+  }
+});
+
+test("last submitted score is keyed by mode, scene, and ball, not the old mode totals", () => {
+  const save = {
+    submittedClassic: 80,
+    submittedMinute: 55,
+    submittedByBoard: {
+      "classic:street:plain": 40,
+      "classic:prison:plain": 90,
+      "minute:street:plain": 12,
+    },
+  };
+  assert.equal(lastSubmittedFor("classic", "street", "plain", save), 40);
+  assert.equal(lastSubmittedFor("classic", "prison", "plain", save), 90);
+  assert.equal(lastSubmittedFor("minute", "street", "plain", save), 12);
+  assert.equal(lastSubmittedFor("classic", "street", "frost", save), 0);
+  assert.equal(lastSubmittedFor("classic", "overpass", "plain", { submittedClassic: 80, submittedMinute: 55 }), 0);
+  assert.equal(
+    shouldOfferSubmit({
+      mode: "classic",
+      score: 50,
+      lastSubmitted: lastSubmittedFor("classic", "street", "frost", save),
+      flags: flags(),
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOfferSubmit({
+      mode: "classic",
+      score: 50,
+      lastSubmitted: lastSubmittedFor("classic", "prison", "plain", save),
+      flags: flags(),
+    }),
+    false,
+  );
 });
 
 test("finite score mismatch is still a valid payload so the server can flag and accept it", () => {

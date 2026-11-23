@@ -1,5 +1,16 @@
+import type { BallId } from "../../game/balls.ts";
+import type { SceneId } from "../../game/scenes.ts";
 import type { PlayMode } from "../../game/types.ts";
 import type { EligibilityFlags, LeaderboardMode } from "./constants.ts";
+
+/** Local-save and lookup key for one mode + scene + ball board. */
+export function leaderboardBoardKey(
+  mode: LeaderboardMode,
+  sceneId: SceneId,
+  ballId: BallId,
+): string {
+  return `${mode}:${sceneId}:${ballId}`;
+}
 
 export function isLeaderboardMode(mode: string): mode is LeaderboardMode {
   return mode === "classic" || mode === "minute";
@@ -30,7 +41,7 @@ export function ineligibleReason(flags: EligibilityFlags): string | null {
 
 /**
  * Offer a confirm-to-submit CTA after classic / 1-minute game-over.
- * Score must be greater than this device's last submitted score for that mode.
+ * Score must be greater than this device's last submitted score for that mode + scene + ball board.
  * Zero scores, rogue, and ineligible runs are never offered.
  */
 export function shouldOfferSubmit(opts: {
@@ -48,7 +59,14 @@ export function shouldOfferSubmit(opts: {
 
 export function lastSubmittedFor(
   mode: LeaderboardMode,
-  save: { submittedClassic: number; submittedMinute: number },
+  sceneId: SceneId,
+  ballId: BallId,
+  save: {
+    submittedByBoard?: Record<string, number>;
+    submittedClassic?: number;
+    submittedMinute?: number;
+  },
 ): number {
-  return mode === "minute" ? save.submittedMinute : save.submittedClassic;
+  const value = save.submittedByBoard?.[leaderboardBoardKey(mode, sceneId, ballId)];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
