@@ -262,6 +262,9 @@ export type HudState = {
   sceneId: SceneId;
   prison: PrisonHud | null;
   rogue: RogueHud | null;
+  nickname: string;
+  submittedClassic: number;
+  submittedMinute: number;
 };
 
 export type World = {

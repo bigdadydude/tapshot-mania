@@ -35,7 +35,7 @@ import { sweepSupport, sweepSupportPolygon } from "./support-collision";
 import { rimArmPoints } from "./rim-arm";
 import { freezeNet, clearOfFrozenNet, touchesFrozenNet, shatterFrozenNet } from "./frost-net";
 import { boardGeom, braceColliders, clearSceneLayers, drawBoot, drawScene, paintBallSprite, hoopNetMotion } from "./render";
-import { loadSave, writeSave } from "./save";
+import { loadSave, writeSave, SAVE_VERSION } from "./save";
 import { ballFuseLabel, ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
 import { makeChain, resetChain, stepChain, type Chain } from "./chain";
 import { type HackerDir } from "./hacker-pad";
@@ -106,6 +106,18 @@ import {
   watchBirds,
   watchTraffic,
 } from "./run-recap";
+import {
+  cloneTimelineEvents,
+  createRunTimeline,
+  noteTimelineHoldRelease,
+  noteTimelineHoldStart,
+  noteTimelineMake,
+  noteTimelineScore,
+  noteTimelineSkill,
+  noteTimelineTap,
+  resetRunTimeline,
+  type TimelineEvent,
+} from "./run-timeline";
 
 export const GAME_REV = 332;
 
@@ -199,6 +211,9 @@ export type GameHandle = {
   setRogueFuse: (id: BallId | null) => void;
   dev: (cmd: DevCmd) => void;
   resize: () => void;
+  setNickname: (name: string) => void;
+  rememberLeaderboardSubmit: (mode: "classic" | "minute", nickname: string, score: number) => void;
+  getRunTimeline: () => TimelineEvent[];
 };
 
 export function rankFor(score: number): string {
@@ -361,6 +376,12 @@ export function createGame(
   let balanceUnattributedScore = 0;
   let balancePlainGainAcc = 0;
   const recap = createRecapTracker();
+  // Not stored in Time Ball rewind snapshots and not rolled back on rewind (same rule as recap counters).
+  const timeline = createRunTimeline();
+  let nickname = save.nickname;
+  let submittedClassic = save.submittedClassic;
+  let submittedMinute = save.submittedMinute;
+
   const gantryWatch = createGantryDodgeWatch();
   audio.setMix(mix);
 
@@ -1540,12 +1561,15 @@ export function createGame(
       }),
       prison: prisonHud(),
       rogue: toRogueHud(isRogueMode() ? rogueRun : null),
+      nickname,
+      submittedClassic,
+      submittedMinute,
     });
   }
 
   function persist() {
     writeSave({
-      version: 12,
+      version: SAVE_VERSION,
       best,
       bestMinute,
       bestRogue,
@@ -1560,6 +1584,9 @@ export function createGame(
       gfx: { ...gfx },
       devUnlocked,
       ball: ballId,
+      nickname,
+      submittedClassic,
+      submittedMinute,
     });
   }
 
@@ -2016,6 +2043,7 @@ export function createGame(
 
   function endBoltStorm() {
     if (!boltStorm && boltTrail.length === 0) return;
+    if (boltStorm) noteHoldRelease();
     boltStorm = null;
     boltTrail = [];
     boltHoldArm = 0;
@@ -2230,6 +2258,7 @@ export function createGame(
       if (bonus > 0) {
         // 开洞当下加进得分。不进待领，不等下一次进球，不乘冠军时刻。
         score += bonus;
+        noteScoreAward(bonus);
         noteBest();
         callouts.push({
           text: `基础 +${bonus}`,
@@ -2254,6 +2283,7 @@ export function createGame(
         holeTick += 1;
         const gain = holeTick * 3;
         score += gain;
+        noteScoreAward(gain);
         noteBest();
         callouts.push({
           text: `+${gain}`,
@@ -2459,6 +2489,7 @@ export function createGame(
         const per = catalogOf("WhatsThat")?.dickCloudScore ?? 20;
         const gain = per * dickN;
         score += gain;
+        noteScoreAward(gain);
         rogueRun.stageScore = score;
         rogueRun.peakMake = Math.max(rogueRun.peakMake, gain);
         callouts.push({
@@ -3041,6 +3072,7 @@ export function createGame(
     balanceUnattributedScore = 0;
     balancePlainGainAcc = 0;
     resetRecapTracker(recap);
+    resetRunTimeline(timeline);
     resetGantryDodgeWatch(gantryWatch);
   }
 
@@ -3050,17 +3082,28 @@ export function createGame(
 
   function noteBalanceClick() {
     noteRecapClick(recap, phase === "playing");
+    if (phase === "playing") noteTimelineTap(timeline, recap.clockSeconds);
     if (balanceTelemetryLive()) balanceClicks += 1;
   }
 
   function noteBalanceHold() {
     noteRecapHold(recap, phase === "playing");
+    if (phase === "playing") noteTimelineHoldStart(timeline, recap.clockSeconds);
     if (balanceTelemetryLive()) balanceHolds += 1;
   }
 
   function noteBalanceSkillInput() {
     noteRecapSkillInput(recap, phase === "playing");
+    if (phase === "playing") noteTimelineSkill(timeline, recap.clockSeconds);
     if (balanceTelemetryLive()) balanceSkillInputs += 1;
+  }
+
+  function noteScoreAward(points: number) {
+    if (phase === "playing") noteTimelineScore(timeline, recap.clockSeconds, points);
+  }
+
+  function noteHoldRelease() {
+    if (phase === "playing") noteTimelineHoldRelease(timeline, recap.clockSeconds);
   }
 
   /** Attribute a skill-driven make/score/rescue at the moment the skill actually helps. */
@@ -3084,6 +3127,7 @@ export function createGame(
   function rewardAbsorbedObjects(count: number) {
     if (count <= 0 || phase !== "playing") return;
     score += count;
+    noteScoreAward(count);
     if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
     noteBalanceSkillEffect({ trigger: true, directScore: count });
     noteBest();
@@ -4012,12 +4056,14 @@ export function createGame(
     hackerRipplePulse = 0;
     spawnHackerRipple("burst");
     noteBalanceSkillInput();
+    noteTimelineHoldStart(timeline, recap.clockSeconds);
     return true;
   }
 
   function endHackerSpend() {
     if (!hackerCharge.holding) return;
     hackerSpendPointer = null;
+    noteHoldRelease();
     const effect = releaseChargeHold(hackerCharge);
     if (effect === "none") {
       hackerFailFreeze = HACKER_CHARGE.failFreezeSeconds;
@@ -4536,6 +4582,7 @@ export function createGame(
         if(!paused && !buzzer && !timeUp && !stageMod.holdsBall?.() && rocket.pointer===null) {
           rocket.pointer=e.pointerId;rocket.steer=0;hint=false;emitHud();
           noteBalanceSkillInput();
+          noteTimelineHoldStart(timeline, recap.clockSeconds);
           try{canvas.setPointerCapture(e.pointerId);}catch{}
         }
         return;
@@ -4548,6 +4595,7 @@ export function createGame(
           vector.cancelHold=0; vector.cancelPending=false;
           vector.pointer=e.pointerId; vector.held=0; vector.consumed=false;
           noteBalanceSkillInput();
+          noteTimelineHoldStart(timeline, recap.clockSeconds);
           try { canvas.setPointerCapture(e.pointerId); } catch { /* detached canvas */ }
         }
         return;
@@ -4560,6 +4608,7 @@ export function createGame(
       if (inTimeButton(point.x, point.y)) {
         timeRewindPointer = e.pointerId;
         noteBalanceSkillInput();
+        noteTimelineHoldStart(timeline, recap.clockSeconds);
         rewindWorld();
         try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         return;
@@ -4578,6 +4627,7 @@ export function createGame(
         mazeGravity = gravity;
         mazePointerId = e.pointerId;
         noteBalanceSkillInput();
+        noteTimelineHoldStart(timeline, recap.clockSeconds);
         try {
           canvas.setPointerCapture(e.pointerId);
         } catch {
@@ -4671,16 +4721,17 @@ export function createGame(
       }
       return;
     }
-    if ((buzzer || timeUp) && isRocket() && rocket.pointer === e.pointerId) return;
+    if ((buzzer || timeUp) && isRocket() && rocket.pointer === e.pointerId) { noteHoldRelease(); return; }
     if (birdOwnsBall(birds) && !(isSuper() || isVector() || isTime())) { pointerHeld = false; return; }
     if(isSuper() && superBall.pointer?.id===e.pointerId){
       superBall.pointer=null;
       superTapUndo=null;
       return;
     }
-    if(rocket.pointer===e.pointerId){releaseRocket(rocket,ball);return;}
+    if(rocket.pointer===e.pointerId){noteHoldRelease();releaseRocket(rocket,ball);return;}
     if (e.button !== undefined && e.button !== 0) return;
     if (vector.pointer === e.pointerId) {
+      noteHoldRelease();
       const cancelCharge = vector.cancelPending;
       releaseVectorAnchor();
       if (e.type === "pointercancel" || e.type === "lostpointercapture" || paused || phase !== "playing" || buzzer || timeUp || stageMod.holdsBall?.()) cancelVectorInput();
@@ -4698,6 +4749,7 @@ export function createGame(
       return;
     }
     if (timeRewindPointer === e.pointerId) {
+      noteHoldRelease();
       timeRewindPointer = null;
       rewindActive = false;
       rewindStepLeft = 0;
@@ -4708,6 +4760,7 @@ export function createGame(
       return;
     }
     if (mazePointerId === e.pointerId) {
+      noteHoldRelease();
       mazePointerId = null;
       // A released stick levels the board. Recalibrate the current phone pose as
       // neutral so a stale gyro slope cannot keep accelerating the ball forever.
@@ -6027,6 +6080,7 @@ export function createGame(
         }
         if (traffic.lightningHit) {
           score += 1;
+          noteScoreAward(1);
           boltCharge = Math.max(0, boltCharge - 1);
           if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
           noteBalanceSkillEffect({ trigger: true, directScore: 1 });
@@ -6037,6 +6091,7 @@ export function createGame(
         if (traffic.burnScore > 0) {
           noteRecapTrafficBurns(recap, 1);
           score += traffic.burnScore;
+          noteScoreAward(traffic.burnScore);
           if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
           noteBest();
           audio.burn();
@@ -6513,6 +6568,7 @@ export function createGame(
       rimHitLock = 0.08;
       if (isBolt() && boltCharge > 90 && !ball.scored) {
         score += 1;
+        noteScoreAward(1);
         boltCharge = Math.max(0, boltCharge - 1);
         if (isRogueMode() && rogueRun) rogueRun.stageScore = score;
         callouts.push({ text: "+1", x: ball.x, y: ball.y - ball.r * 2, life: 0.6, max: 0.6, kind: "base" });
@@ -7068,6 +7124,7 @@ export function createGame(
 
     madeCount += 1;
     noteRecapCountedMake(recap);
+    noteTimelineMake(timeline, recap.clockSeconds);
     if (!ghost && isHacker()) addHackerMake(hackerCharge);
     if (!ghost) blueprintMadeCount += 1;
     if (trainBackdropOn()) startTrainScroll();
@@ -7224,6 +7281,7 @@ export function createGame(
       scoreDoubled = settled.doubled === true;
     }
     score += payout;
+    noteScoreAward(payout);
     if(!ghost && isSuper()) superScore(superBall,superShieldScore);
     if (!ghost && balanceSession) {
       const plainCore = bunshinGhost || ninjaGhost ? 0 : basePart + streakPart + extra + (freed ? prisonBonus : 0) + (clutch && !ninjaGhost ? 5 : 0);
@@ -7276,6 +7334,7 @@ export function createGame(
           streak += miniMeStreakPerStack();
           const half = Math.round(gain / 2);
           score += half;
+          noteScoreAward(half);
           callouts.push({
             text: half > 0 ? `小+${half}` : "小+0",
             x: scoredHoop.x + (i - (minis - 1) / 2) * 22,
@@ -8102,6 +8161,21 @@ export function createGame(
     },
     dev(cmd) {
       applyDev(cmd);
+    },
+    setNickname(name) {
+      nickname = name;
+      persist();
+      emitHud();
+    },
+    rememberLeaderboardSubmit(mode, name, value) {
+      nickname = name;
+      if (mode === "minute") submittedMinute = value;
+      else submittedClassic = value;
+      persist();
+      emitHud();
+    },
+    getRunTimeline() {
+      return cloneTimelineEvents(timeline);
     },
     resize,
   };

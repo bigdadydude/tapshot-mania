@@ -1,9 +1,11 @@
-import { DEFAULT_GFX, type CloudMode, type Gfx, type PlayMode } from "./types";
-import { DEFAULT_BALL, parseBall, type BallId } from "./balls";
-import { type SceneId } from "./scenes";
+import { DEFAULT_GFX, type CloudMode, type Gfx, type PlayMode } from "./types.ts";
+import { DEFAULT_BALL, parseBall, type BallId } from "./balls.ts";
+import { type SceneId } from "./scenes.ts";
+import { LEADERBOARD_SAVE_DEFAULTS, leaderboardSaveFieldsFrom } from "../lib/leaderboard/save-fields.ts";
 
 const KEY = "tq-bounce-v1";
-const VERSION = 12;
+export const SAVE_VERSION = 13;
+const VERSION = SAVE_VERSION;
 
 export type SaveData = {
   version: number;
@@ -22,6 +24,12 @@ export type SaveData = {
   gfx: Gfx;
   devUnlocked: boolean;
   ball: BallId;
+  /** Leaderboard nickname remembered on this device. Empty until first submit. */
+  nickname: string;
+  /** Last classic score this device successfully submitted. */
+  submittedClassic: number;
+  /** Last 1-minute score this device successfully submitted. */
+  submittedMinute: number;
 };
 
 const defaults: SaveData = {
@@ -40,6 +48,7 @@ const defaults: SaveData = {
   gfx: { ...DEFAULT_GFX },
   devUnlocked: false,
   ball: DEFAULT_BALL,
+  ...LEADERBOARD_SAVE_DEFAULTS,
 };
 
 function clamp01(n: number, fallback: number) {
@@ -104,6 +113,7 @@ function migrate(raw: SaveData & { muted?: boolean; gfx?: Partial<Gfx> }): SaveD
     gfx: parseGfx(raw.gfx),
     devUnlocked: Boolean(raw.devUnlocked),
     ball: parseBall(raw.ball),
+    ...leaderboardSaveFieldsFrom(raw),
   };
 }
 
