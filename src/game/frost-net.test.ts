@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildNet } from "./net.ts";
-import { freezeNet, clearOfFrozenNet, touchesFrozenNet, shatterFrozenNet } from "./frost-net.ts";
+import { freezeNet, clearOfFrozenNet, touchesFrozenNet, shatterFrozenNet, shouldPlayNetSwish } from "./frost-net.ts";
 import type { Hoop, Ball } from "./types";
 function setup() {
   const h={x:200,y:200,inner:28,frost:1,frostLeft:4,net:[],netPulse:.7,jolt:1} as unknown as Hoop;
@@ -34,4 +34,18 @@ test("fast contact detects strands while distant passes do not shatter the net",
   const ball={x:n.x+60,y:n.y,r:5} as Ball;
   assert.equal(touchesFrozenNet(h,ball,n.x-60,n.y),true);
   assert.equal(touchesFrozenNet(h,{...ball,y:100},n.x-60,100),false);
+});
+
+test("shattered frozen nets do not play the net-refresh swish", () => {
+  const intact = setup();
+  freezeNet(intact, false);
+  assert.equal(shouldPlayNetSwish(intact), true, "frozen but intact nets still swish");
+  assert.equal(shouldPlayNetSwish(setup()), true, "ordinary nets still swish");
+  assert.equal(shouldPlayNetSwish({}), true);
+  assert.equal(shouldPlayNetSwish(undefined), true);
+
+  const broken = setup();
+  freezeNet(broken, false);
+  assert.equal(shatterFrozenNet(broken), true);
+  assert.equal(shouldPlayNetSwish(broken), false, "freeze+destroy must not trigger 刷网");
 });

@@ -33,7 +33,7 @@ import { rimPassage } from "./rim-score";
 import { releaseSupportRest } from "./support-release";
 import { sweepSupport, sweepSupportPolygon } from "./support-collision";
 import { rimArmPoints } from "./rim-arm";
-import { freezeNet, clearOfFrozenNet, touchesFrozenNet, shatterFrozenNet } from "./frost-net";
+import { freezeNet, clearOfFrozenNet, touchesFrozenNet, shatterFrozenNet, shouldPlayNetSwish } from "./frost-net";
 import { boardGeom, braceColliders, clearSceneLayers, drawBoot, drawScene, paintBallSprite, hoopNetMotion } from "./render";
 import { loadSave, writeSave, SAVE_VERSION } from "./save";
 import { ballFuseLabel, ballRadius, effectiveBall, getBall, parseBall, type BallId } from "./balls";
@@ -7152,7 +7152,7 @@ export function createGame(
       noteRecapAward(recap, { streak, awarded: 0, clutch: false });
       noteGraf();
       if (!timerArmed) timerArmed = true;
-      audio.swish();
+      if (shouldPlayNetSwish(scoredHoop)) audio.swish();
       audio.score(swish, 0);
       tugNet(hoop, ghost ? undefined : ball);
       refillShotClock();
@@ -7370,7 +7370,7 @@ export function createGame(
     }
     noteBest();
     if (!timerArmed) timerArmed = true;
-    audio.swish();
+    if (shouldPlayNetSwish(scoredHoop)) audio.swish();
     audio.score(swish, heatN());
     if (!reduced && !ghost) {
       const blaze = heatN() >= STAGE_BLAZE;
@@ -7667,6 +7667,7 @@ export function createGame(
 
   function breakFrozenNet(h: Hoop) {
     if (!shatterFrozenNet(h)) return;
+    audio.netShatter();
     if (!gfx.particles) return;
     for (let i = 0; i < h.net.length; i += 2) {
       const n = h.net[i]!;

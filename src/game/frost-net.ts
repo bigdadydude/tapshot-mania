@@ -36,3 +36,8 @@ export function shatterFrozenNet(h: Hoop) {
   h.netPulse = 0;
   return true;
 }
+
+/** 刷网/net-swish SFX only plays for an intact net. */
+export function shouldPlayNetSwish(target?: object | null) {
+  return !(target && "netShattered" in target && (target as { netShattered?: boolean }).netShattered);
+}

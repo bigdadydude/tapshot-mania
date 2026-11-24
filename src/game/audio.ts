@@ -6,6 +6,10 @@ export type Mix = {
   sfx: number;
 };
 
+/** Temporary stand-in for ice-net shatter until a dedicated clip exists.
+ *  Closest existing break/impact sound: a sharp rim clank. */
+export const TEMP_NET_SHATTER_SRC = "/game/scenes/street/sfx/rim-3.mp3";
+
 type AudioApi = {
   unlock: () => void;
   setMix: (mix: Mix) => void;
@@ -15,6 +19,7 @@ type AudioApi = {
   rim: (strength?: number) => void;
   board: (strength?: number) => void;
   swish: () => void;
+  netShatter: () => void;
   score: (swish: boolean, combo: number) => void;
   miss: () => void;
   burn: () => void;
@@ -64,6 +69,7 @@ export function createAudio(): AudioApi {
   let lastBounceAt = -99;
   let lastBounceIdx = -1;
   let lastBoardAt = -99;
+  let netShatterBuf: AudioBuffer | null = null;
 
   void fetch(BGM_SRC)
     .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(BGM_SRC))))
@@ -113,6 +119,13 @@ export function createAudio(): AudioApi {
     for (const src of NET_SRCS) decode(src, netBufs);
     for (const src of BOUNCE_SRCS) decode(src, bounceBufs);
     for (const src of BOARD_SRCS) decode(src, boardBufs);
+    void fetch(TEMP_NET_SHATTER_SRC)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(TEMP_NET_SHATTER_SRC))))
+      .then((ab) => ctx!.decodeAudioData(ab.slice(0)))
+      .then((buf) => {
+        netShatterBuf = buf;
+      })
+      .catch(() => {});
     void fetch(OVER_SRC)
       .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(OVER_SRC))))
       .then((ab) => ctx!.decodeAudioData(ab.slice(0)))
@@ -372,6 +385,17 @@ export function createAudio(): AudioApi {
         return;
       }
       playBuf(boardBufs[0]!, 0.22 + 0.4 * s);
+    },
+    netShatter() {
+      const c = ensure();
+      if (!c) return;
+      if (netShatterBuf) {
+        playBuf(netShatterBuf, 0.78);
+        return;
+      }
+      // Fallback crack if the temporary clip has not decoded yet.
+      noise(0.16, 0.18, 900, 6400, 0.0008);
+      osc(420, 0.08, "triangle", 0.07, -180);
     },
     swish() {
       const c = ensure();
